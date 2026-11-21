@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AVISIA</string>
+    <string name="title_activity_main">AVISIA</string>
+    <string name="package_name">edu.uam.avisia</string>
+    <string name="custom_url_scheme">edu.uam.avisia</string>
+</resources>

@@ -1,0 +1,161 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #0f131c;
+    color: #dfe2ee;
+  }
+
+  code,
+  pre,
+  .font-mono {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  *:focus-visible {
+    outline: 2px solid #22d3ee;
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@keyframes pulse-flow {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+.animate-pulse-flow {
+  animation: pulse-flow 2s ease-in-out infinite;
+}
+
+@keyframes eq-bar {
+  0%, 100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.animate-eq-1 {
+  animation: eq-bar 0.7s ease-in-out infinite;
+}
+.animate-eq-2 {
+  animation: eq-bar 0.55s ease-in-out 0.15s infinite;
+}
+.animate-eq-3 {
+  animation: eq-bar 0.65s ease-in-out 0.3s infinite;
+}
+.animate-eq-4 {
+  animation: eq-bar 0.5s ease-in-out 0.1s infinite;
+}
+
+.leaflet-container {
+  background: #0b111d;
+  font-family: inherit;
+}
+
+.waze-map-tiles .leaflet-tile-pane {
+  filter: invert(100%) hue-rotate(180deg) brightness(90%) contrast(95%) saturate(125%);
+}
+
+/* Scoped Light Mode for the Android Smartphone Frame */
+.android-light .waze-map-tiles .leaflet-tile-pane {
+  filter: none;
+}
+
+.android-light [class*="bg-[#111827]"],
+.android-light [class*="bg-[#181c24]"],
+.android-light [class*="bg-[#1c2028]"],
+.android-light [class*="bg-[#0b0f17]"],
+.android-light [class*="bg-[#0b111d]"],
+.android-light [class*="bg-slate-900"],
+.android-light [class*="bg-slate-950"] {
+  background-color: #ffffff !important;
+}
+
+.android-light [class*="bg-slate-800"] {
+  background-color: #f1f5f9 !important;
+}
+
+.android-light [class*="border-white/"],
+.android-light [class*="border-slate-800"],
+.android-light [class*="border-slate-700"] {
+  border-color: #cbd5e1 !important;
+}
+
+.android-light .text-white,
+.android-light [class*="text-slate-100"],
+.android-light [class*="text-slate-200"] {
+  color: #0f172a !important;
+}
+
+.android-light [class*="text-slate-300"],
+.android-light [class*="text-slate-400"] {
+  color: #475569 !important;
+}
+
+.android-light [class*="text-cyan-100"],
+.android-light [class*="text-cyan-200"],
+.android-light [class*="text-cyan-300"],
+.android-light [class*="text-cyan-400"] {
+  color: #0e7490 !important;
+}
+
+.android-light [class*="text-emerald-100"],
+.android-light [class*="text-emerald-200"],
+.android-light [class*="text-emerald-300"] {
+  color: #047857 !important;
+}
+
+.android-light [class*="text-amber-100"],
+.android-light [class*="text-amber-200"],
+.android-light [class*="text-amber-300"] {
+  color: #b45309 !important;
+}
+
+.android-light [class*="text-rose-100"],
+.android-light [class*="text-rose-200"],
+.android-light [class*="text-rose-300"] {
+  color: #be123c !important;
+}
+
+.android-light .bg-cyan-600.text-white,
+.android-light .bg-cyan-500.text-white,
+.android-light .bg-teal-700.text-white,
+.android-light .bg-rose-600.text-white {
+  color: #ffffff !important;
+}
+
+.android-light [class*="text-slate-950"] {
+  color: #020617 !important;
+}
+
+.android-light input,
+.android-light select {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+

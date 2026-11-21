@@ -1,0 +1,1680 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Play,
+  Eye,
+  MapPin,
+  Video,
+  FlaskConical,
+  Film,
+  PlayCircle,
+  PauseCircle,
+  RotateCcw,
+  Volume2,
+  VolumeX,
+  MessageSquare,
+  Sparkles,
+  Wifi,
+  BatteryCharging,
+  ShieldAlert,
+  GitBranch,
+  Cpu,
+  Menu,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Power,
+} from 'lucide-react';
+import type {
+  ConversationMessage,
+  Detection,
+  OperationMode,
+  PolicyEvaluation,
+  PolicyType,
+  SpeechSettings,
+  StreetAssistFeatures,
+} from './types/avicia';
+import { scenarioManager } from './services/ScenarioManager';
+import { simulationEngine } from './services/SimulationEngine';
+import { messagePolicy } from './services/MessagePolicy';
+import { speechService } from './services/SpeechService';
+import { conversationService } from './services/ConversationService';
+import { detectorService } from './services/DetectorService';
+import { locationService, type RealGpsPosition } from './services/LocationService';
+import { SimulatedSceneCanvas } from './components/SimulatedSceneCanvas';
+import { VisionLabPanel } from './components/VisionLabPanel';
+import { VideoLabPanel } from './components/VideoLabPanel';
+import { LiveCameraPanel } from './components/LiveCameraPanel';
+import { ProcessingPanel } from './components/ProcessingPanel';
+import { VoiceAssistantPanel } from './components/VoiceAssistantPanel';
+import { PipelineSection } from './components/PipelineModal';
+import { ManaguaMapSection, ManaguaWazeMobile } from './components/ManaguaMapModal';
+import { TechnicalDetailsSection } from './components/TechnicalDetailsModal';
+import { DEMO_STEPS, GuidedDemoBanner } from './components/GuidedDemoBanner';
+import { AvisiaLogo } from './components/AvisiaLogo';
+
+const SETTINGS_STORAGE_KEY = 'avicia_simulator_settings_v1';
+const STREET_FEATURES_STORAGE_KEY = 'avicia_street_features_v1';
+
+const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
+  streetMode: false,
+  stereoSonar: false,
+  soundOnlyMode: false,
+  handsFreeWakeWord: false,
+  headsetButton: false,
+  depthAnythingEnabled: false,
+};
+
+type MobileTab = 'vision' | 'assistant' | 'analysis' | 'map';
+type EcosystemTab = 'core' | 'pipeline' | 'map' | 'tech';
+
+export function App() {
+  const scenarios = useMemo(() => scenarioManager.getAllScenarios(), []);
+
+  const [mobileTab, setMobileTab] = useState<MobileTab>('vision');
+  const [androidMenuOpen, setAndroidMenuOpen] = useState<boolean>(false);
+  const [ecosystemTab, setEcosystemTab] = useState<EcosystemTab>('core');
+  const [mode, setMode] = useState<OperationMode>('simulation');
+  const [scenarioId, setScenarioId] = useState<string>(scenarios[0].id);
+  const [simStepIndex, setSimStepIndex] = useState<number>(0);
+  const [simPlaying, setSimPlaying] = useState<boolean>(false);
+
+  const [policy, setPolicy] = useState<PolicyType>('C01');
+  const [threshold, setThreshold] = useState<number>(0.45);
+  const [highlightedDetectionId, setHighlightedDetectionId] = useState<string | null>(null);
+
+  const [realDetections, setRealDetections] = useState<Detection[]>([]);
+  const [cameraActive, setCameraActive] = useState<boolean>(false);
+  const [autoStartCamera, setAutoStartCamera] = useState<boolean>(false);
+
+  const [streetFeatures, setStreetFeatures] = useState<StreetAssistFeatures>(() => {
+    try {
+      const saved = localStorage.getItem(STREET_FEATURES_STORAGE_KEY);
+      if (saved) {
+        return { ...DEFAULT_STREET_FEATURES, ...(JSON.parse(saved) as Partial<StreetAssistFeatures>) };
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return DEFAULT_STREET_FEATURES;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STREET_FEATURES_STORAGE_KEY, JSON.stringify(streetFeatures));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [streetFeatures]);
+
+  const [realGps, setRealGps] = useState<RealGpsPosition | null>(null);
+  const [gpsActive, setGpsActive] = useState<boolean>(false);
+  const [gpsLoading, setGpsLoading] = useState<boolean>(false);
+  const [gpsError, setGpsError] = useState<string | null>(null);
+  const stopGpsWatchRef = useRef<(() => void) | null>(null);
+
+  const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
+  const [isListening, setIsListening] = useState<boolean>(false);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [speechSettings, setSpeechSettings] = useState<SpeechSettings>(() => {
+    try {
+      const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (saved) {
+        return JSON.parse(saved) as SpeechSettings;
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return { enabled: true, rate: 1.0, voiceURI: null };
+  });
+
+  const [history, setHistory] = useState<ConversationMessage[]>([
+    {
+      id: 'init-1',
+      sender: 'system',
+      text: 'Bienvenido a AVISIA. Inicia la demostración autónoma o selecciona un modo para interactuar.',
+      timestamp: Date.now(),
+      source: 'demo',
+    },
+  ]);
+
+  const [demoActive, setDemoActive] = useState<boolean>(false);
+  const [demoPaused, setDemoPaused] = useState<boolean>(false);
+  const [demoCompleted, setDemoCompleted] = useState<boolean>(false);
+  const [demoStepIndex, setDemoStepIndex] = useState<number>(0);
+
+  const stopListeningRef = useRef<(() => void) | null>(null);
+
+  const activeScenario = useMemo(
+    () => scenarioManager.getScenarioById(scenarioId) ?? scenarios[0],
+    [scenarioId, scenarios]
+  );
+
+  const activeScenarioIndex = useMemo(
+    () => scenarios.findIndex((s) => s.id === activeScenario.id),
+    [scenarios, activeScenario]
+  );
+
+  useEffect(() => {
+    const loadVoices = () => {
+      setAvailableVoices(speechService.getSpanishVoices());
+    };
+    loadVoices();
+    if (speechService.isSynthesisSupported()) {
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+    return () => {
+      if (speechService.isSynthesisSupported()) {
+        window.speechSynthesis.onvoiceschanged = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(speechSettings));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [speechSettings]);
+
+  useEffect(() => {
+    if (mode !== 'simulation' || !simPlaying) return;
+    const timer = window.setInterval(() => {
+      setSimStepIndex((prev) => {
+        if (activeScenario.steps.length <= 1) return 0;
+        return (prev + 1) % activeScenario.steps.length;
+      });
+    }, 4500);
+    return () => window.clearInterval(timer);
+  }, [mode, simPlaying, activeScenario]);
+
+  // Autonomous Demo orchestration: advances ONLY after speech completes (+ natural pause)
+  useEffect(() => {
+    if (!demoActive || demoPaused || demoCompleted) return;
+    const stepInfo = DEMO_STEPS[demoStepIndex];
+    if (!stepInfo) return;
+
+    let cancelled = false;
+    let pauseTimer: number | null = null;
+    let safetyTimer: number | null = null;
+
+    const scheduleAdvance = (delayMs: number) => {
+      if (cancelled) return;
+      pauseTimer = window.setTimeout(() => {
+        if (cancelled) return;
+        if (demoStepIndex < DEMO_STEPS.length - 1) {
+          setDemoStepIndex((prev) => prev + 1);
+        } else {
+          setDemoCompleted(true);
+        }
+      }, delayMs);
+    };
+
+    setAndroidMenuOpen(false);
+    let narrationToSpeak = stepInfo.narration;
+
+    if (demoStepIndex === 0) {
+      setMode('simulation');
+      setScenarioId(scenarios[0].id);
+      setSimStepIndex(0);
+      setPolicy('C01');
+      setMobileTab('vision');
+      setEcosystemTab('core');
+    } else if (demoStepIndex === 1) {
+      setScenarioId('caminando-managua');
+      setSimStepIndex(0);
+      setMobileTab('vision');
+      setEcosystemTab('core');
+    } else if (demoStepIndex === 2) {
+      setScenarioId('caminando-managua');
+      setSimStepIndex(1);
+    } else if (demoStepIndex === 3) {
+      setScenarioId('esperando-autobus');
+      setSimStepIndex(0);
+    } else if (demoStepIndex === 4) {
+      setScenarioId('detecciones-multiples');
+      setSimStepIndex(0);
+      setPolicy('C01');
+      setMobileTab('analysis');
+      setEcosystemTab('core');
+    } else if (demoStepIndex === 5) {
+      setScenarioId('esperando-autobus');
+      setMobileTab('assistant');
+      setEcosystemTab('core');
+      const sampleQ = '¿Qué ruta es?';
+      appendHistory({ sender: 'user', text: sampleQ, source: 'demo' });
+      const sampleA =
+        'Veo el autobús, pero no puedo confirmar su ruta.';
+      appendHistory({ sender: 'avicia', text: sampleA, source: 'demo', spoken: true });
+      narrationToSpeak = `${stepInfo.narration} ${sampleA}`;
+    } else if (demoStepIndex === 6) {
+      setScenarioId('informacion-insuficiente');
+      setSimStepIndex(0);
+      setMobileTab('vision');
+      setEcosystemTab('core');
+    } else if (demoStepIndex === 7) {
+      setEcosystemTab('pipeline');
+    } else if (demoStepIndex === 8) {
+      setMobileTab('map');
+      setEcosystemTab('map');
+    } else if (demoStepIndex === 9) {
+      setMobileTab('vision');
+      setEcosystemTab('core');
+      setScenarioId('caminando-managua');
+      setSimStepIndex(0);
+    }
+
+    if (speechSettings.enabled && speechService.isSynthesisSupported()) {
+      // Safety fallback in case browser speechSynthesis never fires onend
+      safetyTimer = window.setTimeout(() => {
+        scheduleAdvance(400);
+      }, 22000);
+
+      speakText(narrationToSpeak, () => {
+        if (safetyTimer !== null) window.clearTimeout(safetyTimer);
+        if (demoStepIndex === DEMO_STEPS.length - 1) {
+          setDemoCompleted(true);
+        } else {
+          scheduleAdvance(1100);
+        }
+      });
+    } else {
+      scheduleAdvance(4500);
+    }
+
+    return () => {
+      cancelled = true;
+      if (pauseTimer !== null) window.clearTimeout(pauseTimer);
+      if (safetyTimer !== null) window.clearTimeout(safetyTimer);
+    };
+  }, [demoActive, demoPaused, demoCompleted, demoStepIndex]);
+
+  const currentStep = useMemo(
+    () => simulationEngine.getStepForTime(activeScenario, simStepIndex),
+    [activeScenario, simStepIndex]
+  );
+
+  const simulatedDetections = useMemo(
+    () => simulationEngine.materializeStepDetections(currentStep),
+    [currentStep]
+  );
+
+  const activeDetections = mode === 'simulation' ? simulatedDetections : realDetections;
+
+  const evaluation: PolicyEvaluation = useMemo(() => {
+    if (mode === 'simulation') {
+      return messagePolicy.evaluateSimulatedStep(currentStep, simulatedDetections, policy);
+    }
+    return messagePolicy.evaluateRealDetections(
+      realDetections,
+      policy,
+      Date.now(),
+      streetFeatures.streetMode
+    );
+  }, [mode, currentStep, simulatedDetections, realDetections, policy, streetFeatures.streetMode]);
+
+  const lastChimedObstacleRef = useRef<string | null>(null);
+  const lastAutoSpokenAtRef = useRef<number>(0);
+  const lastSpokenLiveMsgRef = useRef<{ text: string; at: number } | null>(null);
+  const obstacleSpeakTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const alert = evaluation.obstacleAlert;
+    const alertKey = alert ? `${alert.labelEs}-${alert.zone}` : null;
+
+    if (alert && alertKey && alertKey !== lastChimedObstacleRef.current && speechSettings.enabled) {
+      lastChimedObstacleRef.current = alertKey;
+      speechService.playObstacleChime();
+
+      // Urgent obstacle alerts always speak right after the chime (unless soundOnlyMode is active)
+      if (
+        !demoActive &&
+        !streetFeatures.soundOnlyMode &&
+        ((mode === 'live_camera' && cameraActive) || mode === 'video_lab')
+      ) {
+        if (obstacleSpeakTimerRef.current !== null) {
+          window.clearTimeout(obstacleSpeakTimerRef.current);
+        }
+        const msgToSpeak = alert.message;
+        obstacleSpeakTimerRef.current = window.setTimeout(() => {
+          lastAutoSpokenAtRef.current = Date.now();
+          lastSpokenLiveMsgRef.current = { text: msgToSpeak, at: Date.now() };
+          appendHistory({
+            sender: 'avicia',
+            text: msgToSpeak,
+            source: 'real_video',
+            spoken: true,
+          });
+          speakText(msgToSpeak);
+        }, 240);
+      }
+    } else if (!alertKey) {
+      lastChimedObstacleRef.current = null;
+    }
+  }, [evaluation.obstacleAlert, speechSettings.enabled, mode, cameraActive, demoActive]);
+
+  useEffect(() => {
+    return () => {
+      if (obstacleSpeakTimerRef.current !== null) {
+        window.clearTimeout(obstacleSpeakTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Auto-speak general (non-obstacle) detections in Live Camera and Video modes
+  useEffect(() => {
+    const isLiveStreamMode =
+      (mode === 'live_camera' && cameraActive) || mode === 'video_lab';
+    if (!isLiveStreamMode || !speechSettings.enabled || demoActive || streetFeatures.soundOnlyMode)
+      return;
+    if (realDetections.length === 0 || evaluation.obstacleAlert || isSpeaking) return;
+
+    const now = Date.now();
+    const cooldownMs = streetFeatures.streetMode ? 1800 : 4200;
+    if (now - lastAutoSpokenAtRef.current < cooldownMs) return;
+
+    const lastMsg = lastSpokenLiveMsgRef.current;
+    if (lastMsg && lastMsg.text === evaluation.generatedMessage && now - lastMsg.at < 7000) {
+      return;
+    }
+
+    lastAutoSpokenAtRef.current = now;
+    lastSpokenLiveMsgRef.current = { text: evaluation.generatedMessage, at: now };
+    appendHistory({
+      sender: 'avicia',
+      text: evaluation.generatedMessage,
+      source: 'real_video',
+      spoken: true,
+    });
+    speakText(evaluation.generatedMessage);
+  }, [
+    mode,
+    cameraActive,
+    realDetections,
+    evaluation.generatedMessage,
+    evaluation.obstacleAlert,
+    speechSettings.enabled,
+    isSpeaking,
+    demoActive,
+  ]);
+
+  // v2.5 Stereo Sonar Ping in Live Camera mode (when stereoSonar or soundOnlyMode is ON)
+  useEffect(() => {
+    if (
+      (!streetFeatures.stereoSonar && !streetFeatures.soundOnlyMode) ||
+      !speechSettings.enabled ||
+      mode !== 'live_camera' ||
+      !cameraActive ||
+      demoActive
+    ) {
+      return;
+    }
+
+    const frontItems = realDetections.filter(
+      (d) => d.proximityZone === 'front_close' || d.proximityZone === 'front_mid'
+    );
+    if (frontItems.length === 0) return;
+
+    const closest =
+      frontItems.find((d) => d.proximityZone === 'front_close') ?? frontItems[0];
+    const centerX = closest.bbox.x + closest.bbox.width / 2;
+    const pan = (centerX - 50) / 50; // -1 (left) .. +1 (right)
+    const urgency: 'danger' | 'caution' =
+      closest.proximityZone === 'front_close' ? 'danger' : 'caution';
+    const intervalMs = urgency === 'danger' ? 380 : 780;
+
+    speechService.playStereoSonarPing(pan, urgency);
+    const id = window.setInterval(() => {
+      speechService.playStereoSonarPing(pan, urgency);
+    }, intervalMs);
+
+    return () => window.clearInterval(id);
+  }, [
+    streetFeatures.stereoSonar,
+    streetFeatures.soundOnlyMode,
+    speechSettings.enabled,
+    mode,
+    cameraActive,
+    demoActive,
+    realDetections,
+  ]);
+
+  // v2.5 Hands-Free Wake Word ("Avisia" / "Oye Avisia") for harness mounting
+  const handleSendQuestionRef = useRef<(q: string) => void>(() => {});
+  useEffect(() => {
+    if (!streetFeatures.handsFreeWakeWord || demoActive) return;
+
+    const stopWake = speechService.startWakeWordListener(
+      (question) => {
+        handleSendQuestionRef.current(question);
+      },
+      () => {
+        speakText('Te escucho.');
+      },
+      (errMsg) => {
+        appendHistory({
+          sender: 'system',
+          text: errMsg,
+          source: 'intent_engine',
+        });
+        setStreetFeatures((f) => ({ ...f, handsFreeWakeWord: false }));
+      }
+    );
+
+    return () => {
+      stopWake?.();
+    };
+  }, [streetFeatures.handsFreeWakeWord, demoActive]);
+
+  // v2.5 Headset / MediaSession Button handler (Bluetooth / wired earbuds)
+  useEffect(() => {
+    if (
+      !streetFeatures.headsetButton ||
+      typeof navigator === 'undefined' ||
+      !('mediaSession' in navigator)
+    ) {
+      return;
+    }
+
+    const triggerVoice = () => {
+      speechService.playWakeConfirmTone();
+      handleToggleListening();
+    };
+
+    try {
+      navigator.mediaSession.setActionHandler('play', triggerVoice);
+      navigator.mediaSession.setActionHandler('pause', triggerVoice);
+      navigator.mediaSession.setActionHandler('nexttrack', triggerVoice);
+    } catch {
+      // Ignore unsupported MediaSession actions
+    }
+
+    return () => {
+      try {
+        navigator.mediaSession.setActionHandler('play', null);
+        navigator.mediaSession.setActionHandler('pause', null);
+        navigator.mediaSession.setActionHandler('nexttrack', null);
+      } catch {
+        // Ignore cleanup errors
+      }
+    };
+  }, [streetFeatures.headsetButton, isListening]);
+
+  const appendHistory = (msg: Omit<ConversationMessage, 'id' | 'timestamp'>) => {
+    setHistory((prev) => [
+      ...prev.slice(-24),
+      {
+        ...msg,
+        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        timestamp: Date.now(),
+      },
+    ]);
+  };
+
+  const speakText = (text: string, onFinished?: () => void) => {
+    const effectiveSettings: SpeechSettings = streetFeatures.streetMode
+      ? { ...speechSettings, rate: Math.max(speechSettings.rate, 1.18) }
+      : speechSettings;
+    speechService.speak(text, effectiveSettings, {
+      onStart: () => setIsSpeaking(true),
+      onEnd: () => {
+        setIsSpeaking(false);
+        onFinished?.();
+      },
+      onError: () => {
+        setIsSpeaking(false);
+        onFinished?.();
+      },
+    });
+  };
+
+  const handleModeChange = (nextMode: OperationMode) => {
+    speechService.cancel();
+    setIsSpeaking(false);
+    setMode(nextMode);
+    setRealDetections([]);
+    setHighlightedDetectionId(null);
+    setAndroidMenuOpen(false);
+    if (mobileTab === 'map') setMobileTab('vision');
+    messagePolicy.resetHistory();
+  };
+
+  const handleSelectScenario = (id: string) => {
+    speechService.cancel();
+    setIsSpeaking(false);
+    setScenarioId(id);
+    setSimStepIndex(0);
+    setSimPlaying(false);
+    setHighlightedDetectionId(null);
+    setAndroidMenuOpen(false);
+    messagePolicy.resetHistory();
+  };
+
+  const cycleScenario = (dir: -1 | 1) => {
+    const nextIdx = (activeScenarioIndex + dir + scenarios.length) % scenarios.length;
+    handleSelectScenario(scenarios[nextIdx].id);
+  };
+
+  const handleSpeakCurrent = () => {
+    const msg = evaluation.generatedMessage;
+    appendHistory({
+      sender: 'avicia',
+      text: msg,
+      source: mode === 'simulation' ? 'simulated' : mode === 'vision_lab' ? 'real_image' : 'real_video',
+      spoken: true,
+    });
+    speakText(msg);
+  };
+
+  const handleRepeatLast = () => {
+    const text = speechService.repeatLast(speechSettings, {
+      onStart: () => setIsSpeaking(true),
+      onEnd: () => setIsSpeaking(false),
+      onError: () => setIsSpeaking(false),
+    });
+    appendHistory({
+      sender: 'avicia',
+      text: `(Repetido) ${text}`,
+      source: 'intent_engine',
+      spoken: true,
+    });
+  };
+
+  const handleCancelSpeech = () => {
+    speechService.cancel();
+    setIsSpeaking(false);
+  };
+
+  const handleToggleGps = () => {
+    if (gpsActive) {
+      stopGpsWatchRef.current?.();
+      stopGpsWatchRef.current = null;
+      setGpsActive(false);
+      setGpsLoading(false);
+      setRealGps(null);
+      setGpsError(null);
+      return;
+    }
+
+    setGpsError(null);
+    setGpsLoading(true);
+    setGpsActive(true);
+
+    stopGpsWatchRef.current = locationService.watchPosition(
+      async (pos) => {
+        setGpsLoading(false);
+        setGpsError(null);
+        const geo = await locationService.reverseGeocode(pos.lat, pos.lng);
+        setRealGps({
+          ...pos,
+          placeName: geo.placeName,
+          roadName: geo.roadName,
+          neighbourhood: geo.neighbourhood,
+          city: geo.city,
+        });
+      },
+      (errMsg) => {
+        setGpsLoading(false);
+        setGpsError(errMsg);
+        setGpsActive(false);
+      }
+    );
+  };
+
+  useEffect(() => {
+    return () => {
+      stopGpsWatchRef.current?.();
+    };
+  }, []);
+
+  const handleSendQuestion = (question: string) => {
+    appendHistory({
+      sender: 'user',
+      text: question,
+      source: 'intent_engine',
+    });
+
+    const answer = conversationService.answerQuestion(question, {
+      mode,
+      scenario: activeScenario,
+      activeDetections,
+      lastMessage: evaluation.generatedMessage,
+      realGps,
+    });
+
+    appendHistory({
+      sender: 'avicia',
+      text: answer,
+      source: 'intent_engine',
+      spoken: speechSettings.enabled,
+    });
+
+    speakText(answer);
+  };
+  handleSendQuestionRef.current = handleSendQuestion;
+
+  const handleToggleListening = () => {
+    if (isListening) {
+      stopListeningRef.current?.();
+      setIsListening(false);
+      return;
+    }
+
+    setIsListening(true);
+    stopListeningRef.current = speechService.startListening(
+      (transcript) => {
+        handleSendQuestion(transcript);
+      },
+      (errMsg) => {
+        appendHistory({
+          sender: 'system',
+          text: errMsg,
+          source: 'intent_engine',
+        });
+      },
+      () => {
+        setIsListening(false);
+      }
+    );
+  };
+
+  const startGuidedDemo = () => {
+    speechService.cancel();
+    setMode('simulation');
+    setScenarioId(scenarios[0].id);
+    setSimStepIndex(0);
+    setDemoStepIndex(0);
+    setDemoPaused(false);
+    setDemoCompleted(false);
+    setDemoActive(true);
+    setMobileTab('vision');
+    setEcosystemTab('core');
+    setAndroidMenuOpen(false);
+  };
+
+  const renderEnvironmentContent = () => (
+    <div className="space-y-2.5 overflow-x-hidden">
+      {mode === 'simulation' && (
+        <>
+          {/* Compact Zero-Scroll Scenario Selector with Hamburger Trigger */}
+          <div className="flex items-center justify-between gap-1.5 p-1.5 rounded-xl bg-white border border-slate-200 shadow-sm">
+            <button
+              type="button"
+              onClick={() => cycleScenario(-1)}
+              aria-label="Escenario anterior"
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setAndroidMenuOpen(true)}
+              className="flex-1 text-center text-xs font-semibold text-slate-900 truncate px-1"
+            >
+              {activeScenario.number}. {activeScenario.title}
+            </button>
+            <button
+              type="button"
+              onClick={() => cycleScenario(1)}
+              aria-label="Siguiente escenario"
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          <SimulatedSceneCanvas
+            scenario={activeScenario}
+            detections={simulatedDetections}
+            selectedDetectionIds={evaluation.selectedDetectionIds}
+            highlightedDetectionId={highlightedDetectionId}
+            onSelectDetection={(id) =>
+              setHighlightedDetectionId((prev) => (prev === id ? null : id))
+            }
+          />
+
+          <div className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-white border border-slate-200 shadow-sm">
+            <p className="text-[11px] text-slate-600 flex-1 line-clamp-2 leading-snug">
+              {activeScenario.description}
+            </p>
+            <div className="flex items-center gap-1 shrink-0">
+              {activeScenario.steps.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setSimPlaying((p) => !p)}
+                  aria-label={simPlaying ? 'Pausar secuencia' : 'Reproducir secuencia'}
+                  className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700"
+                >
+                  {simPlaying ? (
+                    <PauseCircle className="w-4 h-4 text-amber-600" />
+                  ) : (
+                    <PlayCircle className="w-4 h-4 text-cyan-600" />
+                  )}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setSimStepIndex(0);
+                  setSimPlaying(false);
+                  setHighlightedDetectionId(null);
+                }}
+                aria-label="Reiniciar escenario"
+                className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {mode === 'vision_lab' && (
+        <VisionLabPanel
+          threshold={threshold}
+          onThresholdChange={setThreshold}
+          onDetectionsReady={(dets) => setRealDetections(dets)}
+          onSpeakDescription={(text) => {
+            appendHistory({
+              sender: 'avicia',
+              text,
+              source: 'real_image',
+              spoken: true,
+            });
+            speakText(text);
+          }}
+        />
+      )}
+
+      {mode === 'video_lab' && (
+        <VideoLabPanel
+          threshold={threshold}
+          onThresholdChange={setThreshold}
+          onDetectionsReady={(dets) => setRealDetections(dets)}
+          onSpeakDescription={(text) => {
+            appendHistory({
+              sender: 'avicia',
+              text,
+              source: 'real_video',
+              spoken: true,
+            });
+            speakText(text);
+          }}
+        />
+      )}
+
+      {mode === 'live_camera' && (
+        <LiveCameraPanel
+          threshold={threshold}
+          autoStart={autoStartCamera}
+          expandedView
+          fastMode={
+            streetFeatures.streetMode ||
+            streetFeatures.stereoSonar ||
+            streetFeatures.soundOnlyMode
+          }
+          depthAnythingEnabled={streetFeatures.depthAnythingEnabled}
+          onCameraStateChange={setCameraActive}
+          onDetectionsReady={(dets) => setRealDetections(dets)}
+        />
+      )}
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden bg-[#0f131c] text-[#dfe2ee] flex flex-col">
+      {/* Stitch Telemetry Header with Official UAM Logo */}
+      <header className="shrink-0 z-30 border-b border-[#3c494c]/40 bg-[#0a0e16]/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.35)]">
+        <div className="max-w-[1680px] mx-auto px-4 py-2 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="flex items-center justify-center p-0.5 rounded-full bg-white border border-[#8aebff]/50 shadow-[0_0_15px_rgba(138,235,255,0.25)] shrink-0">
+                <AvisiaLogo className="w-10 h-10" variant="dark" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-sm sm:text-base font-extrabold tracking-tight text-[#8aebff] uppercase">
+                    AVISIA
+                  </h1>
+                  <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
+                    v2.4 Core
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
+                  Asistencia Visual Inteligente para Movilidad
+                </p>
+              </div>
+            </div>
+
+            <div className="hidden lg:flex items-center gap-2 pl-3 border-l border-[#3c494c]/50">
+              <div className="bg-white/95 px-2.5 py-1 rounded-lg shadow-sm flex items-center">
+                <img
+                  src="/uam-logo.png"
+                  alt="Universidad Americana UAM"
+                  className="h-6 w-auto object-contain"
+                />
+              </div>
+              <span className="font-mono text-[10px] text-[#bbc9cd] uppercase tracking-wider">
+                UAM Managua
+              </span>
+            </div>
+
+            <div className="hidden md:flex items-center gap-1.5 ml-2 px-2.5 py-1 rounded-full bg-[#181c24] border border-[#4edea3]/25 shadow-[0_0_12px_rgba(78,222,163,0.12)]">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4edea3] opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#4edea3]" />
+              </span>
+              <span className="font-mono text-[10px] text-[#4edea3] font-semibold tracking-wide uppercase">
+                {demoActive ? 'Demo Autónoma' : cameraActive ? 'Cámara En Vivo' : 'En línea · Web IA'}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#262a33] text-[#bbc9cd] font-mono text-[10px]">
+              <ShieldAlert className="w-3.5 h-3.5 text-[#ffb147] shrink-0" />
+              <span>Prototipo académico · UAM Managua</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (speechSettings.enabled) {
+                  speechService.cancel();
+                  setIsSpeaking(false);
+                }
+                setSpeechSettings((s) => ({ ...s, enabled: !s.enabled }));
+              }}
+              aria-label={speechSettings.enabled ? 'Silenciar audio' : 'Activar audio'}
+              title={speechSettings.enabled ? 'Silenciar audio' : 'Activar audio'}
+              className="flex items-center justify-center w-9 h-9 rounded-lg bg-[#262a33] hover:bg-[#31353e] text-[#bbc9cd] hover:text-white border border-[#3c494c]/40 transition-colors"
+            >
+              {speechSettings.enabled ? (
+                <Volume2 className="w-4 h-4 text-[#8aebff]" />
+              ) : (
+                <VolumeX className="w-4 h-4 text-[#ffb147]" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={startGuidedDemo}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#22d3ee] hover:bg-[#8aebff] active:scale-95 text-[#00363e] font-semibold text-xs transition-all shadow-[0_0_18px_rgba(34,211,238,0.35)]"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              Iniciar Demo Autónoma
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* SPLIT-SCREEN LAYOUT: 30% ANDROID DEVICE + 70% TELEMETRY ECOSYSTEM */}
+      <div className="flex-1 min-h-0 max-w-[1680px] w-full mx-auto px-3 sm:px-5 py-3 flex flex-col lg:flex-row gap-4 items-stretch">
+        {/* LEFT 30%: ANDROID SMARTPHONE CHASSIS (M3 LIGHT MODE) */}
+        <aside
+          aria-label="Vista desde Android"
+          className="w-full lg:w-[32%] xl:w-[30%] lg:h-full flex flex-col items-center justify-center relative"
+        >
+          <div className="w-full max-w-[400px] lg:max-w-none lg:h-full rounded-[40px] bg-slate-900 p-[9px] ring-1 ring-white/15 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.85)] flex flex-col relative">
+            {/* Physical side hardware button accents */}
+            <div className="hidden lg:block absolute -left-[3px] top-24 w-[3px] h-9 bg-slate-700/70 rounded-l" />
+            <div className="hidden lg:block absolute -left-[3px] top-36 w-[3px] h-11 bg-slate-700/70 rounded-l" />
+            <div className="hidden lg:block absolute -right-[3px] top-28 w-[3px] h-12 bg-slate-700/70 rounded-r" />
+
+            <div className="android-light w-full h-full flex flex-col bg-slate-50 text-slate-900 rounded-[32px] overflow-hidden relative">
+              {/* Android 14 M3 Status Bar with Punch-Hole Camera */}
+              <div className="flex items-center justify-between px-5 pt-2 pb-1 text-[10px] font-mono font-semibold text-slate-800 bg-slate-100/90 select-none">
+                <span>10:42</span>
+                <div className="w-3.5 h-3.5 rounded-full bg-black flex items-center justify-center" aria-hidden="true">
+                  {cameraActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                </div>
+                <div className="flex items-center gap-1.5 text-slate-700">
+                  <span className="text-[9px] text-slate-500">5G</span>
+                  <Wifi className="w-3 h-3" />
+                  <BatteryCharging className="w-3.5 h-3.5 text-emerald-600" />
+                </div>
+              </div>
+
+              {/* Android Material 3 Top AppBar */}
+              <div className="px-3 py-2 border-b border-slate-200 bg-white flex items-center justify-between gap-2 shadow-sm">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAndroidMenuOpen((o) => !o)}
+                    aria-label="Abrir menú de escenarios y modos"
+                    className="p-1.5 rounded-full hover:bg-slate-100 text-slate-800 transition-colors"
+                  >
+                    {androidMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="p-0.5 rounded-full bg-white border border-teal-200 shadow-sm flex items-center justify-center shrink-0">
+                      <AvisiaLogo className="w-7 h-7" variant="light" />
+                    </div>
+                    <div className="flex flex-col leading-none">
+                      <div className="flex items-center gap-1">
+                        <span className="text-sm font-black text-slate-900 tracking-tight">AVISIA</span>
+                        <span className="text-[8px] font-mono font-bold uppercase px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-800">
+                          IA
+                        </span>
+                      </div>
+                      <span className="text-[9px] text-slate-500 font-medium mt-0.5">UAM Managua</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {(cameraActive || demoActive) && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-mono font-semibold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-ping" />
+                      En Vivo
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={startGuidedDemo}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-teal-700 hover:bg-teal-800 text-white font-semibold text-[11px]"
+                  >
+                    <Play className="w-2.5 h-2.5 fill-current" />
+                    Demo
+                  </button>
+                </div>
+              </div>
+
+            {/* Android Hamburger Drawer Overlay (Light Material 3) */}
+            {androidMenuOpen && (
+              <div className="absolute inset-x-0 top-[76px] bottom-[62px] z-40 bg-white/95 backdrop-blur-md p-3.5 overflow-y-auto space-y-4 border-b border-slate-200">
+                {/* Primera opción: Activar / Desactivar AVICIA (Cámara en vivo) */}
+                <div
+                  className={`p-3 rounded-2xl border transition-colors ${
+                    mode === 'live_camera'
+                      ? 'bg-emerald-50 border-emerald-500'
+                      : 'bg-cyan-50 border-cyan-400'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                        <Power
+                          className={`w-4 h-4 ${
+                            mode === 'live_camera' ? 'text-emerald-600' : 'text-cyan-700'
+                          }`}
+                        />
+                        {mode === 'live_camera' ? 'AVISIA Activo' : 'Activar AVISIA'}
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-0.5">
+                        {mode === 'live_camera'
+                          ? 'Cámara en vivo y alertas de voz activas'
+                          : 'Inicia la cámara en pantalla amplia con alertas de voz'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (mode === 'live_camera') {
+                          setAutoStartCamera(false);
+                          setCameraActive(false);
+                          setRealDetections([]);
+                          setMode('simulation');
+                          setAndroidMenuOpen(false);
+                        } else {
+                          setAutoStartCamera(true);
+                          setMode('live_camera');
+                          setMobileTab('vision');
+                          setAndroidMenuOpen(false);
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold shrink-0 transition-colors ${
+                        mode === 'live_camera'
+                          ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                          : 'bg-cyan-600 hover:bg-cyan-500 text-white'
+                      }`}
+                    >
+                      {mode === 'live_camera' ? 'Desactivar' : 'Activar'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* v2.5 · Modo Calle y Manos Libres (Interruptores opcionales) */}
+                <div className="p-3 rounded-2xl border border-slate-200 bg-slate-50 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-teal-800">
+                      v2.5 · Modo Calle (Arnés)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const anyOn =
+                          streetFeatures.streetMode ||
+                          streetFeatures.stereoSonar ||
+                          streetFeatures.soundOnlyMode ||
+                          streetFeatures.handsFreeWakeWord ||
+                          streetFeatures.headsetButton ||
+                          streetFeatures.depthAnythingEnabled;
+                        setStreetFeatures({
+                          streetMode: !anyOn,
+                          stereoSonar: !anyOn,
+                          soundOnlyMode: !anyOn,
+                          handsFreeWakeWord: !anyOn,
+                          headsetButton: !anyOn,
+                          depthAnythingEnabled: !anyOn,
+                        });
+                      }}
+                      className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 hover:bg-teal-200"
+                    >
+                      {streetFeatures.streetMode ||
+                      streetFeatures.stereoSonar ||
+                      streetFeatures.soundOnlyMode ||
+                      streetFeatures.handsFreeWakeWord ||
+                      streetFeatures.headsetButton ||
+                      streetFeatures.depthAnythingEnabled
+                        ? 'Apagar todo'
+                        : 'Activar todo'}
+                    </button>
+                  </div>
+
+                  {(
+                    [
+                      {
+                        key: 'soundOnlyMode',
+                        label: 'Solo sonidos (sin palabras)',
+                      },
+                      {
+                        key: 'depthAnythingEnabled',
+                        label: 'Profundidad IA (Depth Anything V2)',
+                      },
+                      {
+                        key: 'streetMode',
+                        label: 'Micro-alertas rápidas (2-3 palabras)',
+                      },
+                      {
+                        key: 'stereoSonar',
+                        label: 'Sonar estéreo (Izq / Centro / Der)',
+                      },
+                      {
+                        key: 'handsFreeWakeWord',
+                        label: 'Voz manos libres ("Oye Avisia")',
+                      },
+                      {
+                        key: 'headsetButton',
+                        label: 'Botón de audífonos Bluetooth',
+                      },
+                    ] as const
+                  ).map((item) => {
+                    const enabled = streetFeatures[item.key];
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        role="switch"
+                        aria-checked={enabled}
+                        onClick={() =>
+                          setStreetFeatures((prev) => ({
+                            ...prev,
+                            [item.key]: !prev[item.key],
+                          }))
+                        }
+                        className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 text-left"
+                      >
+                        <span className="text-[11px] font-medium text-slate-800">
+                          {item.label}
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                            enabled
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-slate-100 text-slate-500'
+                          }`}
+                        >
+                          {enabled ? 'ON' : 'OFF'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                    Modos de operación
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleModeChange('simulation')}
+                      className={`py-2 px-2.5 rounded-xl text-xs font-medium text-left border ${
+                        mode === 'simulation'
+                          ? 'bg-cyan-50 border-cyan-500 text-cyan-900'
+                          : 'bg-slate-50 border-slate-200 text-slate-700'
+                      }`}
+                    >
+                      Escenas (A)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleModeChange('vision_lab')}
+                      className={`py-2 px-2.5 rounded-xl text-xs font-medium text-left border ${
+                        mode === 'vision_lab'
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-900'
+                          : 'bg-slate-50 border-slate-200 text-slate-700'
+                      }`}
+                    >
+                      Imagen IA (B)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleModeChange('video_lab')}
+                      className={`py-2 px-2.5 rounded-xl text-xs font-medium text-left border ${
+                        mode === 'video_lab'
+                          ? 'bg-cyan-50 border-cyan-500 text-cyan-900'
+                          : 'bg-slate-50 border-slate-200 text-slate-700'
+                      }`}
+                    >
+                      Video IA (C)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleModeChange('live_camera')}
+                      className={`py-2 px-2.5 rounded-xl text-xs font-medium text-left border ${
+                        mode === 'live_camera'
+                          ? 'bg-amber-50 border-amber-500 text-amber-900'
+                          : 'bg-slate-50 border-slate-200 text-slate-700'
+                      }`}
+                    >
+                      Cámara (D)
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                    Escenarios de Managua
+                  </div>
+                  <div className="space-y-1.5">
+                    {scenarios.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => {
+                          setMode('simulation');
+                          setMobileTab('vision');
+                          handleSelectScenario(s.id);
+                        }}
+                        className={`w-full p-2.5 rounded-xl text-left border transition-colors ${
+                          s.id === activeScenario.id && mode === 'simulation'
+                            ? 'bg-cyan-50 border-cyan-500 text-cyan-950'
+                            : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="text-xs font-semibold">
+                          {s.number}. {s.title}
+                        </div>
+                        <div className="text-[11px] text-slate-500">{s.subtitle}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Android Scrollable Viewport (Zero Horizontal Scroll) */}
+            <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2.5 space-y-2.5">
+              {mobileTab === 'vision' && (
+                <div className="space-y-2.5">
+                  {evaluation.obstacleAlert && (
+                    <div
+                      role="alert"
+                      className="p-2.5 rounded-xl bg-amber-50 border border-amber-400 text-xs text-amber-950 flex items-center gap-2 shadow-sm"
+                    >
+                      <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="font-semibold text-[11px] text-amber-800 uppercase tracking-wide">
+                          Obstáculo inanimado al frente
+                        </div>
+                        <div className="text-[11px] truncate">{evaluation.obstacleAlert.labelEs}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {renderEnvironmentContent()}
+
+                  {/* Stitch Material 3 Voice Feedback Card */}
+                  <div className="p-3 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-teal-800 flex items-center gap-1.5">
+                        <Volume2 className="w-3.5 h-3.5 text-teal-700" />
+                        Retroalimentación de Voz
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {isSpeaking && (
+                          <div className="flex items-center gap-0.5 h-3" aria-hidden="true">
+                            <span className="w-1 bg-teal-600 rounded-full animate-eq-1 h-3" />
+                            <span className="w-1 bg-teal-500 rounded-full animate-eq-2 h-2" />
+                            <span className="w-1 bg-teal-600 rounded-full animate-eq-3 h-3" />
+                          </div>
+                        )}
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold">
+                          {policy}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      className={`p-2.5 rounded-xl border text-xs font-semibold leading-relaxed ${
+                        evaluation.obstacleAlert
+                          ? 'bg-amber-50/90 border-amber-200 text-slate-900'
+                          : 'bg-slate-50 border-slate-200 text-slate-900'
+                      }`}
+                    >
+                      {evaluation.generatedMessage}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSpeakCurrent}
+                        className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 font-bold text-xs transition-colors"
+                      >
+                        <Volume2 className="w-4 h-4 text-teal-700" />
+                        Escuchar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMobileTab('assistant')}
+                        className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs transition-colors shadow-sm"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        Consultar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {mobileTab === 'assistant' && (
+                <VoiceAssistantPanel
+                  isSpeaking={isSpeaking}
+                  isListening={isListening}
+                  lastMessage={evaluation.generatedMessage}
+                  history={history}
+                  speechSettings={speechSettings}
+                  availableVoices={availableVoices}
+                  recognitionSupported={speechService.isRecognitionSupported()}
+                  onSpeakCurrent={handleSpeakCurrent}
+                  onRepeatLast={handleRepeatLast}
+                  onCancelSpeech={handleCancelSpeech}
+                  onToggleMute={() => {
+                    if (speechSettings.enabled) {
+                      speechService.cancel();
+                      setIsSpeaking(false);
+                    }
+                    setSpeechSettings((s) => ({ ...s, enabled: !s.enabled }));
+                  }}
+                  onChangeRate={(rate) => setSpeechSettings((s) => ({ ...s, rate }))}
+                  onChangeVoice={(voiceURI) =>
+                    setSpeechSettings((s) => ({ ...s, voiceURI: voiceURI || null }))
+                  }
+                  onSendQuestion={handleSendQuestion}
+                  onToggleListening={handleToggleListening}
+                />
+              )}
+
+              {mobileTab === 'analysis' && (
+                <ProcessingPanel
+                  mode={mode}
+                  detections={activeDetections}
+                  policy={policy}
+                  evaluation={evaluation}
+                  highlightedDetectionId={highlightedDetectionId}
+                  onChangePolicy={setPolicy}
+                  onHighlightDetection={setHighlightedDetectionId}
+                />
+              )}
+
+              {mobileTab === 'map' && (
+                <ManaguaWazeMobile
+                  scenario={activeScenario}
+                  realGps={realGps}
+                  gpsActive={gpsActive}
+                  gpsLoading={gpsLoading}
+                  gpsError={gpsError}
+                  onToggleGps={handleToggleGps}
+                  onSpeakText={(text) => {
+                    appendHistory({
+                      sender: 'avicia',
+                      text,
+                      source: 'simulated',
+                      spoken: true,
+                    });
+                    speakText(text);
+                  }}
+                />
+              )}
+            </div>
+
+            {/* Android Material 3 Bottom Navigation + Gesture Pill (Light Mode) */}
+            <nav
+              aria-label="Navegación Android"
+              className="border-t border-slate-200 bg-white px-2 pt-1.5 pb-1"
+            >
+              <div className="grid grid-cols-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileTab('vision');
+                    setAndroidMenuOpen(false);
+                  }}
+                  className="flex flex-col items-center gap-0.5 py-0.5"
+                >
+                  <span
+                    className={`px-3.5 py-1 rounded-full transition-colors ${
+                      mobileTab === 'vision'
+                        ? 'bg-cyan-100 text-cyan-800'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    <Eye className="w-4 h-4" />
+                  </span>
+                  <span
+                    className={`text-[10px] font-medium ${
+                      mobileTab === 'vision' ? 'text-cyan-800 font-semibold' : 'text-slate-500'
+                    }`}
+                  >
+                    Visión
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileTab('assistant');
+                    setAndroidMenuOpen(false);
+                  }}
+                  className="flex flex-col items-center gap-0.5 py-0.5"
+                >
+                  <span
+                    className={`px-3.5 py-1 rounded-full transition-colors ${
+                      mobileTab === 'assistant'
+                        ? 'bg-cyan-100 text-cyan-800'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                  </span>
+                  <span
+                    className={`text-[10px] font-medium ${
+                      mobileTab === 'assistant' ? 'text-cyan-800 font-semibold' : 'text-slate-500'
+                    }`}
+                  >
+                    Asistente
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileTab('analysis');
+                    setAndroidMenuOpen(false);
+                  }}
+                  className="flex flex-col items-center gap-0.5 py-0.5"
+                >
+                  <span
+                    className={`px-3.5 py-1 rounded-full transition-colors ${
+                      mobileTab === 'analysis'
+                        ? 'bg-cyan-100 text-cyan-800'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    <Sparkles className="w-4 h-4" />
+                  </span>
+                  <span
+                    className={`text-[10px] font-medium ${
+                      mobileTab === 'analysis' ? 'text-cyan-800 font-semibold' : 'text-slate-500'
+                    }`}
+                  >
+                    Análisis
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileTab('map');
+                    setEcosystemTab('map');
+                    setAndroidMenuOpen(false);
+                    if (!gpsActive && locationService.isGeolocationSupported()) {
+                      handleToggleGps();
+                    }
+                  }}
+                  className="flex flex-col items-center gap-0.5 py-0.5"
+                >
+                  <span
+                    className={`px-3.5 py-1 rounded-full transition-colors ${
+                      mobileTab === 'map'
+                        ? 'bg-cyan-100 text-cyan-800'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    <MapPin className="w-4 h-4" />
+                  </span>
+                  <span
+                    className={`text-[10px] font-medium ${
+                      mobileTab === 'map' ? 'text-cyan-800 font-semibold' : 'text-slate-500'
+                    }`}
+                  >
+                    Managua
+                  </span>
+                </button>
+              </div>
+              <div className="flex justify-center pt-1.5 pb-0.5">
+                <div className="w-24 h-1 rounded-full bg-slate-400/70" />
+              </div>
+            </nav>
+            </div>
+          </div>
+        </aside>
+
+        {/* RIGHT 70%: MINIMALIST ECOSYSTEM (TABBED, ZERO-SCROLL) */}
+        <main className="w-full lg:w-[68%] xl:w-[70%] lg:h-full flex flex-col gap-3 min-h-0">
+          <div className="shrink-0">
+            <GuidedDemoBanner
+              active={demoActive}
+              paused={demoPaused}
+              completed={demoCompleted}
+              stepIndex={demoStepIndex}
+              onPauseToggle={() => setDemoPaused((p) => !p)}
+              onRestart={startGuidedDemo}
+              onExit={() => {
+                speechService.cancel();
+                setDemoActive(false);
+              }}
+            />
+          </div>
+
+          {/* Stitch Telemetry Console Mode & Ecosystem View Switcher */}
+          <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-[#181c24] border border-[#3c494c]/40 shadow-sm">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleModeChange('simulation')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${
+                  mode === 'simulation'
+                    ? 'bg-cyan-500/15 border-cyan-400/60 text-cyan-200'
+                    : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Eye className="w-3.5 h-3.5" />
+                Escenas
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModeChange('vision_lab')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${
+                  mode === 'vision_lab'
+                    ? 'bg-emerald-500/15 border-emerald-400/60 text-emerald-200'
+                    : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <FlaskConical className="w-3.5 h-3.5" />
+                Imagen IA
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModeChange('video_lab')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${
+                  mode === 'video_lab'
+                    ? 'bg-cyan-500/15 border-cyan-400/60 text-cyan-200'
+                    : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Film className="w-3.5 h-3.5" />
+                Video IA
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModeChange('live_camera')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${
+                  mode === 'live_camera'
+                    ? 'bg-amber-500/15 border-amber-400/60 text-amber-200'
+                    : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Video className="w-3.5 h-3.5" />
+                Cámara
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1 bg-[#0a0e16] p-1 rounded-lg border border-[#3c494c]/40">
+              <button
+                type="button"
+                onClick={() => setEcosystemTab('core')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                  ecosystemTab === 'core'
+                    ? 'bg-cyan-500 text-slate-950 font-semibold'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Núcleo en Vivo
+              </button>
+              <button
+                type="button"
+                onClick={() => setEcosystemTab('pipeline')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                  ecosystemTab === 'pipeline'
+                    ? 'bg-cyan-500 text-slate-950 font-semibold'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <GitBranch className="w-3.5 h-3.5" />
+                Cómo Piensa
+              </button>
+              <button
+                type="button"
+                onClick={() => setEcosystemTab('map')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                  ecosystemTab === 'map'
+                    ? 'bg-cyan-500 text-slate-950 font-semibold'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <MapPin className="w-3.5 h-3.5" />
+                Mapa Managua
+              </button>
+              <button
+                type="button"
+                onClick={() => setEcosystemTab('tech')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                  ecosystemTab === 'tech'
+                    ? 'bg-cyan-500 text-slate-950 font-semibold'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Cpu className="w-3.5 h-3.5" />
+                Técnico
+              </button>
+            </div>
+          </div>
+
+          {/* Active Ecosystem Panel */}
+          <div className="flex-1 min-h-0 overflow-y-auto pr-0.5">
+            {ecosystemTab === 'core' && (
+              <div className="grid grid-cols-1 xl:grid-cols-12 gap-3.5 h-full items-stretch">
+                <div className="xl:col-span-5 h-full min-h-0">
+                  <VoiceAssistantPanel
+                    isSpeaking={isSpeaking}
+                    isListening={isListening}
+                    lastMessage={evaluation.generatedMessage}
+                    history={history}
+                    speechSettings={speechSettings}
+                    availableVoices={availableVoices}
+                    recognitionSupported={speechService.isRecognitionSupported()}
+                    onSpeakCurrent={handleSpeakCurrent}
+                    onRepeatLast={handleRepeatLast}
+                    onCancelSpeech={handleCancelSpeech}
+                    onToggleMute={() => {
+                      if (speechSettings.enabled) {
+                        speechService.cancel();
+                        setIsSpeaking(false);
+                      }
+                      setSpeechSettings((s) => ({ ...s, enabled: !s.enabled }));
+                    }}
+                    onChangeRate={(rate) => setSpeechSettings((s) => ({ ...s, rate }))}
+                    onChangeVoice={(voiceURI) =>
+                      setSpeechSettings((s) => ({ ...s, voiceURI: voiceURI || null }))
+                    }
+                    onSendQuestion={handleSendQuestion}
+                    onToggleListening={handleToggleListening}
+                  />
+                </div>
+
+                <div className="xl:col-span-7 h-full min-h-0">
+                  <ProcessingPanel
+                    mode={mode}
+                    detections={activeDetections}
+                    policy={policy}
+                    evaluation={evaluation}
+                    highlightedDetectionId={highlightedDetectionId}
+                    onChangePolicy={setPolicy}
+                    onHighlightDetection={setHighlightedDetectionId}
+                  />
+                </div>
+              </div>
+            )}
+
+            {ecosystemTab === 'pipeline' && <PipelineSection mode={mode} />}
+
+            {ecosystemTab === 'map' && (
+              <ManaguaMapSection
+                scenario={activeScenario}
+                realGps={realGps}
+                gpsActive={gpsActive}
+                gpsLoading={gpsLoading}
+                gpsError={gpsError}
+                onToggleGps={handleToggleGps}
+                onSpeakText={(text) => {
+                  appendHistory({
+                    sender: 'avicia',
+                    text,
+                    source: 'simulated',
+                    spoken: true,
+                  });
+                  speakText(text);
+                }}
+              />
+            )}
+
+            {ecosystemTab === 'tech' && (
+              <TechnicalDetailsSection
+                mode={mode}
+                policy={policy}
+                cameraActive={cameraActive}
+                detectorStatus={detectorService.getStatus()}
+                speechSupported={speechService.isSynthesisSupported()}
+              />
+            )}
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+export default App;
