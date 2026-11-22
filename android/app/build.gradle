@@ -9,8 +9,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         def ciRunEnv = System.getenv("GITHUB_RUN_NUMBER")
         def ciRunOffset = (ciRunEnv != null && ciRunEnv ==~ /\d+/) ? Integer.parseInt(ciRunEnv) : 0
-        versionCode 38 + ciRunOffset
-        versionName "3.5.1"
+        versionCode 39 + ciRunOffset
+        versionName "3.5.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

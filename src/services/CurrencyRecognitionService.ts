@@ -286,10 +286,11 @@ export function parseCloudBanknoteReply(text: string): {
 export class CurrencyRecognitionService {
   private captureCanvas: HTMLCanvasElement | null = null;
   private reusableWorker: {
-    recognize: (img: HTMLCanvasElement) => Promise<{ data: { text: string } }>;
+    recognize: (img: string | HTMLCanvasElement) => Promise<{ data: { text: string } }>;
     terminate: () => Promise<unknown>;
   } | null = null;
   private workerInitPromise: Promise<void> | null = null;
+  private serverNotConfigured = false;
 
   private getProxyUrl(): string {
     if (Capacitor.isNativePlatform()) {
@@ -316,7 +317,12 @@ export class CurrencyRecognitionService {
       this.workerInitPromise = (async () => {
         const tesseract = await import('tesseract.js');
         this.reusableWorker = await tesseract.createWorker('spa');
-      })();
+      })().catch((err) => {
+        // Never leave a permanently rejected promise cached
+        this.workerInitPromise = null;
+        this.reusableWorker = null;
+        throw err;
+      });
     }
     await this.workerInitPromise;
     return this.reusableWorker;
@@ -523,7 +529,10 @@ export class CurrencyRecognitionService {
             signal: controller.signal,
           });
 
-          if (response.ok) {
+          if (response.status === 503) {
+            this.serverNotConfigured = true;
+          } else if (response.ok) {
+            this.serverNotConfigured = false;
             const payload = (await response.json()) as { text?: string };
             const text = (payload.text ?? '').trim();
             if (text) {
@@ -569,13 +578,20 @@ export class CurrencyRecognitionService {
         };
       }
       const ocrCanvas = this.prepareOcrCanvas(canvas);
-      const ocr = await worker.recognize(ocrCanvas);
+      const ocrDataUrl = ocrCanvas.toDataURL('image/png');
+      const ocr = await worker.recognize(ocrDataUrl);
       const parsed = parseBanknoteFromOcrText(ocr.data.text ?? '', dominantHue);
       return {
         detected: parsed.detected,
         currency: parsed.currency,
         denomination: parsed.denomination,
-        spokenText: parsed.detected ? parsed.spokenText : silentWhenAbsent ? '' : parsed.spokenText,
+        spokenText: parsed.detected
+          ? parsed.spokenText
+          : silentWhenAbsent
+            ? ''
+            : this.serverNotConfigured
+              ? 'El servidor aún no tiene activa la clave GEMINI_API_KEY en Vercel y el lector local no distinguió el número. Acércalo con buena luz o activa la clave en Vercel.'
+              : parsed.spokenText,
         badgeText: parsed.detected ? parsed.badgeText : '',
         engine: 'offline_ocr',
         elapsedMs: Math.round(performance.now() - start),
@@ -587,8 +603,10 @@ export class CurrencyRecognitionService {
         denomination: null,
         spokenText: silentWhenAbsent
           ? ''
-          : 'No pude leer el billete sin conexión. Acércalo con buena luz.',
-        badgeText: 'No confirmado',
+          : this.serverNotConfigured
+            ? 'Falta activar la variable GEMINI_API_KEY en Vercel (y hacer Redeploy) para reconocer billetes.'
+            : 'No se pudo procesar la imagen del billete. Intenta de nuevo con buena luz.',
+        badgeText: this.serverNotConfigured ? 'Falta clave en Vercel' : 'No confirmado',
         engine: 'offline_ocr',
         elapsedMs: Math.round(performance.now() - start),
       };

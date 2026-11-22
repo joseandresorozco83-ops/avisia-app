@@ -357,13 +357,13 @@ export class AssistiveVisionService {
     }
 
     let worker: {
-      recognize: (img: HTMLCanvasElement) => Promise<{ data: { text: string; confidence: number } }>;
+      recognize: (img: string | HTMLCanvasElement) => Promise<{ data: { text: string; confidence: number } }>;
       terminate: () => Promise<unknown>;
     } | null = null;
     try {
       const tesseract = await import('tesseract.js');
       worker = await tesseract.createWorker('spa');
-      const result = await worker.recognize(canvas);
+      const result = await worker.recognize(canvas.toDataURL('image/png'));
       const rawText = (result.data.text ?? '')
         .replace(/[^\p{L}\p{N}\s.,;:¿?¡!%$/-]/gu, ' ')
         .replace(/\s+/g, ' ')

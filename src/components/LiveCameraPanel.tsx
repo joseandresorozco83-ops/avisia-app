@@ -667,6 +667,11 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             speechService.vibratePattern('confirm');
             speakFeedback(info.spokenText);
           }
+        } else if (info.badgeText === 'Falta clave en Vercel') {
+          setAssistiveEngineLabel('Falta clave en Vercel');
+          setAssistiveResultText(
+            'Falta activar GEMINI_API_KEY en Vercel (y hacer Redeploy) para reconocer billetes con IA.'
+          );
         }
       } finally {
         scanBusy = false;
@@ -717,7 +722,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       setAssistiveResultText(res.text);
       setAssistiveEngineLabel(
         res.engine === 'gemini'
-          ? `OCR Gemini 2.5 Flash · ${res.elapsedMs}ms`
+          ? `OCR IA · ${res.elapsedMs}ms`
           : `OCR Offline Español · ${res.elapsedMs}ms`
       );
       speechService.vibratePattern('confirm');
@@ -1256,7 +1261,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v3.5.1 · Cámara Asistiva
+              AVISIA v3.5.2 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.
