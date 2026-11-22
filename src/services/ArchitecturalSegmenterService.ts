@@ -254,6 +254,16 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
   },
 };
 
+const BACKGROUND_LANDMARK_LABELS = new Set([
+  'curtain',
+  'cabinet',
+  'wardrobe',
+  'chest of drawers',
+  'bookcase',
+  'shelf',
+  'mirror',
+]);
+
 const WALKABLE_LABELS = new Set([
   'floor',
   'sidewalk',
@@ -397,7 +407,12 @@ export function parseArchitecturalSegments(
       }
     }
 
-    if (cfg.isInanimateObstacle && corrPct >= 20) {
+    // Background wall/room items (curtains, shelves, cabinets) are only urgent obstacles when very close
+    const effectiveObstacle =
+      cfg.isInanimateObstacle &&
+      (!BACKGROUND_LANDMARK_LABELS.has(labelRaw) || proximityZone === 'front_close');
+
+    if (effectiveObstacle && corrPct >= 20) {
       corridorBlockedByArch = true;
     }
 
@@ -413,7 +428,7 @@ export function parseArchitecturalSegments(
       firstSeenAt: now,
       lastSeenAt: now,
       isNew: true,
-      isInanimateObstacle: cfg.isInanimateObstacle,
+      isInanimateObstacle: effectiveObstacle,
       proximityZone,
       estimatedMeters,
       clockPosition,

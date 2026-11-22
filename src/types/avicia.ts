@@ -6,6 +6,8 @@ export type ArchModelVariant = 'segformer_b0' | 'segformer_b1';
 
 export type DoorState = 'open' | 'closed' | 'semi_open' | 'unknown';
 
+export type AudioVerbosity = 'essential' | 'detailed';
+
 export type AssistiveChannel = 'explore' | 'scene_ai' | 'read_text' | 'find_object' | 'light';
 
 export type DetectionSource = 'simulated' | 'real_image' | 'real_video';
@@ -182,6 +184,7 @@ export interface StreetAssistFeatures {
   architecturalVisionEnabled: boolean;
   archModelVariant: ArchModelVariant;
   showStixelOverlay: boolean;
+  audioVerbosity: AudioVerbosity;
   detectorEngine: DetectorEngineId;
   clockFaceDirections: boolean;
 }

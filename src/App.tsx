@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import type {
   ArchModelVariant,
+  AudioVerbosity,
   ConversationMessage,
   Detection,
   DetectorEngineId,
@@ -72,6 +73,7 @@ const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
   architecturalVisionEnabled: true,
   archModelVariant: 'segformer_b0',
   showStixelOverlay: true,
+  audioVerbosity: 'essential',
   detectorEngine: 'efficientdet_lite2',
   clockFaceDirections: true,
 };
@@ -111,6 +113,7 @@ export function App() {
   const [geminiKeySaved, setGeminiKeySaved] = useState<boolean>(() =>
     assistiveVisionService.hasGeminiApiKey()
   );
+  const [showAdvancedGemini, setShowAdvancedGemini] = useState<boolean>(false);
 
   const [streetFeatures, setStreetFeatures] = useState<StreetAssistFeatures>(() => {
     try {
@@ -139,6 +142,8 @@ export function App() {
   const stopGpsWatchRef = useRef<(() => void) | null>(null);
 
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
+  const isSpeakingRef = useRef<boolean>(false);
+  isSpeakingRef.current = isSpeaking;
   const [isListening, setIsListening] = useState<boolean>(false);
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [speechSettings, setSpeechSettings] = useState<SpeechSettings>(() => {
@@ -351,6 +356,7 @@ export function App() {
   const lastChimedObstacleRef = useRef<string | null>(null);
   const lastAutoSpokenAtRef = useRef<number>(0);
   const lastSpokenLiveMsgRef = useRef<{ text: string; at: number } | null>(null);
+  const lastSpokenLabelMapRef = useRef<Map<string, number>>(new Map());
   const obstacleSpeakTimerRef = useRef<number | null>(null);
   const wasPathClearRef = useRef<boolean>(false);
   const lastClearSpokenAtRef = useRef<number>(0);
@@ -362,6 +368,7 @@ export function App() {
         obstacleSpeakTimerRef.current = null;
       }
       lastChimedObstacleRef.current = null;
+      lastSpokenLabelMapRef.current.clear();
       wasPathClearRef.current = false;
       setPathClearConfirmed(false);
       speechService.cancel();
@@ -370,42 +377,89 @@ export function App() {
     }
 
     const alert = evaluation.obstacleAlert;
-    const alertKey = alert ? `${alert.labelEs}-${alert.zone}` : null;
-
-    if (alert && alertKey && alertKey !== lastChimedObstacleRef.current && speechSettings.enabled) {
-      lastChimedObstacleRef.current = alertKey;
-      speechService.playObstacleChime();
-
-      // Urgent obstacle alerts always speak right after the chime (unless soundOnlyMode is active)
-      if (
-        !demoActive &&
-        !streetFeatures.soundOnlyMode &&
-        ((mode === 'live_camera' && cameraActive) || mode === 'video_lab')
-      ) {
-        if (obstacleSpeakTimerRef.current !== null) {
-          window.clearTimeout(obstacleSpeakTimerRef.current);
-        }
-        const detourHint = stixelPlanRef.current?.shortDetourHint;
-        const msgToSpeak =
-          detourHint && mode === 'live_camera'
-            ? `${alert.message} ${detourHint}.`
-            : alert.message;
-        obstacleSpeakTimerRef.current = window.setTimeout(() => {
-          lastAutoSpokenAtRef.current = Date.now();
-          lastSpokenLiveMsgRef.current = { text: msgToSpeak, at: Date.now() };
-          appendHistory({
-            sender: 'avicia',
-            text: msgToSpeak,
-            source: 'real_video',
-            spoken: true,
-          });
-          speakText(msgToSpeak);
-        }, 240);
-      }
-    } else if (!alertKey) {
+    if (!alert) {
       lastChimedObstacleRef.current = null;
+      return;
     }
-  }, [evaluation.obstacleAlert, speechSettings.enabled, mode, cameraActive, demoActive]);
+    if (!speechSettings.enabled) return;
+
+    // Normalize obstacle base label (strip dynamic meter numbers/hints so jitter never re-triggers)
+    const normLabel = alert.labelEs
+      .toLowerCase()
+      .replace(/a \d+(\.\d+)? m.*/g, '')
+      .replace(/\(.*\)/g, '')
+      .trim();
+
+    const isLiveCamera = mode === 'live_camera' && cameraActive;
+    const isCriticalHazard =
+      alert.zone === 'front_close' ||
+      normLabel.includes('pared') ||
+      normLabel.includes('grada') ||
+      normLabel.includes('escalera');
+
+    // In calm "essential" mode, ignore distant front_mid objects in live camera (user can tap screen anytime)
+    if (isLiveCamera && streetFeatures.audioVerbosity === 'essential' && !isCriticalHazard) {
+      return;
+    }
+
+    const now = Date.now();
+    const lastForSameLabel = lastSpokenLabelMapRef.current.get(normLabel) ?? 0;
+    const perLabelCooldownMs = streetFeatures.audioVerbosity === 'essential' ? 10500 : 7500;
+    const globalMinGapMs = isCriticalHazard ? 2600 : 4500;
+
+    if (isLiveCamera) {
+      if (now - lastForSameLabel < perLabelCooldownMs) return;
+      if (now - lastAutoSpokenAtRef.current < globalMinGapMs) return;
+      if (isSpeakingRef.current && !isCriticalHazard) return;
+    }
+
+    const alertKey = `${normLabel}-${alert.zone}`;
+    if (alertKey === lastChimedObstacleRef.current && !isLiveCamera) return;
+
+    lastChimedObstacleRef.current = alertKey;
+    lastSpokenLabelMapRef.current.set(normLabel, now);
+    lastAutoSpokenAtRef.current = now;
+
+    // Play proximity chime ONLY for truly close hazards (or simulated demo steps)
+    if (!isLiveCamera || isCriticalHazard) {
+      speechService.playObstacleChime();
+    }
+
+    if (
+      !demoActive &&
+      !streetFeatures.soundOnlyMode &&
+      (isLiveCamera || mode === 'video_lab')
+    ) {
+      if (obstacleSpeakTimerRef.current !== null) {
+        window.clearTimeout(obstacleSpeakTimerRef.current);
+      }
+      const detourHint = stixelPlanRef.current?.shortDetourHint;
+      const msgToSpeak =
+        detourHint && isLiveCamera
+          ? `${alert.message} ${detourHint}.`
+          : alert.message;
+      obstacleSpeakTimerRef.current = window.setTimeout(() => {
+        const spokenAt = Date.now();
+        lastAutoSpokenAtRef.current = spokenAt;
+        lastSpokenLiveMsgRef.current = { text: msgToSpeak, at: spokenAt };
+        appendHistory({
+          sender: 'avicia',
+          text: msgToSpeak,
+          source: 'real_video',
+          spoken: true,
+        });
+        speakText(msgToSpeak);
+      }, isCriticalHazard ? 200 : 80);
+    }
+  }, [
+    evaluation.obstacleAlert,
+    speechSettings.enabled,
+    mode,
+    cameraActive,
+    demoActive,
+    streetFeatures.audioVerbosity,
+    streetFeatures.soundOnlyMode,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -415,24 +469,36 @@ export function App() {
     };
   }, []);
 
-  // Auto-speak general (non-obstacle) detections in Live Camera and Video modes
+  // Auto-speak general (non-obstacle) detections ONLY in Detailed mode (Essential stays quiet until tapped)
   useEffect(() => {
     const isLiveStreamMode =
       (mode === 'live_camera' && cameraActive) || mode === 'video_lab';
-    if (!isLiveStreamMode || !speechSettings.enabled || demoActive || streetFeatures.soundOnlyMode)
+    if (
+      !isLiveStreamMode ||
+      !speechSettings.enabled ||
+      demoActive ||
+      streetFeatures.soundOnlyMode ||
+      streetFeatures.audioVerbosity === 'essential'
+    ) {
       return;
-    if (realDetections.length === 0 || evaluation.obstacleAlert || isSpeaking) return;
+    }
+    if (realDetections.length === 0 || evaluation.obstacleAlert || isSpeakingRef.current) return;
 
     const now = Date.now();
-    const cooldownMs = streetFeatures.streetMode ? 1800 : 4200;
+    const cooldownMs = streetFeatures.streetMode ? 4500 : 7500;
     if (now - lastAutoSpokenAtRef.current < cooldownMs) return;
 
+    const topLabel = realDetections[0]?.labelEs.toLowerCase().trim() ?? '';
+    const lastForLabel = topLabel ? (lastSpokenLabelMapRef.current.get(topLabel) ?? 0) : 0;
+    if (topLabel && now - lastForLabel < 12000) return;
+
     const lastMsg = lastSpokenLiveMsgRef.current;
-    if (lastMsg && lastMsg.text === evaluation.generatedMessage && now - lastMsg.at < 7000) {
+    if (lastMsg && lastMsg.text === evaluation.generatedMessage && now - lastMsg.at < 12000) {
       return;
     }
 
     lastAutoSpokenAtRef.current = now;
+    if (topLabel) lastSpokenLabelMapRef.current.set(topLabel, now);
     lastSpokenLiveMsgRef.current = { text: evaluation.generatedMessage, at: now };
     appendHistory({
       sender: 'avicia',
@@ -448,11 +514,13 @@ export function App() {
     evaluation.generatedMessage,
     evaluation.obstacleAlert,
     speechSettings.enabled,
-    isSpeaking,
     demoActive,
+    streetFeatures.audioVerbosity,
+    streetFeatures.streetMode,
+    streetFeatures.soundOnlyMode,
   ]);
 
-  // Verified "Camino despejado" spoken confirmation & calm periodic reassurance
+  // Verified "Camino despejado" calm spoken confirmation (once on clear transition + gentle 20s heartbeat)
   useEffect(() => {
     if (
       mode !== 'live_camera' ||
@@ -469,9 +537,11 @@ export function App() {
       return;
     }
 
-    const announceClear = (phrase: string) => {
+    const announceClear = (phrase: string, minGapMs: number) => {
       const now = Date.now();
-      if (now - lastClearSpokenAtRef.current < 4500) return;
+      if (isSpeakingRef.current) return;
+      if (now - lastClearSpokenAtRef.current < minGapMs) return;
+      if (now - lastAutoSpokenAtRef.current < 4000) return;
       lastClearSpokenAtRef.current = now;
       lastAutoSpokenAtRef.current = now;
       speechService.playClearPathTone();
@@ -500,16 +570,14 @@ export function App() {
       return short ? 'Camino despejado.' : 'Camino despejado al frente.';
     };
 
-    if (!wasPathClearRef.current && !isSpeaking) {
+    if (!wasPathClearRef.current) {
       wasPathClearRef.current = true;
-      announceClear(buildClearPhrase(false));
+      announceClear(buildClearPhrase(false), 12000);
     }
 
     const timer = window.setInterval(() => {
-      if (!isSpeaking) {
-        announceClear(buildClearPhrase(true));
-      }
-    }, 9000);
+      announceClear(buildClearPhrase(true), 19000);
+    }, 20000);
 
     return () => window.clearInterval(timer);
   }, [
@@ -519,7 +587,6 @@ export function App() {
     demoActive,
     speechSettings.enabled,
     streetFeatures.soundOnlyMode,
-    isSpeaking,
   ]);
 
   // v2.5 Stereo Sonar Ping in Live Camera mode (when stereoSonar or soundOnlyMode is ON)
@@ -1040,7 +1107,7 @@ export function App() {
                     AVISIA
                   </h1>
                   <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                    v3.2 Asistiva
+                    v3.2.1 Asistiva
                   </span>
                 </div>
                 <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
@@ -1180,7 +1247,7 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-bold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[9px] font-bold text-[#8aebff]">
-                          v3.2
+                          v3.2.1
                         </span>
                       </div>
                       <span className="font-mono text-[10px] text-[#bbc9cd] truncate">UAM Managua</span>
@@ -1456,6 +1523,41 @@ export function App() {
                     </span>
                   </button>
 
+                  <div className="space-y-1">
+                    <span className="text-[10px] text-[#bbc9cd] block">
+                      Frecuencia de alertas de voz:
+                    </span>
+                    <div className="grid grid-cols-2 gap-1">
+                      {(
+                        [
+                          { id: 'essential', label: 'Esenciales (Tranquilo)' },
+                          { id: 'detailed', label: 'Detallado' },
+                        ] as Array<{ id: AudioVerbosity; label: string }>
+                      ).map((opt) => {
+                        const selected = streetFeatures.audioVerbosity === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() =>
+                              setStreetFeatures((prev) => ({
+                                ...prev,
+                                audioVerbosity: opt.id,
+                              }))
+                            }
+                            className={`py-1.5 px-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                              selected
+                                ? 'bg-[#4edea3] text-[#003824] border-[#4edea3]'
+                                : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/50'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <button
                     type="button"
                     role="switch"
@@ -1482,33 +1584,48 @@ export function App() {
                     </span>
                   </button>
 
-                  <div className="space-y-1.5 pt-1 border-t border-[#3c494c]/30">
-                    <label
-                      htmlFor="gemini-key-input"
-                      className="text-[10px] text-[#bbc9cd] block leading-snug"
+                  <div className="pt-1 border-t border-[#3c494c]/30">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedGemini((v) => !v)}
+                      className="w-full flex items-center justify-between gap-2 px-2 py-1 rounded-lg text-[10px] font-semibold text-[#859397] hover:text-[#dfe2ee]"
                     >
-                      Clave API Gemini Flash (opcional, gratis en AI Studio — desbloquea puertas, gradas, paredes y OCR exacto estilo Be My AI):
-                    </label>
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        id="gemini-key-input"
-                        type="password"
-                        value={geminiKeyInput}
-                        onChange={(e) => setGeminiKeyInput(e.target.value)}
-                        placeholder="AIza..."
-                        className="flex-1 min-w-0 h-8 px-2 rounded-lg bg-[#0f131c] border border-[#3c494c]/50 text-xs text-[#dfe2ee]"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          assistiveVisionService.setGeminiApiKey(geminiKeyInput);
-                          setGeminiKeySaved(assistiveVisionService.hasGeminiApiKey());
-                        }}
-                        className="h-8 px-2.5 rounded-lg bg-[#4edea3] text-[#003824] font-bold text-[11px] shrink-0"
-                      >
-                        Guardar
-                      </button>
-                    </div>
+                      <span>Avanzado: IA en la nube (opcional)</span>
+                      <span className="font-mono text-[#8aebff]">
+                        {showAdvancedGemini ? 'Ocultar' : geminiKeySaved ? 'Activa' : '100% Local'}
+                      </span>
+                    </button>
+
+                    {showAdvancedGemini && (
+                      <div className="mt-1.5 space-y-1.5">
+                        <label
+                          htmlFor="gemini-key-input"
+                          className="text-[10px] text-[#bbc9cd] block leading-snug"
+                        >
+                          No es obligatoria. Solo si deseas conectar Gemini Flash para descripciones extra en la nube:
+                        </label>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            id="gemini-key-input"
+                            type="password"
+                            value={geminiKeyInput}
+                            onChange={(e) => setGeminiKeyInput(e.target.value)}
+                            placeholder="Clave opcional (AIza...)"
+                            className="flex-1 min-w-0 h-8 px-2 rounded-lg bg-[#0f131c] border border-[#3c494c]/50 text-xs text-[#dfe2ee]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              assistiveVisionService.setGeminiApiKey(geminiKeyInput);
+                              setGeminiKeySaved(assistiveVisionService.hasGeminiApiKey());
+                            }}
+                            className="h-8 px-2.5 rounded-lg bg-[#4edea3] text-[#003824] font-bold text-[11px] shrink-0"
+                          >
+                            Guardar
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
