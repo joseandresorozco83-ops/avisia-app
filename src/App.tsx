@@ -71,18 +71,22 @@ type EcosystemTab = 'core' | 'pipeline' | 'map' | 'tech';
 
 export function App() {
   const isNativeApp = Capacitor.isNativePlatform();
+  const isMobileExperience =
+    isNativeApp || (typeof window !== 'undefined' && window.innerWidth < 1024);
   const scenarios = useMemo(() => scenarioManager.getAllScenarios(), []);
 
   const [mobileTab, setMobileTab] = useState<MobileTab>('vision');
   const [androidMenuOpen, setAndroidMenuOpen] = useState<boolean>(false);
   const [ecosystemTab, setEcosystemTab] = useState<EcosystemTab>('core');
-  const [mode, setMode] = useState<OperationMode>(isNativeApp ? 'live_camera' : 'simulation');
+  const [mode, setMode] = useState<OperationMode>(
+    isMobileExperience ? 'live_camera' : 'simulation'
+  );
   const [scenarioId, setScenarioId] = useState<string>(scenarios[0].id);
   const [simStepIndex, setSimStepIndex] = useState<number>(0);
   const [simPlaying, setSimPlaying] = useState<boolean>(false);
 
   const [policy, setPolicy] = useState<PolicyType>('C01');
-  const [threshold, setThreshold] = useState<number>(isNativeApp ? 0.36 : 0.45);
+  const [threshold, setThreshold] = useState<number>(isMobileExperience ? 0.36 : 0.45);
   const [highlightedDetectionId, setHighlightedDetectionId] = useState<string | null>(null);
 
   const [realDetections, setRealDetections] = useState<Detection[]>([]);
@@ -1107,8 +1111,8 @@ export function App() {
                   </div>
                 </div>
 
-                {/* Botón de Demo Autónoma (siempre accesible en la app Android) */}
-                {isNativeApp && (
+                {/* Botón de Demo Autónoma (siempre accesible en móvil y app Android) */}
+                {isMobileExperience && (
                   <button
                     type="button"
                     onClick={() => {
