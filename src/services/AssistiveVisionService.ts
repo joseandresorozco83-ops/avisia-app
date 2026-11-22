@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import type { Detection } from '../types/avicia';
 import type { ArchitecturalAnalysis } from './ArchitecturalSegmenterService';
 import type { DepthMapSummary } from './DepthModelService';
@@ -5,8 +6,7 @@ import type { ProximityAssessment } from './DepthProximityService';
 import type { StixelNavigationPlan } from './DoorAndStixelService';
 import { formatDistanceSteps } from './MessagePolicy';
 
-const GEMINI_KEY_STORAGE = 'avisia_gemini_api_key_v1';
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const PRODUCTION_PROXY_URL = 'https://avisia-app.vercel.app/api/gemini-vision';
 
 export interface AssistiveResult {
   text: string;
@@ -17,30 +17,52 @@ export interface AssistiveResult {
 
 export class AssistiveVisionService {
   private captureCanvas: HTMLCanvasElement | null = null;
+  private cloudAvailable: boolean | null = null;
 
-  getGeminiApiKey(): string {
-    try {
-      return (localStorage.getItem(GEMINI_KEY_STORAGE) ?? '').trim();
-    } catch {
-      return '';
+  /**
+   * Resolves the secure server-side proxy endpoint.
+   * The Gemini API key NEVER lives in the web bundle, Android APK, or GitHub repo;
+   * it is stored strictly as an encrypted environment variable on Vercel.
+   */
+  private getProxyUrl(): string {
+    if (Capacitor.isNativePlatform()) {
+      return PRODUCTION_PROXY_URL;
     }
+    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+      return PRODUCTION_PROXY_URL;
+    }
+    return '/api/gemini-vision';
   }
 
-  setGeminiApiKey(key: string): void {
+  async checkCloudAvailability(): Promise<boolean> {
+    if (this.cloudAvailable !== null) return this.cloudAvailable;
+    if (typeof fetch !== 'function') {
+      this.cloudAvailable = false;
+      return false;
+    }
     try {
-      const cleaned = key.trim();
-      if (!cleaned) {
-        localStorage.removeItem(GEMINI_KEY_STORAGE);
-      } else {
-        localStorage.setItem(GEMINI_KEY_STORAGE, cleaned);
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(this.getProxyUrl(), {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      window.clearTimeout(timeout);
+      if (!res.ok) {
+        this.cloudAvailable = false;
+        return false;
       }
+      const data = (await res.json()) as { configured?: boolean };
+      this.cloudAvailable = Boolean(data.configured);
+      return this.cloudAvailable;
     } catch {
-      // Ignore storage errors
+      this.cloudAvailable = false;
+      return false;
     }
   }
 
-  hasGeminiApiKey(): boolean {
-    return this.getGeminiApiKey().length >= 15;
+  isCloudReady(): boolean {
+    return this.cloudAvailable === true;
   }
 
   describeLightLevel(brightnessPct: number): string {
@@ -106,7 +128,10 @@ export class AssistiveVisionService {
       const range = Math.max(20, maxL - minL);
       for (let i = 0; i < lumas.length; i++) {
         const p = i * 4;
-        const stretched = Math.min(255, Math.max(0, Math.round(((lumas[i] - minL) / range) * 255)));
+        const stretched = Math.min(
+          255,
+          Math.max(0, Math.round(((lumas[i] - minL) / range) * 255))
+        );
         d[p] = stretched;
         d[p + 1] = stretched;
         d[p + 2] = stretched;
@@ -117,74 +142,52 @@ export class AssistiveVisionService {
     return this.captureCanvas;
   }
 
-  private async callGeminiVision(
+  private async callCloudVisionProxy(
     canvas: HTMLCanvasElement,
     prompt: string
   ): Promise<string> {
-    const apiKey = this.getGeminiApiKey();
-    if (!apiKey) {
-      throw new Error('No hay clave Gemini configurada.');
-    }
-
     const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
-    const base64Data = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+    const imageBase64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                inlineData: {
-                  mimeType: 'image/jpeg',
-                  data: base64Data,
-                },
-              },
-              { text: prompt },
-            ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 240,
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 14000);
+    try {
+      const response = await fetch(this.getProxyUrl(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-      }),
-    });
+        body: JSON.stringify({
+          imageBase64,
+          mimeType: 'image/jpeg',
+          prompt,
+        }),
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '');
-      throw new Error(`Gemini HTTP ${response.status}: ${errBody.slice(0, 120)}`);
+      if (!response.ok) {
+        if (response.status === 503) {
+          this.cloudAvailable = false;
+        }
+        throw new Error(`Proxy HTTP ${response.status}`);
+      }
+
+      const payload = (await response.json()) as { text?: string };
+      const text = (payload.text ?? '').trim();
+      if (!text) {
+        throw new Error('Respuesta vacía del servidor de visión.');
+      }
+      this.cloudAvailable = true;
+      return text;
+    } finally {
+      window.clearTimeout(timeout);
     }
-
-    const payload = (await response.json()) as {
-      candidates?: Array<{
-        content?: { parts?: Array<{ text?: string }> };
-      }>;
-    };
-
-    const text =
-      payload.candidates?.[0]?.content?.parts
-        ?.map((p) => p.text ?? '')
-        .join(' ')
-        .trim() ?? '';
-
-    if (!text) {
-      throw new Error('Gemini devolvió una respuesta vacía.');
-    }
-    return text;
   }
 
   /**
-   * Be My AI-inspired holistic scene description:
-   * Uses Gemini 2.5 Flash Vision when configured; otherwise synthesizes an honest,
-   * clock-face spatial report from local detections, depth, and luminance.
+   * Holistic scene description:
+   * Uses the private server-side Gemini 2.5 Flash proxy seamlessly when available;
+   * otherwise synthesizes an honest, clock-face + Stixel local spatial report offline.
    */
   async describeScene(
     source: HTMLVideoElement | HTMLImageElement | null,
@@ -196,7 +199,7 @@ export class AssistiveVisionService {
   ): Promise<AssistiveResult> {
     const start = performance.now();
 
-    if (source && this.hasGeminiApiKey()) {
+    if (source && typeof navigator !== 'undefined' && navigator.onLine !== false) {
       const canvas = this.captureFrameToCanvas(source, 768, false);
       if (canvas) {
         try {
@@ -207,26 +210,14 @@ export class AssistiveVisionService {
             '3) Menciona cualquier texto o número de bus claramente legible y el nivel de luz.',
             'Reglas estrictas: nunca inventes objetos si la imagen está borrosa u oscura (dilo honestamente); nunca digas que es seguro cruzar una calle.',
           ].join(' ');
-          const text = await this.callGeminiVision(canvas, prompt);
+          const text = await this.callCloudVisionProxy(canvas, prompt);
           return {
             text,
             engine: 'gemini',
             elapsedMs: Math.round(performance.now() - start),
           };
-        } catch (err) {
-          const fallback = this.buildLocalSceneSummary(
-            detections,
-            proximity,
-            depthSummary,
-            archSummary,
-            stixelPlan
-          );
-          return {
-            text: fallback,
-            engine: 'local',
-            elapsedMs: Math.round(performance.now() - start),
-            error: err instanceof Error ? err.message : 'Error al consultar Gemini Vision.',
-          };
+        } catch {
+          // Graceful transparent fallback to local spatial synthesis
         }
       }
     }
@@ -325,8 +316,8 @@ export class AssistiveVisionService {
 
   /**
    * Seeing AI / Lookout-inspired Text Reader (OCR):
-   * Uses Gemini 2.5 Flash Vision when configured, otherwise runs 100% free & offline
-   * Tesseract.js Spanish OCR lazily in a Web Worker.
+   * Uses the private server-side Gemini proxy when online/configured,
+   * otherwise runs 100% free & offline Tesseract.js Spanish OCR in a Web Worker.
    */
   async readText(source: HTMLVideoElement | HTMLImageElement | null): Promise<AssistiveResult> {
     const start = performance.now();
@@ -338,20 +329,20 @@ export class AssistiveVisionService {
       };
     }
 
-    if (this.hasGeminiApiKey()) {
+    if (typeof navigator !== 'undefined' && navigator.onLine !== false) {
       const canvas = this.captureFrameToCanvas(source, 960, false);
       if (canvas) {
         try {
           const prompt =
             'Lee en voz alta y con exactitud todo texto legible en esta imagen (letreros, números de ruta de autobús, etiquetas, documentos, precios). Responde solo con el texto leído en orden natural en español, sin explicaciones extra. Si no hay texto legible, responde exactamente: No se detecta texto legible frente a la cámara.';
-          const text = await this.callGeminiVision(canvas, prompt);
+          const text = await this.callCloudVisionProxy(canvas, prompt);
           return {
             text,
             engine: 'gemini',
             elapsedMs: Math.round(performance.now() - start),
           };
         } catch {
-          // Fall back to local Tesseract.js OCR
+          // Fall back cleanly to local Tesseract.js OCR
         }
       }
     }
@@ -365,7 +356,10 @@ export class AssistiveVisionService {
       };
     }
 
-    let worker: { recognize: (img: HTMLCanvasElement) => Promise<{ data: { text: string; confidence: number } }>; terminate: () => Promise<unknown> } | null = null;
+    let worker: {
+      recognize: (img: HTMLCanvasElement) => Promise<{ data: { text: string; confidence: number } }>;
+      terminate: () => Promise<unknown>;
+    } | null = null;
     try {
       const tesseract = await import('tesseract.js');
       worker = await tesseract.createWorker('spa');
@@ -404,20 +398,20 @@ export class AssistiveVisionService {
   }
 
   /**
-   * Answers open-ended user questions about the current live camera view using Gemini Vision
-   * if configured (otherwise returns null so ConversationService uses local logic).
+   * Answers open-ended user questions about the current live camera view via the private
+   * server-side proxy when available (otherwise returns null so ConversationService answers locally).
    */
   async answerVisualQuestion(
     source: HTMLVideoElement | HTMLImageElement | null,
     question: string
   ): Promise<string | null> {
-    if (!source || !this.hasGeminiApiKey()) return null;
+    if (!source || (typeof navigator !== 'undefined' && navigator.onLine === false)) return null;
     const canvas = this.captureFrameToCanvas(source, 768, false);
     if (!canvas) return null;
 
     try {
       const prompt = `Eres AVISIA, asistente visual para una persona ciega. Responde en español en máximo 2 frases claras y honestas a la pregunta del usuario basándote SOLO en la imagen. Nunca inventes información ni confirmes si es seguro cruzar una calle. Pregunta: "${question}"`;
-      return await this.callGeminiVision(canvas, prompt);
+      return await this.callCloudVisionProxy(canvas, prompt);
     } catch {
       return null;
     }

@@ -1073,7 +1073,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v3.2.1 · Cámara Asistiva
+              AVISIA v3.2.2 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.
@@ -1137,9 +1137,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             )}
             {assistiveBusy
               ? 'Describiendo escena...'
-              : assistiveVisionService.hasGeminiApiKey()
-                ? 'Describir escena (Gemini IA)'
-                : 'Describir escena (Modo Local)'}
+              : 'Describir escena ahora (IA)'}
           </button>
           {assistiveResultText && (
             <div className="p-2 rounded-lg bg-[#0f131c] border border-[#3c494c]/40 text-xs text-[#dfe2ee] leading-snug">

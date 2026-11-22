@@ -2,6 +2,8 @@ node_modules/
 dist/
 .DS_Store
 *.local
+.env
+.env.*
 
 # Android / Capacitor build artifacts
 android/.gradle/

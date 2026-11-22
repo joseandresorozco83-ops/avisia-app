@@ -107,13 +107,6 @@ export function App() {
   const stixelPlanRef = useRef<StixelNavigationPlan | null>(null);
   const [autoStartCamera, setAutoStartCamera] = useState<boolean>(false);
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
-  const [geminiKeyInput, setGeminiKeyInput] = useState<string>(() =>
-    assistiveVisionService.getGeminiApiKey()
-  );
-  const [geminiKeySaved, setGeminiKeySaved] = useState<boolean>(() =>
-    assistiveVisionService.hasGeminiApiKey()
-  );
-  const [showAdvancedGemini, setShowAdvancedGemini] = useState<boolean>(false);
 
   const [streetFeatures, setStreetFeatures] = useState<StreetAssistFeatures>(() => {
     try {
@@ -839,8 +832,7 @@ export function App() {
       !isCrossingSafetyQuery &&
       mode === 'live_camera' &&
       cameraActive &&
-      liveVideoRef.current &&
-      assistiveVisionService.hasGeminiApiKey()
+      liveVideoRef.current
     ) {
       void assistiveVisionService
         .answerVisualQuestion(liveVideoRef.current, question)
@@ -1107,7 +1099,7 @@ export function App() {
                     AVISIA
                   </h1>
                   <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                    v3.2.1 Asistiva
+                    v3.2.2 Asistiva
                   </span>
                 </div>
                 <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
@@ -1247,7 +1239,7 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-bold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[9px] font-bold text-[#8aebff]">
-                          v3.2.1
+                          v3.2.2
                         </span>
                       </div>
                       <span className="font-mono text-[10px] text-[#bbc9cd] truncate">UAM Managua</span>
@@ -1394,7 +1386,7 @@ export function App() {
                       v3.2 · Puertas, Stixels e IA
                     </span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#22d3ee]/15 text-[#8aebff]">
-                      {geminiKeySaved ? 'Gemini IA ON' : '100% Local'}
+                      IA Activa
                     </span>
                   </div>
 
@@ -1583,50 +1575,6 @@ export function App() {
                       {streetFeatures.clockFaceDirections ? 'ON' : 'OFF'}
                     </span>
                   </button>
-
-                  <div className="pt-1 border-t border-[#3c494c]/30">
-                    <button
-                      type="button"
-                      onClick={() => setShowAdvancedGemini((v) => !v)}
-                      className="w-full flex items-center justify-between gap-2 px-2 py-1 rounded-lg text-[10px] font-semibold text-[#859397] hover:text-[#dfe2ee]"
-                    >
-                      <span>Avanzado: IA en la nube (opcional)</span>
-                      <span className="font-mono text-[#8aebff]">
-                        {showAdvancedGemini ? 'Ocultar' : geminiKeySaved ? 'Activa' : '100% Local'}
-                      </span>
-                    </button>
-
-                    {showAdvancedGemini && (
-                      <div className="mt-1.5 space-y-1.5">
-                        <label
-                          htmlFor="gemini-key-input"
-                          className="text-[10px] text-[#bbc9cd] block leading-snug"
-                        >
-                          No es obligatoria. Solo si deseas conectar Gemini Flash para descripciones extra en la nube:
-                        </label>
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            id="gemini-key-input"
-                            type="password"
-                            value={geminiKeyInput}
-                            onChange={(e) => setGeminiKeyInput(e.target.value)}
-                            placeholder="Clave opcional (AIza...)"
-                            className="flex-1 min-w-0 h-8 px-2 rounded-lg bg-[#0f131c] border border-[#3c494c]/50 text-xs text-[#dfe2ee]"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              assistiveVisionService.setGeminiApiKey(geminiKeyInput);
-                              setGeminiKeySaved(assistiveVisionService.hasGeminiApiKey());
-                            }}
-                            className="h-8 px-2.5 rounded-lg bg-[#4edea3] text-[#003824] font-bold text-[11px] shrink-0"
-                          >
-                            Guardar
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
                 </div>
 
                 {/* v2.5 · Modo Calle y Manos Libres (Interruptores opcionales) */}
