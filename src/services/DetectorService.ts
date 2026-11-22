@@ -29,6 +29,28 @@ const CATEGORY_MAP: Record<
   book: { category: 'unknown', labelEs: 'Libro', priority: 65 },
   dog: { category: 'unknown', labelEs: 'Perro', priority: 88 },
   cat: { category: 'unknown', labelEs: 'Gato', priority: 82 },
+  truck: { category: 'car', labelEs: 'Camión', priority: 88, isInanimateObstacle: true },
+  train: { category: 'bus', labelEs: 'Tren', priority: 90, isInanimateObstacle: true },
+  refrigerator: { category: 'obstacle', labelEs: 'Refrigerador', priority: 86, isInanimateObstacle: true },
+  oven: { category: 'obstacle', labelEs: 'Estufa', priority: 84, isInanimateObstacle: true },
+  microwave: { category: 'obstacle', labelEs: 'Microondas', priority: 75, isInanimateObstacle: true },
+  sink: { category: 'obstacle', labelEs: 'Lavabo', priority: 82, isInanimateObstacle: true },
+  toilet: { category: 'obstacle', labelEs: 'Inodoro', priority: 84, isInanimateObstacle: true },
+  handbag: { category: 'obstacle', labelEs: 'Bolso', priority: 76, isInanimateObstacle: true },
+  umbrella: { category: 'obstacle', labelEs: 'Paraguas', priority: 74 },
+  remote: { category: 'unknown', labelEs: 'Control remoto', priority: 60 },
+  keyboard: { category: 'unknown', labelEs: 'Teclado', priority: 65 },
+  mouse: { category: 'unknown', labelEs: 'Ratón', priority: 60 },
+  clock: { category: 'unknown', labelEs: 'Reloj', priority: 62 },
+  vase: { category: 'obstacle', labelEs: 'Florero', priority: 76, isInanimateObstacle: true },
+  bowl: { category: 'unknown', labelEs: 'Tazón', priority: 64 },
+  'wine glass': { category: 'unknown', labelEs: 'Copa', priority: 64 },
+  scissors: { category: 'unknown', labelEs: 'Tijeras', priority: 62 },
+  skateboard: { category: 'obstacle', labelEs: 'Patineta', priority: 85, isInanimateObstacle: true },
+  'sports ball': { category: 'obstacle', labelEs: 'Pelota', priority: 74 },
+  'teddy bear': { category: 'unknown', labelEs: 'Peluche', priority: 60 },
+  bird: { category: 'unknown', labelEs: 'Ave', priority: 70 },
+  horse: { category: 'unknown', labelEs: 'Caballo', priority: 88 },
 };
 
 export class DetectorService {
@@ -201,9 +223,10 @@ export class DetectorService {
 
       const centerX = x + width / 2;
       const bottomY = y + height;
-      const isCentered = centerX >= 25 && centerX <= 75;
+      const overlapsCenterCorridor = x + width >= 28 && x <= 72;
+      const isCentered = (centerX >= 22 && centerX <= 78) || overlapsCenterCorridor;
       const proximityZone: Detection['proximityZone'] = isCentered
-        ? height >= 25 || bottomY >= 70
+        ? height >= 28 || bottomY >= 70 || width >= 42
           ? 'front_close'
           : 'front_mid'
         : 'side';

@@ -49,6 +49,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const loopRef = useRef<number | null>(null);
+  const runningRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!depthAnythingEnabled || !cameraActive) {
@@ -237,12 +238,15 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     speechService.unlockAudio();
 
     try {
+      runningRef.current = true;
       await cameraService.startCamera(videoRef.current, selectedDeviceId || undefined);
+      if (!runningRef.current) return;
       setCameraActive(true);
       onCameraStateChange(true);
       await refreshDevices();
 
       const detStatus = await detectorService.initialize(threshold);
+      if (!runningRef.current) return;
       if (!detStatus.ready) {
         setDetectorPendingNote(
           detStatus.error ??
@@ -252,9 +256,10 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       }
 
       const runFrame = async () => {
-        if (!videoRef.current || videoRef.current.readyState < 2) return;
+        if (!runningRef.current || !videoRef.current || videoRef.current.readyState < 2) return;
         try {
           const res = await detectorService.detectOnVideoFrame(videoRef.current, threshold);
+          if (!runningRef.current) return;
           const prox = corridorSensorOn
             ? depthProximityService.analyzeVideoCorridor(videoRef.current, res.detections)
             : null;
@@ -268,35 +273,41 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           if (
             corridorSensorOn &&
             prox &&
-            !hasFrontObstacle &&
-            (prox.verticalObstacleDetected ||
-              prox.floorVariationDetected ||
-              depthSummaryRef.current?.closeObstacleAhead)
+            (prox.floorVariationDetected ||
+              (!hasFrontObstacle &&
+                (prox.verticalObstacleDetected || depthSummaryRef.current?.closeObstacleAhead)))
           ) {
             const depthDist = depthSummaryRef.current?.estimatedMeters;
+            const isStep = prox.floorVariationDetected;
             combinedDetections.push({
               id: `corridor-${Date.now()}`,
               category: 'obstacle',
-              labelEs: depthSummaryRef.current?.closeObstacleAhead
-                ? `Obstáculo a ${depthDist} m`
-                : prox.verticalObstacleDetected
-                  ? 'Obstáculo vertical adelante'
-                  : 'Variación en el suelo',
+              labelEs: isStep
+                ? 'Grada o desnivel'
+                : depthSummaryRef.current?.closeObstacleAhead
+                  ? `Obstáculo a ${depthDist} m`
+                  : 'Obstáculo inmóvil',
               source: 'real_video',
-              confidence: Math.min(0.94, Math.max(0.55, prox.corridorScore / 100)),
-              bbox: { x: 34, y: 50, width: 32, height: 40 },
+              confidence: Math.min(0.95, Math.max(0.6, prox.corridorScore / 100)),
+              bbox: { x: 32, y: isStep ? 58 : 48, width: 36, height: isStep ? 34 : 42 },
               confirmationStatus: 'confirmed',
-              priority: 91,
+              priority: 94,
               firstSeenAt: Date.now(),
               lastSeenAt: Date.now(),
               isNew: true,
               isInanimateObstacle: true,
-              proximityZone: depthSummaryRef.current?.closeObstacleAhead
-                ? 'front_close'
-                : 'front_mid',
+              proximityZone:
+                prox.level === 'danger' || depthSummaryRef.current?.closeObstacleAhead
+                  ? 'front_close'
+                  : 'front_mid',
             });
           }
 
+          if (prox?.level === 'danger' && typeof navigator !== 'undefined' && navigator.vibrate) {
+            navigator.vibrate([100, 50, 100]);
+          }
+
+          if (!runningRef.current) return;
           setLiveCount(combinedDetections.length);
           drawBoxes(combinedDetections, prox);
           telemetryService.record({
@@ -330,10 +341,12 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   };
 
   const handleStop = () => {
+    runningRef.current = false;
     if (loopRef.current !== null) {
       window.clearInterval(loopRef.current);
       loopRef.current = null;
     }
+    speechService.cancel();
     clearCanvas();
     setLiveCount(0);
     setProximity(null);

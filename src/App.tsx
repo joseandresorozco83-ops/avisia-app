@@ -82,7 +82,7 @@ export function App() {
   const [simPlaying, setSimPlaying] = useState<boolean>(false);
 
   const [policy, setPolicy] = useState<PolicyType>('C01');
-  const [threshold, setThreshold] = useState<number>(0.45);
+  const [threshold, setThreshold] = useState<number>(isNativeApp ? 0.36 : 0.45);
   const [highlightedDetectionId, setHighlightedDetectionId] = useState<string | null>(null);
 
   const [realDetections, setRealDetections] = useState<Detection[]>([]);
@@ -322,6 +322,17 @@ export function App() {
   const obstacleSpeakTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (mode === 'live_camera' && !cameraActive) {
+      if (obstacleSpeakTimerRef.current !== null) {
+        window.clearTimeout(obstacleSpeakTimerRef.current);
+        obstacleSpeakTimerRef.current = null;
+      }
+      lastChimedObstacleRef.current = null;
+      speechService.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+
     const alert = evaluation.obstacleAlert;
     const alertKey = alert ? `${alert.labelEs}-${alert.zone}` : null;
 
@@ -1095,6 +1106,21 @@ export function App() {
                     </button>
                   </div>
                 </div>
+
+                {/* Botón de Demo Autónoma (siempre accesible en la app Android) */}
+                {isNativeApp && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      speechService.unlockAudio();
+                      startGuidedDemo();
+                    }}
+                    className="w-full py-3 px-4 rounded-2xl bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] font-bold text-sm flex items-center justify-center gap-2 shadow-md"
+                  >
+                    <Play className="w-4 h-4 fill-current" />
+                    Iniciar Demo Autónoma
+                  </button>
+                )}
 
                 {/* v2.5 · Modo Calle y Manos Libres (Interruptores opcionales) */}
                 <div className="p-3 rounded-2xl border border-[#3c494c]/40 bg-[#1c2028] space-y-2">

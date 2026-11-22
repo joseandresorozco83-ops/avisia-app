@@ -33,6 +33,7 @@ export class SpeechService {
   private activeUtterance: SpeechSynthesisUtterance | null = null;
   private fallbackTimer: number | null = null;
   private sharedAudioCtx: AudioContext | null = null;
+  private speechEpoch = 0;
 
   private getAudioContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -209,28 +210,34 @@ export class SpeechService {
       return;
     }
 
+    const myEpoch = ++this.speechEpoch;
     const naturalText = this.prepareNaturalProsody(text);
 
-    // Native Android / Capacitor TextToSpeech (works reliably even when WebView speechSynthesis is silent)
+    // Native Android / Capacitor TextToSpeech with strict epoch guard so audios never mix
     if (Capacitor.isNativePlatform()) {
       callbacks?.onStart?.();
       void TextToSpeech.stop()
         .catch(() => {})
-        .then(() =>
-          TextToSpeech.speak({
+        .then(() => {
+          if (this.speechEpoch !== myEpoch) return;
+          return TextToSpeech.speak({
             text: naturalText,
             lang: 'es-ES',
             rate: Math.min(1.4, Math.max(0.75, settings.rate)),
             pitch: 1.03,
             volume: 1.0,
             category: 'playback',
-          })
-        )
+          });
+        })
         .then(() => {
-          callbacks?.onEnd?.();
+          if (this.speechEpoch === myEpoch) {
+            callbacks?.onEnd?.();
+          }
         })
         .catch(() => {
-          callbacks?.onError?.();
+          if (this.speechEpoch === myEpoch) {
+            callbacks?.onError?.();
+          }
         });
       return;
     }
@@ -307,6 +314,11 @@ export class SpeechService {
   }
 
   cancel(): void {
+    this.speechEpoch++;
+    if (this.fallbackTimer !== null) {
+      window.clearTimeout(this.fallbackTimer);
+      this.fallbackTimer = null;
+    }
     if (Capacitor.isNativePlatform()) {
       void TextToSpeech.stop().catch(() => {});
     }

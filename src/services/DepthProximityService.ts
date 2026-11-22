@@ -176,39 +176,56 @@ export class DepthProximityService {
       return 0.299 * frame[i] + 0.587 * frame[i + 1] + 0.114 * frame[i + 2];
     };
 
-    // Analyze central walking corridor: x in [32%..68%], y in [48%..92%]
-    const xStart = Math.floor(w * 0.32);
-    const xEnd = Math.floor(w * 0.68);
+    // Analyze central walking corridor: x in [28%..72%], y in [48%..92%]
+    const xStart = Math.floor(w * 0.28);
+    const xEnd = Math.floor(w * 0.72);
     const yStart = Math.floor(h * 0.48);
     const yEnd = Math.floor(h * 0.92);
 
     let strongVerticalEdges = 0;
     let strongHorizontalEdges = 0;
+    let stepRows = 0;
     let samples = 0;
 
     for (let y = yStart + 1; y < yEnd - 1; y++) {
+      let rowDySum = 0;
+      let rowDxSum = 0;
+      let rowCount = 0;
       for (let x = xStart + 1; x < xEnd - 1; x++) {
         const dx = Math.abs(lumaAt(x + 1, y) - lumaAt(x - 1, y));
         const dy = Math.abs(lumaAt(x, y + 1) - lumaAt(x, y - 1));
-        if (dx > 46 && dx > dy * 1.35) strongVerticalEdges++;
-        if (dy > 48 && dy > dx * 1.35) strongHorizontalEdges++;
+        if (dx > 40 && dx > dy * 1.25) strongVerticalEdges++;
+        if (dy > 38 && dy > dx * 1.25) strongHorizontalEdges++;
+        rowDySum += dy;
+        rowDxSum += dx;
+        rowCount++;
         samples++;
+      }
+      // Row-wise horizontal band detector for stairs / curbs (gradas / escalones)
+      if (y >= Math.floor(h * 0.56) && rowCount > 0) {
+        const avgDy = rowDySum / rowCount;
+        const avgDx = rowDxSum / rowCount;
+        if (avgDy > 18 && avgDy > avgDx * 1.15) {
+          stepRows++;
+        }
       }
     }
 
     const verticalRatio = samples > 0 ? strongVerticalEdges / samples : 0;
     const horizontalRatio = samples > 0 ? strongHorizontalEdges / samples : 0;
 
-    const verticalObstacleDetected = verticalRatio > 0.14;
-    const floorVariationDetected = horizontalRatio > 0.16;
+    const verticalObstacleDetected = verticalRatio > 0.11;
+    const floorVariationDetected = stepRows >= 2 || horizontalRatio > 0.11;
 
     const corridorScore = Math.min(
       100,
-      Math.round(Math.max(verticalRatio, horizontalRatio) * 320)
+      Math.round(Math.max(verticalRatio * 340, horizontalRatio * 340, stepRows * 14))
     );
 
     let level: ProximityLevel = ttcInfo.approachingFast ? 'danger' : detEstimate.level;
-    if (verticalObstacleDetected || floorVariationDetected) {
+    if (stepRows >= 2 || verticalRatio > 0.16) {
+      level = 'danger';
+    } else if (verticalObstacleDetected || floorVariationDetected) {
       level = level === 'danger' ? 'danger' : 'caution';
     }
 
@@ -217,10 +234,10 @@ export class DepthProximityService {
       alertText = `Acercamiento rápido: ${ttcInfo.targetLabel} (~${ttcInfo.ttcSeconds}s)`;
     } else if (detEstimate.level === 'danger' && detEstimate.closestLabel) {
       alertText = `Cuidado: ${detEstimate.closestLabel} muy cerca, a ${detEstimate.estimatedMeters} metros.`;
+    } else if (stepRows >= 2 || (floorVariationDetected && detections.length === 0)) {
+      alertText = 'Cuidado: grada o desnivel adelante.';
     } else if (verticalObstacleDetected && detections.length === 0) {
-      alertText = 'Atención: posible poste u obstáculo frente a ti.';
-    } else if (floorVariationDetected && detections.length === 0) {
-      alertText = 'Atención: variación en el suelo adelante.';
+      alertText = 'Cuidado: obstáculo inmóvil frente a ti.';
     } else if (detEstimate.level === 'caution' && detEstimate.closestLabel) {
       alertText = `Atención: ${detEstimate.closestLabel} a ${detEstimate.estimatedMeters} metros.`;
     }
