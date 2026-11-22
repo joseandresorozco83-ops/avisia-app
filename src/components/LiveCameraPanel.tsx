@@ -53,6 +53,7 @@ interface LiveCameraPanelProps {
   architecturalVisionEnabled?: boolean;
   archModelVariant?: ArchModelVariant;
   showStixelOverlay?: boolean;
+  simplifiedControls?: boolean;
   detectorEngine?: DetectorEngineId;
   onCameraStateChange: (active: boolean) => void;
   onDetectionsReady: (detections: Detection[]) => void;
@@ -86,6 +87,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   architecturalVisionEnabled = true,
   archModelVariant = 'segformer_b0',
   showStixelOverlay = true,
+  simplifiedControls = false,
   detectorEngine = 'efficientdet_lite2',
   onCameraStateChange,
   onDetectionsReady,
@@ -986,31 +988,33 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               onClick={handleCycleCamera}
               disabled={switchingCamera}
               aria-label="Cambiar entre cámara frontal y trasera"
-              className="inline-flex items-center gap-1 h-11 px-2.5 rounded-xl bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/50 text-[#8aebff] font-semibold text-xs transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 h-11 px-3 rounded-xl bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/50 text-[#8aebff] font-semibold text-xs transition-colors disabled:opacity-50"
             >
               <SwitchCamera className={`w-4 h-4 ${switchingCamera ? 'animate-spin' : ''}`} />
-              <span>{devices.length}</span>
+              <span>{simplifiedControls ? 'Cambiar cámara' : devices.length}</span>
             </button>
           )}
         </div>
 
-        <select
-          aria-label="Seleccionar cámara"
-          value={selectedDeviceId}
-          onChange={(e) => void handleSwitchToDevice(e.target.value)}
-          disabled={switchingCamera}
-          className="h-11 bg-[#0a0e16] border border-[#3c494c]/50 rounded-xl px-2 text-xs text-[#dfe2ee] max-w-[130px]"
-        >
-          {devices.length === 0 ? (
-            <option value="">Cámara trasera</option>
-          ) : (
-            devices.map((d) => (
-              <option key={d.deviceId} value={d.deviceId}>
-                {d.label}
-              </option>
-            ))
-          )}
-        </select>
+        {!simplifiedControls && (
+          <select
+            aria-label="Seleccionar cámara"
+            value={selectedDeviceId}
+            onChange={(e) => void handleSwitchToDevice(e.target.value)}
+            disabled={switchingCamera}
+            className="h-11 bg-[#0a0e16] border border-[#3c494c]/50 rounded-xl px-2 text-xs text-[#dfe2ee] max-w-[130px]"
+          >
+            {devices.length === 0 ? (
+              <option value="">Cámara trasera</option>
+            ) : (
+              devices.map((d) => (
+                <option key={d.deviceId} value={d.deviceId}>
+                  {d.label}
+                </option>
+              ))
+            )}
+          </select>
+        )}
       </div>
 
       {error && (
@@ -1073,7 +1077,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v3.2.2 · Cámara Asistiva
+              AVISIA v3.3 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.
@@ -1266,34 +1270,44 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             />
             <span className="text-slate-200 truncate text-[11px]">
               {!cameraActive
-                ? 'Stixel 5 sectores + puertas abiertas/cerradas listo'
+                ? simplifiedControls
+                  ? 'Listo para detectar obstáculos, puertas y paso libre'
+                  : 'Stixel 5 sectores + puertas abiertas/cerradas listo'
                 : archLoading
-                  ? `Cargando ${archModelVariant === 'segformer_b1' ? 'SegFormer-B1' : 'SegFormer-B0'} (puertas y piso)...`
+                  ? simplifiedControls
+                    ? 'Preparando detector de puertas y paso libre...'
+                    : `Cargando ${archModelVariant === 'segformer_b1' ? 'SegFormer-B1' : 'SegFormer-B0'} (puertas y piso)...`
                   : depthLoading
-                    ? 'Cargando Depth Anything V2...'
+                    ? simplifiedControls
+                      ? 'Activando sensor de profundidad...'
+                      : 'Cargando Depth Anything V2...'
                     : proximity?.alertText
                       ? proximity.alertText
                       : stixelPlan
                         ? stixelPlan.guidanceText
                         : depthSummary
-                          ? `Depth V2 (~${depthSummary.estimatedMeters}m)`
+                          ? simplifiedControls
+                            ? `Profundidad activa (~${depthSummary.estimatedMeters} m)`
+                            : `Depth V2 (~${depthSummary.estimatedMeters}m)`
                           : proximity?.estimatedMeters !== null &&
                               proximity?.estimatedMeters !== undefined
                             ? `Más cercano: ~${proximity.estimatedMeters} m`
                             : 'Analizando camino frente a ti...'}
             </span>
           </div>
-          <button
-            type="button"
-            onClick={() => setCorridorSensorOn((v) => !v)}
-            className={`shrink-0 px-2 py-1 rounded-lg text-[10px] font-semibold border transition-colors ${
-              corridorSensorOn
-                ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-200'
-                : 'bg-slate-800 border-white/10 text-slate-400'
-            }`}
-          >
-            {corridorSensorOn ? 'Camino: ON' : 'Camino: OFF'}
-          </button>
+          {!simplifiedControls && (
+            <button
+              type="button"
+              onClick={() => setCorridorSensorOn((v) => !v)}
+              className={`shrink-0 px-2 py-1 rounded-lg text-[10px] font-semibold border transition-colors ${
+                corridorSensorOn
+                  ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-200'
+                  : 'bg-slate-800 border-white/10 text-slate-400'
+              }`}
+            >
+              {corridorSensorOn ? 'Camino: ON' : 'Camino: OFF'}
+            </button>
+          )}
         </div>
       )}
     </div>

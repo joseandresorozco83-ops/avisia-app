@@ -26,8 +26,14 @@ import {
   ChevronRight,
   Power,
   Bluetooth,
+  Home,
+  Footprints,
+  Crosshair,
+  BellOff,
+  Check,
 } from 'lucide-react';
 import type {
+  AppPresetId,
   ArchModelVariant,
   AudioVerbosity,
   ConversationMessage,
@@ -47,6 +53,7 @@ import { speechService } from './services/SpeechService';
 import { conversationService } from './services/ConversationService';
 import { detectorService } from './services/DetectorService';
 import { assistiveVisionService } from './services/AssistiveVisionService';
+import { APP_PRESETS, applyAppPreset, getPresetById } from './services/AppPresets';
 import { locationService, type RealGpsPosition } from './services/LocationService';
 import { SimulatedSceneCanvas } from './components/SimulatedSceneCanvas';
 import { VisionLabPanel } from './components/VisionLabPanel';
@@ -74,6 +81,7 @@ const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
   archModelVariant: 'segformer_b0',
   showStixelOverlay: true,
   audioVerbosity: 'essential',
+  activePreset: 'indoor',
   detectorEngine: 'efficientdet_lite2',
   clockFaceDirections: true,
 };
@@ -1058,6 +1066,7 @@ export function App() {
           architecturalVisionEnabled={streetFeatures.architecturalVisionEnabled}
           archModelVariant={streetFeatures.archModelVariant}
           showStixelOverlay={streetFeatures.showStixelOverlay}
+          simplifiedControls={isNativeApp}
           detectorEngine={streetFeatures.detectorEngine}
           onCameraStateChange={setCameraActive}
           onDetectionsReady={(dets) => setRealDetections(dets)}
@@ -1099,7 +1108,7 @@ export function App() {
                     AVISIA
                   </h1>
                   <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                    v3.2.2 Asistiva
+                    v3.3 Asistiva
                   </span>
                 </div>
                 <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
@@ -1239,10 +1248,20 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-bold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[9px] font-bold text-[#8aebff]">
-                          v3.2.2
+                          v3.3
                         </span>
                       </div>
-                      <span className="font-mono text-[10px] text-[#bbc9cd] truncate">UAM Managua</span>
+                      {isNativeApp ? (
+                        <button
+                          type="button"
+                          onClick={() => setAndroidMenuOpen((o) => !o)}
+                          className="text-left font-mono text-[10px] text-[#4edea3] font-semibold truncate"
+                        >
+                          Modo: {getPresetById(streetFeatures.activePreset).shortTitle} ▾
+                        </button>
+                      ) : (
+                        <span className="font-mono text-[10px] text-[#bbc9cd] truncate">UAM Managua</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1299,9 +1318,112 @@ export function App() {
                 </div>
               </div>
 
-            {/* Android Hamburger Drawer Overlay (Stitch Dark Material 3) */}
+            {/* Android Hamburger Drawer Overlay (Simple 4-Mode Selector on Android App; Full Technical Options on Web) */}
             {androidMenuOpen && (
               <div className="absolute inset-x-0 top-[76px] bottom-[62px] z-40 bg-[#181c24]/98 backdrop-blur-md p-3.5 overflow-y-auto space-y-4 border-b border-[#3c494c]/40">
+                {isNativeApp ? (
+                  <>
+                    <div className="space-y-1">
+                      <h2 className="text-sm font-extrabold text-[#8aebff]">
+                        Elige cómo usar AVISIA
+                      </h2>
+                      <p className="text-xs text-[#bbc9cd]">
+                        Toca un modo general y la app ajusta automáticamente la cámara y el audio.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      {APP_PRESETS.map((preset) => {
+                        const selected =
+                          (streetFeatures.activePreset ?? 'indoor') === preset.id;
+                        const PresetIcon =
+                          preset.id === 'indoor'
+                            ? Home
+                            : preset.id === 'street'
+                              ? Footprints
+                              : preset.id === 'precision'
+                                ? Crosshair
+                                : BellOff;
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => {
+                              speechService.unlockAudio();
+                              speechService.vibratePattern('confirm');
+                              setStreetFeatures((prev) =>
+                                applyAppPreset(prev, preset.id as AppPresetId)
+                              );
+                              setMode('live_camera');
+                              setMobileTab('vision');
+                              setAndroidMenuOpen(false);
+                              speakText(preset.spokenConfirm);
+                            }}
+                            className={`w-full p-3.5 rounded-2xl border text-left flex items-start gap-3 transition-all active:scale-[0.98] ${
+                              selected
+                                ? 'bg-[#22d3ee]/18 border-[#22d3ee] shadow-md'
+                                : 'bg-[#1c2028] border-[#3c494c]/50 hover:border-[#8aebff]/50'
+                            }`}
+                          >
+                            <div
+                              className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
+                                selected
+                                  ? 'bg-[#22d3ee] text-[#00363e]'
+                                  : 'bg-[#0f131c] text-[#8aebff]'
+                              }`}
+                            >
+                              <PresetIcon className="w-5 h-5" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-sm font-bold text-[#dfe2ee]">
+                                  {preset.title}
+                                </span>
+                                {selected && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#4edea3]/20 text-[#4edea3] text-[10px] font-bold shrink-0">
+                                    <Check className="w-3 h-3" />
+                                    Activo
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-[#bbc9cd] mt-0.5 leading-snug">
+                                {preset.description}
+                              </p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="pt-2 border-t border-[#3c494c]/40">
+                      {demoActive ? (
+                        <button
+                          type="button"
+                          onClick={stopGuidedDemo}
+                          className="w-full py-3.5 px-4 rounded-2xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-sm flex items-center justify-center gap-2 shadow-md"
+                        >
+                          <Square className="w-4 h-4 fill-current" />
+                          Detener Demo Autónoma
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            speechService.unlockAudio();
+                            startGuidedDemo();
+                          }}
+                          className="w-full py-3.5 px-4 rounded-2xl bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/60 text-[#8aebff] font-bold text-sm flex items-center justify-center gap-2"
+                        >
+                          <Play className="w-4 h-4 fill-current" />
+                          Ver Demostración Guiada
+                        </button>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                {/* WEB: conserva todas las opciones detalladas */}
                 {/* Primera opción: Activar / Desactivar AVISIA (Cámara en vivo) */}
                 <div
                   className={`p-3 rounded-2xl border transition-colors ${
@@ -1756,6 +1878,8 @@ export function App() {
                     ))}
                   </div>
                 </div>
+                  </>
+                )}
               </div>
             )}
 

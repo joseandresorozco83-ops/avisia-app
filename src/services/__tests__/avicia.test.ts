@@ -16,8 +16,9 @@ import {
   computeStixelCorridor,
   enrichDoorsWithDepth,
 } from '../DoorAndStixelService';
+import { APP_PRESETS, applyAppPreset } from '../AppPresets';
 import type { DepthGrid } from '../DepthModelService';
-import type { Detection } from '../../types/avicia';
+import type { Detection, StreetAssistFeatures } from '../../types/avicia';
 
 describe('AVICIA Core Services', () => {
   let policyEngine: MessagePolicy;
@@ -343,5 +344,39 @@ describe('AVISIA v3.0 Assistive Vision & Anti-False-Alarm Suite', () => {
     expect(plan.centerClear).toBe(false);
     expect(plan.recommendedDetour?.direction).toBe('right');
     expect(plan.guidanceText.toLowerCase()).toContain('derecha');
+  });
+
+  it('applies the 4 simplified Android general presets cleanly', () => {
+    expect(APP_PRESETS.length).toBe(4);
+    const base: StreetAssistFeatures = {
+      streetMode: false,
+      stereoSonar: false,
+      soundOnlyMode: false,
+      handsFreeWakeWord: false,
+      headsetButton: false,
+      depthAnythingEnabled: false,
+      architecturalVisionEnabled: true,
+      archModelVariant: 'segformer_b0',
+      showStixelOverlay: true,
+      audioVerbosity: 'essential',
+      activePreset: 'indoor',
+      detectorEngine: 'efficientdet_lite2',
+      clockFaceDirections: true,
+    };
+
+    const indoor = applyAppPreset(base, 'indoor');
+    expect(indoor.archModelVariant).toBe('segformer_b1');
+    expect(indoor.audioVerbosity).toBe('essential');
+
+    const street = applyAppPreset(base, 'street');
+    expect(street.streetMode).toBe(true);
+    expect(street.stereoSonar).toBe(true);
+
+    const precision = applyAppPreset(base, 'precision');
+    expect(precision.depthAnythingEnabled).toBe(true);
+    expect(precision.audioVerbosity).toBe('detailed');
+
+    const silent = applyAppPreset(base, 'silent');
+    expect(silent.soundOnlyMode).toBe(true);
   });
 });

@@ -1,7 +1,7 @@
 const MODEL_CANDIDATES = [
-  'gemini-3.5-flash-lite',
-  'gemini-3.8-flash',
   'gemini-flash-latest',
+  'gemini-3.8-flash',
+  'gemini-3.5-flash-lite',
 ];
 
 export default async function handler(req, res) {

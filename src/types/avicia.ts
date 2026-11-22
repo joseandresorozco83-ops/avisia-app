@@ -8,6 +8,8 @@ export type DoorState = 'open' | 'closed' | 'semi_open' | 'unknown';
 
 export type AudioVerbosity = 'essential' | 'detailed';
 
+export type AppPresetId = 'indoor' | 'street' | 'precision' | 'silent';
+
 export type AssistiveChannel = 'explore' | 'scene_ai' | 'read_text' | 'find_object' | 'light';
 
 export type DetectionSource = 'simulated' | 'real_image' | 'real_video';
@@ -185,6 +187,7 @@ export interface StreetAssistFeatures {
   archModelVariant: ArchModelVariant;
   showStixelOverlay: boolean;
   audioVerbosity: AudioVerbosity;
+  activePreset?: AppPresetId;
   detectorEngine: DetectorEngineId;
   clockFaceDirections: boolean;
 }
