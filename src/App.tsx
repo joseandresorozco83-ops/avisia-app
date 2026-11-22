@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import {
   Play,
+  Square,
   Eye,
   MapPin,
   Video,
@@ -710,6 +711,18 @@ export function App() {
     setAndroidMenuOpen(false);
   };
 
+  const stopGuidedDemo = () => {
+    speechService.cancel();
+    setIsSpeaking(false);
+    setDemoActive(false);
+    setDemoPaused(false);
+    setDemoCompleted(false);
+    setAndroidMenuOpen(false);
+    if (isMobileExperience) {
+      setMode('live_camera');
+    }
+  };
+
   const renderEnvironmentContent = () => (
     <div
       className={
@@ -1113,17 +1126,28 @@ export function App() {
 
                 {/* Botón de Demo Autónoma (siempre accesible en móvil y app Android) */}
                 {isMobileExperience && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      speechService.unlockAudio();
-                      startGuidedDemo();
-                    }}
-                    className="w-full py-3 px-4 rounded-2xl bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] font-bold text-sm flex items-center justify-center gap-2 shadow-md"
-                  >
-                    <Play className="w-4 h-4 fill-current" />
-                    Iniciar Demo Autónoma
-                  </button>
+                  demoActive ? (
+                    <button
+                      type="button"
+                      onClick={stopGuidedDemo}
+                      className="w-full py-3 px-4 rounded-2xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-sm flex items-center justify-center gap-2 shadow-md"
+                    >
+                      <Square className="w-4 h-4 fill-current" />
+                      Detener Demo Autónoma
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        speechService.unlockAudio();
+                        startGuidedDemo();
+                      }}
+                      className="w-full py-3 px-4 rounded-2xl bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] font-bold text-sm flex items-center justify-center gap-2 shadow-md"
+                    >
+                      <Play className="w-4 h-4 fill-current" />
+                      Iniciar Demo Autónoma
+                    </button>
+                  )
                 )}
 
                 {/* v2.5 · Modo Calle y Manos Libres (Interruptores opcionales) */}
@@ -1317,6 +1341,22 @@ export function App() {
             >
               {mobileTab === 'vision' && (
                 <div className="flex-1 min-h-0 flex flex-col gap-2">
+                  {isMobileExperience && demoActive && (
+                    <div className="shrink-0 px-3 py-2 rounded-xl bg-[#22d3ee]/15 border border-[#22d3ee]/50 flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-[#8aebff] truncate">
+                        Demo Autónoma activa
+                      </span>
+                      <button
+                        type="button"
+                        onClick={stopGuidedDemo}
+                        className="shrink-0 px-3 py-1.5 rounded-lg bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-xs flex items-center gap-1.5 active:scale-95 transition-all"
+                      >
+                        <Square className="w-3.5 h-3.5 fill-current" />
+                        Detener Demo
+                      </button>
+                    </div>
+                  )}
+
                   {evaluation.obstacleAlert && (
                     <div
                       role="alert"
