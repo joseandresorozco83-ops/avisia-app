@@ -1,7 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Video, VideoOff, AlertTriangle, Radar, SwitchCamera } from 'lucide-react';
+import {
+  Video,
+  VideoOff,
+  AlertTriangle,
+  Radar,
+  SwitchCamera,
+  Sparkles,
+  FileText,
+  Crosshair,
+  Sun,
+  Eye,
+  Volume2,
+  Loader2,
+} from 'lucide-react';
 import { cameraService, type CameraDeviceInfo } from '../services/CameraService';
 import { detectorService } from '../services/DetectorService';
+import { temporalTrackerService } from '../services/TemporalTrackerService';
 import {
   depthProximityService,
   type ProximityAssessment,
@@ -10,9 +24,11 @@ import {
   depthModelService,
   type DepthMapSummary,
 } from '../services/DepthModelService';
+import { assistiveVisionService } from '../services/AssistiveVisionService';
 import { telemetryService } from '../services/TelemetryService';
 import { speechService } from '../services/SpeechService';
-import type { Detection } from '../types/avicia';
+import { formatDistanceSteps } from '../services/MessagePolicy';
+import type { AssistiveChannel, Detection, DetectorEngineId } from '../types/avicia';
 
 interface LiveCameraPanelProps {
   threshold: number;
@@ -20,9 +36,24 @@ interface LiveCameraPanelProps {
   expandedView?: boolean;
   fastMode?: boolean;
   depthAnythingEnabled?: boolean;
+  detectorEngine?: DetectorEngineId;
   onCameraStateChange: (active: boolean) => void;
   onDetectionsReady: (detections: Detection[]) => void;
+  onSpeakNow?: (text: string) => void;
+  onVideoElementChange?: (video: HTMLVideoElement | null) => void;
 }
+
+const FIND_TARGETS = [
+  { key: 'persona', label: 'Persona' },
+  { key: 'silla', label: 'Silla' },
+  { key: 'mesa', label: 'Mesa' },
+  { key: 'autobús', label: 'Autobús' },
+  { key: 'automóvil', label: 'Auto' },
+  { key: 'teléfono', label: 'Teléfono' },
+  { key: 'botella', label: 'Botella' },
+  { key: 'mochila', label: 'Mochila' },
+  { key: 'perro', label: 'Perro' },
+] as const;
 
 export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   threshold,
@@ -30,27 +61,118 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   expandedView = false,
   fastMode = false,
   depthAnythingEnabled = false,
+  detectorEngine = 'efficientdet_lite2',
   onCameraStateChange,
   onDetectionsReady,
+  onSpeakNow,
+  onVideoElementChange,
 }) => {
+  const [channel, setChannel] = useState<AssistiveChannel>('explore');
   const [devices, setDevices] = useState<CameraDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [cameraActive, setCameraActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detectorPendingNote, setDetectorPendingNote] = useState<string | null>(null);
+  const [modelBadge, setModelBadge] = useState<string>(() => detectorService.getStatus().modelName);
   const [liveCount, setLiveCount] = useState<number>(0);
   const [corridorSensorOn, setCorridorSensorOn] = useState<boolean>(true);
   const [proximity, setProximity] = useState<ProximityAssessment | null>(null);
   const [switchingCamera, setSwitchingCamera] = useState<boolean>(false);
   const [depthSummary, setDepthSummary] = useState<DepthMapSummary | null>(null);
   const [depthLoading, setDepthLoading] = useState<boolean>(false);
+
+  // Assistive channel states (Be My AI / Seeing AI / Envision parity)
+  const [assistiveBusy, setAssistiveBusy] = useState<boolean>(false);
+  const [assistiveResultText, setAssistiveResultText] = useState<string | null>(null);
+  const [assistiveEngineLabel, setAssistiveEngineLabel] = useState<string | null>(null);
+  const [findTarget, setFindTarget] = useState<string>('silla');
+  const [findMatchedText, setFindMatchedText] = useState<string>('Mueve la cámara despacio para buscar.');
+  const [lightToneOn, setLightToneOn] = useState<boolean>(false);
+  const [tiltWarning, setTiltWarning] = useState<string | null>(null);
+
   const depthSummaryRef = useRef<DepthMapSummary | null>(null);
+  const latestDetectionsRef = useRef<Detection[]>([]);
+  const latestProximityRef = useRef<ProximityAssessment | null>(null);
+  const channelRef = useRef<AssistiveChannel>('explore');
+  const findTargetRef = useRef<string>('silla');
+  const lightToneOnRef = useRef<boolean>(false);
+  const lastTiltWarnAtRef = useRef<number>(0);
+  const lastQualityWarnAtRef = useRef<number>(0);
+  const lastRadarSpeakAtRef = useRef<number>(0);
+  const lastTapAtRef = useRef<number>(0);
+  const singleTapTimerRef = useRef<number | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const loopRef = useRef<number | null>(null);
   const runningRef = useRef<boolean>(false);
 
+  useEffect(() => {
+    channelRef.current = channel;
+  }, [channel]);
+
+  useEffect(() => {
+    findTargetRef.current = findTarget;
+  }, [findTarget]);
+
+  useEffect(() => {
+    lightToneOnRef.current = lightToneOn;
+  }, [lightToneOn]);
+
+  // Hot-switch detector engine when user changes setting
+  useEffect(() => {
+    if (detectorService.getEngine() !== detectorEngine) {
+      setModelBadge(`Cargando ${detectorEngine}...`);
+      void detectorService.setEngine(detectorEngine, threshold).then((st) => {
+        setModelBadge(st.modelName);
+        if (!st.ready && st.error) {
+          setDetectorPendingNote(st.error);
+        } else {
+          setDetectorPendingNote(null);
+        }
+      });
+    }
+  }, [detectorEngine, threshold]);
+
+  // Device orientation tilt ergonomics guard for blind users
+  useEffect(() => {
+    if (!cameraActive || typeof window === 'undefined') {
+      setTiltWarning(null);
+      return;
+    }
+
+    const onOrientation = (event: DeviceOrientationEvent) => {
+      const beta = event.beta;
+      if (beta === null || beta === undefined || !Number.isFinite(beta)) return;
+      // Upright forward-facing phone has beta ~ 60..115 degrees
+      if (beta > 125) {
+        const msg = 'Teléfono muy inclinado hacia arriba. Bájalo un poco para ver el camino.';
+        setTiltWarning(msg);
+        const now = Date.now();
+        if (now - lastTiltWarnAtRef.current > 14000) {
+          lastTiltWarnAtRef.current = now;
+          speechService.vibratePattern('caution');
+        }
+      } else if (beta < 26 && beta > -20) {
+        const msg = 'Teléfono apuntando muy al suelo. Levántalo un poco hacia el frente.';
+        setTiltWarning(msg);
+        const now = Date.now();
+        if (now - lastTiltWarnAtRef.current > 14000) {
+          lastTiltWarnAtRef.current = now;
+          speechService.vibratePattern('caution');
+        }
+      } else {
+        setTiltWarning(null);
+      }
+    };
+
+    window.addEventListener('deviceorientation', onOrientation);
+    return () => {
+      window.removeEventListener('deviceorientation', onOrientation);
+    };
+  }, [cameraActive]);
+
+  // Optional Depth Anything V2 neural depth loop
   useEffect(() => {
     if (!depthAnythingEnabled || !cameraActive) {
       setDepthSummary(null);
@@ -90,7 +212,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         .finally(() => {
           busy = false;
         });
-    }, 450);
+    }, 520);
 
     return () => {
       cancelled = true;
@@ -133,20 +255,19 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
     ctx.clearRect(0, 0, width, height);
 
-    // Draw walking-corridor guide (lower-center zone)
-    if (corridorSensorOn) {
-      const cx1 = width * 0.32;
-      const cx2 = width * 0.68;
+    if (corridorSensorOn && channelRef.current === 'explore') {
+      const cx1 = width * 0.28;
+      const cx2 = width * 0.72;
       const cy1 = height * 0.48;
-      const cy2 = height * 0.94;
+      const cy2 = height * 0.92;
       ctx.save();
       ctx.setLineDash([6, 5]);
       ctx.lineWidth = 2;
       ctx.strokeStyle =
         prox?.level === 'danger'
-          ? 'rgba(244, 63, 94, 0.85)'
+          ? 'rgba(244, 63, 94, 0.9)'
           : prox?.level === 'caution'
-            ? 'rgba(245, 158, 11, 0.8)'
+            ? 'rgba(245, 158, 11, 0.85)'
             : 'rgba(34, 211, 238, 0.35)';
       ctx.strokeRect(cx1, cy1, cx2 - cx1, cy2 - cy1);
       ctx.restore();
@@ -158,19 +279,28 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       const w = (det.bbox.width / 100) * width;
       const h = (det.bbox.height / 100) * height;
 
+      const isTargetMatch =
+        channelRef.current === 'find_object' &&
+        det.labelEs.toLowerCase().includes(findTargetRef.current);
       const isFrontObstacle =
         det.isInanimateObstacle && det.proximityZone !== 'side';
-      const strokeColor = isFrontObstacle ? '#f59e0b' : '#22d3ee';
+      const strokeColor = isTargetMatch
+        ? '#4edea3'
+        : isFrontObstacle
+          ? '#f59e0b'
+          : '#22d3ee';
 
       ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = Math.max(3, width * 0.005);
+      ctx.lineWidth = Math.max(3, width * (isTargetMatch ? 0.008 : 0.005));
       ctx.strokeRect(x, y, w, h);
 
       const confPct =
         typeof det.confidence === 'number'
           ? ` ${Math.round(det.confidence * 100)}%`
           : '';
-      const label = `${det.labelEs}${confPct}`;
+      const distPart =
+        typeof det.estimatedMeters === 'number' ? ` · ${det.estimatedMeters}m` : '';
+      const label = `${det.labelEs}${distPart}${confPct}`;
       ctx.font = `bold ${Math.max(14, Math.round(width * 0.024))}px sans-serif`;
       const textWidth = ctx.measureText(label).width;
       const boxHeight = Math.max(24, Math.round(width * 0.038));
@@ -193,7 +323,11 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       if (loopRef.current !== null) {
         window.clearInterval(loopRef.current);
       }
+      if (singleTapTimerRef.current !== null) {
+        window.clearTimeout(singleTapTimerRef.current);
+      }
       cameraService.stopCamera(videoRef.current);
+      onVideoElementChange?.(null);
       onCameraStateChange(false);
     };
   }, []);
@@ -231,21 +365,123 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     }
   }, [autoStart]);
 
+  const speakFeedback = (text: string) => {
+    if (onSpeakNow) {
+      onSpeakNow(text);
+    } else {
+      speechService.speak(text, { enabled: true, rate: 1.0, voiceURI: null });
+    }
+  };
+
+  const handleDescribeSceneNow = async () => {
+    speechService.unlockAudio();
+    speechService.vibratePattern('confirm');
+    setAssistiveBusy(true);
+    setAssistiveResultText('Analizando la escena frente a ti...');
+    try {
+      const res = await assistiveVisionService.describeScene(
+        cameraActive ? videoRef.current : null,
+        latestDetectionsRef.current,
+        latestProximityRef.current,
+        depthSummaryRef.current
+      );
+      setAssistiveResultText(res.text);
+      setAssistiveEngineLabel(
+        res.engine === 'gemini'
+          ? `Gemini 2.5 Flash · ${res.elapsedMs}ms`
+          : `Síntesis local · ${res.elapsedMs}ms`
+      );
+      speakFeedback(res.text);
+    } finally {
+      setAssistiveBusy(false);
+    }
+  };
+
+  const handleReadTextNow = async () => {
+    speechService.unlockAudio();
+    speechService.vibratePattern('confirm');
+    if (!cameraActive || !videoRef.current) {
+      const msg = 'Activa la cámara primero para leer texto.';
+      setAssistiveResultText(msg);
+      speakFeedback(msg);
+      return;
+    }
+    setAssistiveBusy(true);
+    setAssistiveResultText('Leyendo texto, mantén firme el teléfono...');
+    speakFeedback('Leyendo texto, mantén firme el teléfono.');
+    try {
+      const res = await assistiveVisionService.readText(videoRef.current);
+      setAssistiveResultText(res.text);
+      setAssistiveEngineLabel(
+        res.engine === 'gemini'
+          ? `OCR Gemini 2.5 Flash · ${res.elapsedMs}ms`
+          : `OCR Offline Español · ${res.elapsedMs}ms`
+      );
+      speechService.vibratePattern('confirm');
+      speakFeedback(res.text);
+    } finally {
+      setAssistiveBusy(false);
+    }
+  };
+
+  const handleSpeakLightNow = () => {
+    speechService.unlockAudio();
+    const pct = latestProximityRef.current?.brightnessPct ?? 0;
+    const text = cameraActive
+      ? assistiveVisionService.describeLightLevel(pct)
+      : 'Activa la cámara para medir la luz ambiental.';
+    setAssistiveResultText(text);
+    speakFeedback(text);
+  };
+
+  // Blind-accessible full-screen viewfinder tap gesture:
+  // Single tap -> Describe right now | Double tap -> Immediate silence
+  const handleViewportTap = () => {
+    if (!cameraActive) return;
+    speechService.unlockAudio();
+    const now = Date.now();
+    if (now - lastTapAtRef.current < 340) {
+      if (singleTapTimerRef.current !== null) {
+        window.clearTimeout(singleTapTimerRef.current);
+        singleTapTimerRef.current = null;
+      }
+      lastTapAtRef.current = 0;
+      speechService.cancel();
+      speechService.vibratePattern('confirm');
+      return;
+    }
+    lastTapAtRef.current = now;
+    singleTapTimerRef.current = window.setTimeout(() => {
+      singleTapTimerRef.current = null;
+      if (channelRef.current === 'read_text') {
+        void handleReadTextNow();
+      } else if (channelRef.current === 'light') {
+        handleSpeakLightNow();
+      } else {
+        void handleDescribeSceneNow();
+      }
+    }, 340);
+  };
+
   const handleStart = async () => {
     if (!videoRef.current) return;
     setError(null);
     setDetectorPendingNote(null);
     speechService.unlockAudio();
+    temporalTrackerService.reset();
+    depthProximityService.reset();
 
     try {
       runningRef.current = true;
       await cameraService.startCamera(videoRef.current, selectedDeviceId || undefined);
       if (!runningRef.current) return;
       setCameraActive(true);
+      onVideoElementChange?.(videoRef.current);
       onCameraStateChange(true);
       await refreshDevices();
 
-      const detStatus = await detectorService.initialize(threshold);
+      const detStatus = await detectorService.setEngine(detectorEngine, threshold);
+      setModelBadge(detStatus.modelName);
       if (!runningRef.current) return;
       if (!detStatus.ready) {
         setDetectorPendingNote(
@@ -255,59 +491,139 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         return;
       }
 
+      let frameBusy = false;
+
       const runFrame = async () => {
-        if (!runningRef.current || !videoRef.current || videoRef.current.readyState < 2) return;
+        if (
+          frameBusy ||
+          !runningRef.current ||
+          !videoRef.current ||
+          videoRef.current.readyState < 2
+        ) {
+          return;
+        }
+        frameBusy = true;
         try {
           const res = await detectorService.detectOnVideoFrame(videoRef.current, threshold);
           if (!runningRef.current) return;
+
+          // Multi-frame temporal stabilization: rejects 1-frame noisy hallucinations
+          const stabilizedDetections = temporalTrackerService.update(res.detections, Date.now());
+
           const prox = corridorSensorOn
-            ? depthProximityService.analyzeVideoCorridor(videoRef.current, res.detections)
+            ? depthProximityService.analyzeVideoCorridor(videoRef.current, stabilizedDetections)
             : null;
           setProximity(prox);
+          latestProximityRef.current = prox;
 
-          const combinedDetections = [...res.detections];
+          // Light channel musical tone (Seeing AI style)
+          if (channelRef.current === 'light' && lightToneOnRef.current && prox) {
+            speechService.playLightTone(prox.brightnessPct);
+          }
+
+          // Camera blocked / too dark ergonomic guard
+          if (prox && (prox.cameraQuality === 'lens_blocked' || prox.cameraQuality === 'too_dark')) {
+            const now = Date.now();
+            if (now - lastQualityWarnAtRef.current > 10000 && channelRef.current === 'explore') {
+              lastQualityWarnAtRef.current = now;
+              speechService.vibratePattern('blocked');
+            }
+          }
+
+          // Find-Object Radar channel (Envision AI style)
+          if (channelRef.current === 'find_object') {
+            const targetKey = findTargetRef.current;
+            const match = stabilizedDetections.find((d) =>
+              d.labelEs.toLowerCase().includes(targetKey)
+            );
+            if (match) {
+              const cx = match.bbox.x + match.bbox.width / 2;
+              const pan = (cx - 50) / 50;
+              const alignment = Math.max(0, 1 - Math.abs(cx - 50) / 50);
+              speechService.playRadarBeep(pan, alignment);
+              if (alignment > 0.72) {
+                speechService.vibratePattern('confirm');
+              }
+              const dist = formatDistanceSteps(match.estimatedMeters);
+              const statusTxt = `${match.labelEs} ${match.clockPosition ?? 'al frente'}${dist ? `, ${dist}` : ''}.`;
+              setFindMatchedText(statusTxt);
+              const now = Date.now();
+              if (alignment > 0.65 && now - lastRadarSpeakAtRef.current > 3500) {
+                lastRadarSpeakAtRef.current = now;
+                speakFeedback(`Encontrado: ${statusTxt}`);
+              }
+            } else {
+              setFindMatchedText(`Buscando "${targetKey}"... mueve despacio la cámara.`);
+            }
+          }
+
+          const combinedDetections = [...stabilizedDetections];
           const hasFrontObstacle = combinedDetections.some(
             (d) => d.isInanimateObstacle && d.proximityZone !== 'side'
           );
 
+          const depthWallOrObstacle =
+            depthSummaryRef.current?.wallAhead || depthSummaryRef.current?.closeObstacleAhead;
+          const depthStep = depthSummaryRef.current?.stepDetectedInDepth;
+
           if (
             corridorSensorOn &&
+            channelRef.current === 'explore' &&
             prox &&
-            (prox.floorVariationDetected ||
-              (!hasFrontObstacle &&
-                (prox.verticalObstacleDetected || depthSummaryRef.current?.closeObstacleAhead)))
+            (prox.flatWallAhead ||
+              prox.floorVariationDetected ||
+              depthStep ||
+              (!hasFrontObstacle && (prox.verticalObstacleDetected || depthWallOrObstacle)))
           ) {
             const depthDist = depthSummaryRef.current?.estimatedMeters;
-            const isStep = prox.floorVariationDetected;
+            const isStep = prox.floorVariationDetected || Boolean(depthStep);
+            const isWall = prox.flatWallAhead || Boolean(depthSummaryRef.current?.wallAhead);
+            const clearHint =
+              depthSummaryRef.current?.clearSide === 'left'
+                ? ' (libre izquierda)'
+                : depthSummaryRef.current?.clearSide === 'right'
+                  ? ' (libre derecha)'
+                  : '';
+
             combinedDetections.push({
               id: `corridor-${Date.now()}`,
               category: 'obstacle',
-              labelEs: isStep
-                ? 'Grada o desnivel'
-                : depthSummaryRef.current?.closeObstacleAhead
-                  ? `Obstáculo a ${depthDist} m`
-                  : 'Obstáculo inmóvil',
+              labelEs: isWall
+                ? `Pared muy cerca${clearHint}`
+                : isStep
+                  ? 'Grada o desnivel'
+                  : depthWallOrObstacle && depthDist
+                    ? `Obstáculo a ${depthDist} m${clearHint}`
+                    : 'Obstáculo inmóvil',
               source: 'real_video',
-              confidence: Math.min(0.95, Math.max(0.6, prox.corridorScore / 100)),
-              bbox: { x: 32, y: isStep ? 58 : 48, width: 36, height: isStep ? 34 : 42 },
+              confidence: Math.min(0.95, Math.max(0.65, prox.corridorScore / 100)),
+              bbox: { x: 30, y: isStep ? 58 : 42, width: 40, height: isStep ? 34 : 46 },
               confirmationStatus: 'confirmed',
-              priority: 94,
+              priority: 97,
               firstSeenAt: Date.now(),
               lastSeenAt: Date.now(),
               isNew: true,
               isInanimateObstacle: true,
+              estimatedMeters: isWall ? 0.6 : depthDist ?? 1.2,
+              clockPosition: 'a las 12',
               proximityZone:
-                prox.level === 'danger' || depthSummaryRef.current?.closeObstacleAhead
+                isWall || prox.level === 'danger' || depthWallOrObstacle
                   ? 'front_close'
                   : 'front_mid',
             });
           }
 
-          if (prox?.level === 'danger' && typeof navigator !== 'undefined' && navigator.vibrate) {
-            navigator.vibrate([100, 50, 100]);
+          // Differentiated haptic signaling (Explore mode only)
+          if (channelRef.current === 'explore' && prox) {
+            if (prox.floorVariationDetected || depthStep) {
+              speechService.vibratePattern('step');
+            } else if (prox.flatWallAhead || prox.level === 'danger') {
+              speechService.vibratePattern('danger');
+            }
           }
 
           if (!runningRef.current) return;
+          latestDetectionsRef.current = combinedDetections;
           setLiveCount(combinedDetections.length);
           drawBoxes(combinedDetections, prox);
           telemetryService.record({
@@ -315,20 +631,29 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             mode: fastMode ? 'street_fast' : 'live_camera',
             inferenceMs: res.inferenceTimeMs,
             detectionsCount: combinedDetections.length,
-            frontObstacle: combinedDetections.find((d) => d.isInanimateObstacle)?.labelEs ?? null,
+            frontObstacle:
+              combinedDetections.find((d) => d.isInanimateObstacle)?.labelEs ?? null,
             ttcSeconds: prox?.ttcSeconds ?? null,
             policy: 'live',
           });
-          onDetectionsReady(combinedDetections);
+
+          // Only push live detections into auto-speech when in Explore channel
+          if (channelRef.current === 'explore') {
+            onDetectionsReady(combinedDetections);
+          }
         } catch {
           // Ignore transient frame error
+        } finally {
+          frameBusy = false;
         }
       };
 
       void runFrame();
+      const intervalMs =
+        detectorEngine === 'yolov10n' ? 420 : fastMode ? 240 : 480;
       loopRef.current = window.setInterval(() => {
         void runFrame();
-      }, fastMode ? 220 : 650);
+      }, intervalMs);
     } catch (err) {
       const msg =
         err instanceof Error
@@ -346,26 +671,82 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       window.clearInterval(loopRef.current);
       loopRef.current = null;
     }
+    temporalTrackerService.reset();
+    depthProximityService.reset();
     speechService.cancel();
     clearCanvas();
+    latestDetectionsRef.current = [];
+    latestProximityRef.current = null;
     setLiveCount(0);
     setProximity(null);
+    setTiltWarning(null);
     cameraService.stopCamera(videoRef.current);
+    onVideoElementChange?.(null);
     setCameraActive(false);
     onCameraStateChange(false);
     onDetectionsReady([]);
   };
 
+  const selectChannel = (next: AssistiveChannel, spokenName: string) => {
+    speechService.unlockAudio();
+    speechService.vibratePattern('confirm');
+    setChannel(next);
+    setAssistiveResultText(null);
+    if (next !== 'explore') {
+      onDetectionsReady([]);
+    }
+    speakFeedback(`Canal ${spokenName}`);
+  };
+
   return (
-    <div className={expandedView ? 'flex flex-col h-full min-h-0 gap-2' : 'space-y-2.5'}>
-      {/* Controls */}
-      <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-[#181c24] border border-[#3c494c]/40">
-        <div className="flex items-center gap-2">
+    <div className={expandedView ? 'flex flex-col h-full min-h-0 gap-1.5' : 'space-y-2.5'}>
+      {/* Seeing AI / Lookout-style Assistive Channel Bar */}
+      <div
+        role="tablist"
+        aria-label="Canales de asistencia visual"
+        className="shrink-0 grid grid-cols-5 gap-1 p-1 rounded-xl bg-[#141821] border border-[#3c494c]/40"
+      >
+        {(
+          [
+            { id: 'explore', label: 'Explorar', spoken: 'Explorar camino', icon: Eye },
+            { id: 'scene_ai', label: 'Escena', spoken: 'Describir escena con inteligencia artificial', icon: Sparkles },
+            { id: 'read_text', label: 'Texto', spoken: 'Leer texto', icon: FileText },
+            { id: 'find_object', label: 'Buscar', spoken: 'Buscar objeto', icon: Crosshair },
+            { id: 'light', label: 'Luz', spoken: 'Detector de luz', icon: Sun },
+          ] as const
+        ).map((tab) => {
+          const Icon = tab.icon;
+          const active = channel === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              aria-label={tab.spoken}
+              onClick={() => selectChannel(tab.id, tab.spoken)}
+              className={`min-h-[42px] px-1 py-1 rounded-lg flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold transition-colors ${
+                active
+                  ? 'bg-[#22d3ee] text-[#00363e] shadow-sm'
+                  : 'text-[#bbc9cd] hover:bg-[#262a33]'
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate leading-none">{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Camera Power & Device Controls */}
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-1.5 p-1.5 rounded-xl bg-[#181c24] border border-[#3c494c]/40">
+        <div className="flex items-center gap-1.5">
           {!cameraActive ? (
             <button
               type="button"
               onClick={handleStart}
-              className="inline-flex items-center gap-2 h-11 px-4 rounded-xl bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] font-bold text-sm transition-colors"
+              aria-label="Activar cámara en vivo"
+              className="inline-flex items-center gap-1.5 h-11 px-3.5 rounded-xl bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] font-bold text-xs transition-colors"
             >
               <Video className="w-4 h-4" />
               Activar cámara
@@ -374,7 +755,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             <button
               type="button"
               onClick={handleStop}
-              className="inline-flex items-center gap-2 h-11 px-4 rounded-xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-sm transition-colors"
+              aria-label="Detener cámara y silenciar avisos"
+              className="inline-flex items-center gap-1.5 h-11 px-3.5 rounded-xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-xs transition-colors"
             >
               <VideoOff className="w-4 h-4" />
               Detener
@@ -386,11 +768,11 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               type="button"
               onClick={handleCycleCamera}
               disabled={switchingCamera}
-              title="Cambiar entre cámaras disponibles"
-              className="inline-flex items-center gap-1.5 h-11 px-3 rounded-xl bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/50 text-[#8aebff] font-semibold text-xs transition-colors disabled:opacity-50"
+              aria-label="Cambiar entre cámara frontal y trasera"
+              className="inline-flex items-center gap-1 h-11 px-2.5 rounded-xl bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/50 text-[#8aebff] font-semibold text-xs transition-colors disabled:opacity-50"
             >
               <SwitchCamera className={`w-4 h-4 ${switchingCamera ? 'animate-spin' : ''}`} />
-              Cambiar ({devices.length})
+              <span>{devices.length}</span>
             </button>
           )}
         </div>
@@ -400,10 +782,10 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           value={selectedDeviceId}
           onChange={(e) => void handleSwitchToDevice(e.target.value)}
           disabled={switchingCamera}
-          className="h-11 bg-[#0a0e16] border border-[#3c494c]/50 rounded-xl px-2.5 text-xs text-[#dfe2ee] max-w-[140px]"
+          className="h-11 bg-[#0a0e16] border border-[#3c494c]/50 rounded-xl px-2 text-xs text-[#dfe2ee] max-w-[130px]"
         >
           {devices.length === 0 ? (
-            <option value="">Cámara predeterminada</option>
+            <option value="">Cámara trasera</option>
           ) : (
             devices.map((d) => (
               <option key={d.deviceId} value={d.deviceId}>
@@ -415,23 +797,46 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       </div>
 
       {error && (
-        <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/40 text-xs text-rose-200 flex items-start gap-2">
+        <div
+          role="alert"
+          className="shrink-0 p-2 rounded-xl bg-rose-500/10 border border-rose-500/40 text-xs text-rose-200 flex items-start gap-2"
+        >
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
           <span>{error}</span>
         </div>
       )}
 
       {detectorPendingNote && (
-        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/40 text-xs text-amber-200 flex items-start gap-2">
+        <div className="shrink-0 p-2 rounded-xl bg-amber-500/10 border border-amber-500/40 text-xs text-amber-200 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
           <span>{detectorPendingNote}</span>
         </div>
       )}
 
-      {/* Video + Bounding Box Canvas Overlay */}
+      {tiltWarning && cameraActive && (
+        <div
+          role="status"
+          className="shrink-0 px-2.5 py-1.5 rounded-xl bg-amber-500/15 border border-amber-400/50 text-[11px] font-semibold text-amber-200 flex items-center gap-1.5"
+        >
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-300" />
+          <span className="truncate">{tiltWarning}</span>
+        </div>
+      )}
+
+      {/* Video + Bounding Box Canvas Overlay (1-tap = describe, 2-tap = silence) */}
       <div
-        className={`relative w-full rounded-2xl overflow-hidden border border-[#3c494c]/40 bg-[#05080f] flex items-center justify-center ${
-          expandedView ? 'flex-1 min-h-[240px]' : 'aspect-[16/10]'
+        role="button"
+        tabIndex={0}
+        aria-label="Visor de cámara. Toca una vez para describir el entorno o toca dos veces para silenciar el audio."
+        onClick={handleViewportTap}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleViewportTap();
+          }
+        }}
+        className={`relative w-full rounded-2xl overflow-hidden border border-[#3c494c]/40 bg-[#05080f] flex items-center justify-center cursor-pointer select-none ${
+          expandedView ? 'flex-1 min-h-[175px]' : 'aspect-[16/10]'
         }`}
       >
         <video
@@ -448,81 +853,220 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         />
 
         {!cameraActive && (
-          <div className="text-center p-5 max-w-xs">
-            <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-2" />
-            <p className="text-sm font-medium text-slate-200">
-              Cámara en vivo
+          <div className="text-center p-4 max-w-xs">
+            <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
+            <p className="text-sm font-semibold text-slate-200">
+              AVISIA v3.0 · Cámara Asistiva
             </p>
-            <p className="text-xs text-slate-400 mt-1">
-              Activa la cámara para detectar objetos en tiempo real con cajas delimitadoras y avisos de voz.
+            <p className="text-[11px] text-slate-400 mt-1 leading-snug">
+              Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.
+            </p>
+            <p className="text-[10px] text-amber-300/80 mt-1.5">
+              Complementa —no reemplaza— tu bastón blanco o perro guía.
             </p>
           </div>
         )}
 
         {cameraActive && (
-          <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
-            <span className="px-2.5 py-1 rounded-full bg-slate-950/80 border border-emerald-400/40 text-[10px] font-semibold text-emerald-300 flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              En vivo
+          <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none gap-1.5">
+            <span className="px-2 py-0.5 rounded-full bg-slate-950/80 border border-emerald-400/40 text-[10px] font-semibold text-emerald-300 flex items-center gap-1 truncate max-w-[65%]">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <span className="truncate">{modelBadge.split(' ')[0]}</span>
             </span>
-            <div className="flex items-center gap-1.5 pointer-events-auto">
-              {devices.length > 1 && (
-                <button
-                  type="button"
-                  onClick={handleCycleCamera}
-                  disabled={switchingCamera}
-                  aria-label="Cambiar cámara"
-                  className="p-1.5 rounded-full bg-slate-950/80 border border-cyan-400/40 text-cyan-200 hover:bg-slate-900 transition-colors"
-                >
-                  <SwitchCamera className="w-3.5 h-3.5" />
-                </button>
-              )}
-              <span className="px-2.5 py-1 rounded-full bg-slate-950/80 border border-white/15 text-[10px] font-medium text-slate-200">
-                {liveCount} {liveCount === 1 ? 'objeto' : 'objetos'}
-              </span>
-            </div>
+            <span className="px-2 py-0.5 rounded-full bg-slate-950/80 border border-white/15 text-[10px] font-medium text-slate-200 shrink-0">
+              {liveCount} {liveCount === 1 ? 'confirm.' : 'confirm.'}
+            </span>
+          </div>
+        )}
+
+        {cameraActive && channel === 'explore' && (
+          <div className="absolute bottom-2 left-2 right-2 flex justify-center pointer-events-none">
+            <span className="px-2.5 py-0.5 rounded-full bg-slate-950/75 border border-white/10 text-[10px] text-slate-300">
+              1 toque: describir ahora · 2 toques: silenciar
+            </span>
           </div>
         )}
       </div>
 
-      {/* Corridor Depth & Proximity Bar */}
-      <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#181c24] border border-[#3c494c]/40 text-xs">
-        <div className="flex items-center gap-2 min-w-0">
-          <Radar
-            className={`w-4 h-4 shrink-0 ${
-              proximity?.level === 'danger'
-                ? 'text-rose-400'
-                : proximity?.level === 'caution'
-                  ? 'text-amber-400'
-                  : 'text-cyan-400'
-            }`}
-          />
-          <span className="text-slate-200 truncate">
-            {!cameraActive
-              ? 'Sensor de profundidad y camino listo'
-              : depthLoading
-                ? 'Cargando Depth Anything V2 (WebGPU/WASM)...'
-                : depthSummary
-                  ? `Depth V2 (${depthSummary.backend.toUpperCase()} · ${depthSummary.inferenceMs}ms): ~${depthSummary.estimatedMeters} m`
+      {/* Channel-Specific Accessible Action Panel */}
+      {channel === 'scene_ai' && (
+        <div className="shrink-0 p-2 rounded-xl bg-[#181c24] border border-[#22d3ee]/40 space-y-1.5">
+          <button
+            type="button"
+            disabled={assistiveBusy}
+            onClick={() => void handleDescribeSceneNow()}
+            className="w-full h-12 rounded-xl bg-[#22d3ee] hover:bg-[#8aebff] disabled:opacity-60 text-[#00363e] font-extrabold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+          >
+            {assistiveBusy ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Sparkles className="w-4 h-4" />
+            )}
+            {assistiveBusy
+              ? 'Describiendo escena...'
+              : assistiveVisionService.hasGeminiApiKey()
+                ? 'Describir escena (Gemini IA)'
+                : 'Describir escena (Modo Local)'}
+          </button>
+          {assistiveResultText && (
+            <div className="p-2 rounded-lg bg-[#0f131c] border border-[#3c494c]/40 text-xs text-[#dfe2ee] leading-snug">
+              <p>{assistiveResultText}</p>
+              {assistiveEngineLabel && (
+                <span className="block mt-1 text-[10px] font-mono text-[#8aebff]">
+                  {assistiveEngineLabel}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {channel === 'read_text' && (
+        <div className="shrink-0 p-2 rounded-xl bg-[#181c24] border border-[#4edea3]/40 space-y-1.5">
+          <button
+            type="button"
+            disabled={assistiveBusy}
+            onClick={() => void handleReadTextNow()}
+            className="w-full h-12 rounded-xl bg-[#4edea3] hover:bg-[#6ffbbe] disabled:opacity-60 text-[#003824] font-extrabold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+          >
+            {assistiveBusy ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <FileText className="w-4 h-4" />
+            )}
+            {assistiveBusy ? 'Leyendo texto...' : 'Leer texto ahora (OCR)'}
+          </button>
+          {assistiveResultText && (
+            <div className="p-2 rounded-lg bg-[#0f131c] border border-[#3c494c]/40 text-xs text-[#dfe2ee] leading-snug max-h-20 overflow-y-auto">
+              <p>{assistiveResultText}</p>
+              {assistiveEngineLabel && (
+                <span className="block mt-1 text-[10px] font-mono text-[#4edea3]">
+                  {assistiveEngineLabel}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {channel === 'find_object' && (
+        <div className="shrink-0 p-2 rounded-xl bg-[#181c24] border border-[#4edea3]/40 space-y-1.5">
+          <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+            {FIND_TARGETS.map((item) => {
+              const selected = findTarget === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => {
+                    setFindTarget(item.key);
+                    speechService.vibratePattern('confirm');
+                    speakFeedback(`Buscando ${item.label}`);
+                  }}
+                  className={`shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                    selected
+                      ? 'bg-[#4edea3] text-[#003824] border-[#4edea3]'
+                      : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/50'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-xs text-[#6ffbbe] font-semibold truncate px-1">
+            {findMatchedText}
+          </p>
+        </div>
+      )}
+
+      {channel === 'light' && (
+        <div className="shrink-0 p-2 rounded-xl bg-[#181c24] border border-amber-400/40 space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Sun className="w-4 h-4 text-amber-300 shrink-0" />
+              <span className="text-xs font-bold text-[#dfe2ee] truncate">
+                Luz ambiental: {cameraActive ? `${proximity?.brightnessPct ?? 0}%` : '—'}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setLightToneOn((v) => !v)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border ${
+                  lightToneOn
+                    ? 'bg-amber-400 text-slate-950 border-amber-300'
+                    : 'bg-[#0f131c] text-amber-200 border-amber-400/40'
+                }`}
+              >
+                {lightToneOn ? 'Tono: ON' : 'Tono: OFF'}
+              </button>
+              <button
+                type="button"
+                onClick={handleSpeakLightNow}
+                aria-label="Escuchar nivel de luz"
+                className="p-1.5 rounded-lg bg-[#22d3ee] text-[#00363e]"
+              >
+                <Volume2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+          <div className="w-full h-2.5 rounded-full bg-[#0f131c] overflow-hidden border border-[#3c494c]/40">
+            <div
+              className="h-full bg-gradient-to-r from-indigo-500 via-amber-400 to-yellow-200 transition-all duration-200"
+              style={{ width: `${cameraActive ? proximity?.brightnessPct ?? 0 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Corridor Depth & Proximity Status Bar (Explore channel) */}
+      {channel === 'explore' && (
+        <div className="shrink-0 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#181c24] border border-[#3c494c]/40 text-xs">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Radar
+              className={`w-4 h-4 shrink-0 ${
+                proximity?.level === 'danger' || proximity?.cameraQuality === 'lens_blocked'
+                  ? 'text-rose-400'
+                  : proximity?.level === 'caution'
+                    ? 'text-amber-400'
+                    : 'text-cyan-400'
+              }`}
+            />
+            <span className="text-slate-200 truncate text-[11px]">
+              {!cameraActive
+                ? 'Sensor estabilizado + profundidad listo'
+                : depthLoading
+                  ? 'Cargando Depth Anything V2...'
                   : proximity?.alertText
                     ? proximity.alertText
-                    : proximity?.estimatedMeters !== null && proximity?.estimatedMeters !== undefined
-                      ? `Objeto más cercano: ~${proximity.estimatedMeters} m`
-                      : 'Camino despejado frente a ti'}
-          </span>
+                    : depthSummary
+                      ? `Depth V2 (~${depthSummary.estimatedMeters}m${
+                          depthSummary.clearSide === 'left'
+                            ? ' · libre izq'
+                            : depthSummary.clearSide === 'right'
+                              ? ' · libre der'
+                              : ''
+                        })`
+                      : proximity?.estimatedMeters !== null &&
+                          proximity?.estimatedMeters !== undefined
+                        ? `Más cercano: ~${proximity.estimatedMeters} m`
+                        : 'Camino despejado frente a ti'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCorridorSensorOn((v) => !v)}
+            className={`shrink-0 px-2 py-1 rounded-lg text-[10px] font-semibold border transition-colors ${
+              corridorSensorOn
+                ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-200'
+                : 'bg-slate-800 border-white/10 text-slate-400'
+            }`}
+          >
+            {corridorSensorOn ? 'Camino: ON' : 'Camino: OFF'}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setCorridorSensorOn((v) => !v)}
-          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
-            corridorSensorOn
-              ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-200'
-              : 'bg-slate-800 border-white/10 text-slate-400'
-          }`}
-        >
-          {corridorSensorOn ? 'Sensor camino: ON' : 'Sensor camino: OFF'}
-        </button>
-      </div>
+      )}
     </div>
   );
 };

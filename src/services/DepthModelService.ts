@@ -12,6 +12,9 @@ export interface DepthMapSummary {
   rightCloseness: number; // 0..100
   estimatedMeters: number;
   closeObstacleAhead: boolean;
+  wallAhead: boolean;
+  stepDetectedInDepth: boolean;
+  clearSide: 'left' | 'right' | 'center' | null;
   inferenceMs: number;
   backend: 'webgpu' | 'wasm';
 }
@@ -26,6 +29,8 @@ type DepthPipelineFn = (
 /**
  * Lazy-loaded monocular depth estimator powered by Depth Anything V2 Small
  * via @huggingface/transformers (WebGPU primary, WASM fallback).
+ * Depth Anything V2 predicts inverse depth (disparity): higher values = physically CLOSER.
+ * Compares upper-center vs lower-center & left/right zones to avoid false alarms on empty floors.
  */
 export class DepthModelService {
   private estimator: DepthPipelineFn | null = null;
@@ -150,14 +155,10 @@ export class DepthModelService {
     }
     const span = Math.max(1e-5, maxVal - minVal);
 
-    // Sample lower-middle band (y: 35%..80%) split into left, center, right
-    const yStart = Math.floor(mapH * 0.35);
-    const yEnd = Math.floor(mapH * 0.8);
-
-    const avgZone = (xFrom: number, xTo: number): number => {
+    const avgRegion = (xFrom: number, xTo: number, yFrom: number, yTo: number): number => {
       let sum = 0;
       let count = 0;
-      for (let y = yStart; y < yEnd; y++) {
+      for (let y = yFrom; y < yTo; y++) {
         for (let x = xFrom; x < xTo; x++) {
           const norm = (Number(data[y * mapW + x]) - minVal) / span;
           sum += norm;
@@ -168,13 +169,54 @@ export class DepthModelService {
     };
 
     const third = Math.floor(mapW / 3);
-    const leftCloseness = avgZone(0, third);
-    const centerCloseness = avgZone(third, third * 2);
-    const rightCloseness = avgZone(third * 2, mapW);
+    const yMidStart = Math.floor(mapH * 0.25);
+    const yMidEnd = Math.floor(mapH * 0.72);
+    const yUpperStart = Math.floor(mapH * 0.18);
+    const yUpperEnd = Math.floor(mapH * 0.48);
 
-    // Approximate relative distance in meters from normalized closeness
+    // Focus on chest/head-level mid corridor rather than bottom floor to avoid floor false alarms
+    const leftCloseness = avgRegion(0, third, yMidStart, yMidEnd);
+    const centerCloseness = avgRegion(third, third * 2, yMidStart, yMidEnd);
+    const rightCloseness = avgRegion(third * 2, mapW, yMidStart, yMidEnd);
+    const upperCenterCloseness = avgRegion(third, third * 2, yUpperStart, yUpperEnd);
+
+    // Detect abrupt horizontal depth discontinuity in lower-center corridor (stairs/curbs)
+    let abruptDepthRows = 0;
+    let prevRowMean = -1;
+    const yStepStart = Math.floor(mapH * 0.56);
+    const yStepEnd = Math.floor(mapH * 0.88);
+    for (let y = yStepStart; y < yStepEnd; y += 2) {
+      let rowSum = 0;
+      let cnt = 0;
+      for (let x = third; x < third * 2; x++) {
+        rowSum += (Number(data[y * mapW + x]) - minVal) / span;
+        cnt++;
+      }
+      const rowMean = rowSum / Math.max(1, cnt);
+      if (prevRowMean >= 0 && Math.abs(rowMean - prevRowMean) > 0.085) {
+        abruptDepthRows++;
+      }
+      prevRowMean = rowMean;
+    }
+
+    const stepDetectedInDepth = abruptDepthRows >= 2;
+    const wallAhead = upperCenterCloseness >= 72 && centerCloseness >= 74;
+    const closeObstacleAhead =
+      wallAhead || (centerCloseness >= 72 && centerCloseness >= Math.min(leftCloseness, rightCloseness) + 12);
+
+    let clearSide: 'left' | 'right' | 'center' | null = null;
+    if (closeObstacleAhead) {
+      if (leftCloseness + 10 < rightCloseness && leftCloseness < 65) {
+        clearSide = 'left';
+      } else if (rightCloseness + 10 < leftCloseness && rightCloseness < 65) {
+        clearSide = 'right';
+      }
+    } else if (centerCloseness < 55) {
+      clearSide = 'center';
+    }
+
     const estimatedMeters = Number(
-      Math.max(0.5, 4.2 - (centerCloseness / 100) * 3.5).toFixed(1)
+      Math.max(0.5, 4.0 - (centerCloseness / 100) * 3.3).toFixed(1)
     );
 
     return {
@@ -182,7 +224,10 @@ export class DepthModelService {
       centerCloseness,
       rightCloseness,
       estimatedMeters,
-      closeObstacleAhead: centerCloseness >= 68,
+      closeObstacleAhead,
+      wallAhead,
+      stepDetectedInDepth,
+      clearSide,
       inferenceMs,
       backend: this.status.backend ?? 'wasm',
     };

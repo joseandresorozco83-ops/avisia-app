@@ -1,7 +1,9 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Upload, Cpu, AlertCircle, Volume2, SlidersHorizontal } from 'lucide-react';
+import { Upload, Cpu, AlertCircle, Volume2, SlidersHorizontal, Sparkles, FileText, Loader2 } from 'lucide-react';
 import type { Detection, DetectorStatus } from '../types/avicia';
 import { detectorService } from '../services/DetectorService';
+import { assistiveVisionService } from '../services/AssistiveVisionService';
+import { formatDistanceSteps } from '../services/MessagePolicy';
 
 interface VisionLabPanelProps {
   threshold: number;
@@ -20,6 +22,8 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
   const [status, setStatus] = useState<DetectorStatus>(() => detectorService.getStatus());
   const [detections, setDetections] = useState<Detection[]>([]);
   const [running, setRunning] = useState(false);
+  const [assistBusy, setAssistBusy] = useState(false);
+  const [assistText, setAssistText] = useState<string | null>(null);
 
   const imgRef = useRef<HTMLImageElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -96,8 +100,41 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
     if (detections.length === 0) {
       return 'No se encontraron objetos sobre el umbral de confianza seleccionado.';
     }
-    const labels = Array.from(new Set(detections.map((d) => d.labelEs.toLowerCase())));
-    return `Detección real en imagen: identifico ${labels.join(', ')}.`;
+    const items = detections.slice(0, 4).map((d) => {
+      const pos = d.clockPosition ?? 'al frente';
+      const dist = formatDistanceSteps(d.estimatedMeters);
+      return dist ? `${d.labelEs.toLowerCase()} ${pos} (${dist})` : `${d.labelEs.toLowerCase()} ${pos}`;
+    });
+    return `Detección real en imagen: ${items.join('; ')}.`;
+  };
+
+  const handleDescribeImageAi = async () => {
+    if (!imgRef.current) return;
+    setAssistBusy(true);
+    try {
+      const res = await assistiveVisionService.describeScene(
+        imgRef.current,
+        detections,
+        null,
+        null
+      );
+      setAssistText(res.text);
+      onSpeakDescription(res.text);
+    } finally {
+      setAssistBusy(false);
+    }
+  };
+
+  const handleReadImageText = async () => {
+    if (!imgRef.current) return;
+    setAssistBusy(true);
+    try {
+      const res = await assistiveVisionService.readText(imgRef.current);
+      setAssistText(res.text);
+      onSpeakDescription(res.text);
+    } finally {
+      setAssistBusy(false);
+    }
   };
 
   return (
@@ -164,8 +201,7 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
             </p>
             <p className="text-xs text-slate-400 mt-1">
               Carga una fotografía local para ejecutar el detector{' '}
-              <code className="text-cyan-300">EfficientDet-Lite0</code> mediante MediaPipe Tasks
-              Vision directamente en tu navegador.
+              <code className="text-cyan-300">{status.modelName}</code>, leer texto OCR o describir la escena con IA.
             </p>
           </div>
         ) : (
@@ -189,27 +225,54 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
         </div>
       </div>
 
-      {/* Real inference summary + speak button */}
+      {/* Real inference summary + speak / Scene AI / OCR buttons */}
       {imageUrl && !status.error && (
-        <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-900/70 border border-slate-800 text-xs">
-          <div className="text-slate-300">
-            <span className="font-semibold text-emerald-300">
-              {detections.length} detecciones reales
-            </span>
-            {status.inferenceTimeMs !== null && (
-              <span className="text-slate-400 ml-2">
-                · Tiempo de inferencia: {status.inferenceTimeMs} ms
+        <div className="space-y-2 p-3 rounded-xl bg-slate-900/70 border border-slate-800 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-slate-300">
+              <span className="font-semibold text-emerald-300">
+                {detections.length} detecciones reales
               </span>
-            )}
+              {status.inferenceTimeMs !== null && (
+                <span className="text-slate-400 ml-2">
+                  · {status.inferenceTimeMs} ms
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                disabled={assistBusy}
+                onClick={() => void handleDescribeImageAi()}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#22d3ee] hover:bg-[#8aebff] disabled:opacity-50 text-[#00363e] font-semibold"
+              >
+                {assistBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                Escena IA
+              </button>
+              <button
+                type="button"
+                disabled={assistBusy}
+                onClick={() => void handleReadImageText()}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#4edea3] hover:bg-[#6ffbbe] disabled:opacity-50 text-[#003824] font-semibold"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Leer texto
+              </button>
+              <button
+                type="button"
+                onClick={() => onSpeakDescription(buildSimpleDescription())}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 font-medium"
+              >
+                <Volume2 className="w-3.5 h-3.5" />
+                Escuchar
+              </button>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => onSpeakDescription(buildSimpleDescription())}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 font-medium"
-          >
-            <Volume2 className="w-3.5 h-3.5" />
-            Escuchar descripción
-          </button>
+          {assistText && (
+            <p className="p-2 rounded-lg bg-slate-950/80 border border-slate-700/60 text-slate-200 leading-relaxed">
+              {assistText}
+            </p>
+          )}
         </div>
       )}
     </div>

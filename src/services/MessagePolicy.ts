@@ -11,10 +11,18 @@ interface MessageHistoryEntry {
   timestamp: number;
 }
 
+export function formatDistanceSteps(meters?: number | null): string {
+  if (typeof meters !== 'number' || !Number.isFinite(meters)) return '';
+  if (meters <= 0.9) return 'muy cerca, a un paso';
+  if (meters <= 1.7) return 'a dos pasos';
+  if (meters <= 2.6) return 'a tres pasos';
+  return `a unos ${Math.round(meters)} metros`;
+}
+
 /**
  * Independent MessagePolicy module.
  * Evaluates detections under policy C00 (arrival/eligibility order)
- * or policy C01 (preference, novelty, and confirmed change).
+ * or policy C01 (preference, novelty, confirmed change, clock-face + step phrasing).
  */
 export class MessagePolicy {
   private lastMessages: MessageHistoryEntry[] = [];
@@ -58,10 +66,9 @@ export class MessagePolicy {
       this.recordMessage(rawMessage, now);
     }
 
-    // Keep unused reference clean for TS strictness
     void pendingOrInsufficient;
 
-    const obstacleAlert = this.detectFrontObstacle(detections);
+    const obstacleAlert = this.detectFrontObstacle(detections, false, false);
 
     return {
       policy,
@@ -79,26 +86,38 @@ export class MessagePolicy {
     detections: Detection[],
     policy: PolicyType,
     now: number = Date.now(),
-    streetMode = false
+    streetMode = false,
+    useClockFace = true
   ): PolicyEvaluation {
-    if (detections.length === 0) {
+    const confirmedOnly = detections.filter((d) => d.confirmationStatus === 'confirmed');
+
+    if (confirmedOnly.length === 0) {
       return {
         policy,
         selectedDetectionIds: [],
-        discardedDetectionIds: [],
+        discardedDetectionIds: detections.map((d) => d.id),
         generatedMessage: streetMode
-          ? 'Despejado.'
-          : 'No se detectan objetos sobre el umbral de confianza actual.',
-        reason: 'Sin detecciones válidas del modelo en este cuadro.',
+          ? 'Camino despejado.'
+          : 'Sin obstáculos confirmados frente a ti.',
+        reason: 'Sin detecciones confirmadas en múltiples cuadros.',
         suppressedDuplicate: false,
         timestamp: now,
       };
     }
 
+    const urgencyScore = (d: Detection): number => {
+      let score = d.priority;
+      if (d.proximityZone === 'front_close') score += 45;
+      else if (d.proximityZone === 'front_mid') score += 20;
+      if (d.isInanimateObstacle) score += 12;
+      if (typeof d.estimatedMeters === 'number' && d.estimatedMeters <= 1.5) score += 25;
+      return score;
+    };
+
     const eligible =
       policy === 'C00'
-        ? detections
-        : [...detections].sort((a, b) => b.priority - a.priority);
+        ? confirmedOnly
+        : [...confirmedOnly].sort((a, b) => urgencyScore(b) - urgencyScore(a));
 
     const selected = eligible.slice(0, policy === 'C00' ? 4 : 2);
     const selectedIds = selected.map((d) => d.id);
@@ -106,29 +125,30 @@ export class MessagePolicy {
       .filter((d) => !selectedIds.includes(d.id))
       .map((d) => d.id);
 
-    const counts = new Map<string, number>();
-    for (const det of selected) {
-      counts.set(det.labelEs.toLowerCase(), (counts.get(det.labelEs.toLowerCase()) ?? 0) + 1);
-    }
-
-    const parts: string[] = [];
-    for (const [label, count] of counts.entries()) {
-      parts.push(count > 1 ? `${count} ${this.pluralize(label)}` : this.withArticle(label));
-    }
-
-    const obstacleAlert = this.detectFrontObstacle(detections, streetMode);
+    const obstacleAlert = this.detectFrontObstacle(eligible, streetMode, useClockFace);
 
     let generatedMessage: string;
     if (obstacleAlert) {
       generatedMessage = obstacleAlert.message;
-    } else if (streetMode && selected.length > 0) {
+    } else if (selected.length > 0) {
       const top = selected[0];
-      generatedMessage = `${top.labelEs} ${this.directionWord(top)}.`;
+      const spatial = useClockFace
+        ? top.clockPosition ?? this.clockPhrase(top)
+        : this.directionWord(top);
+      const dist = formatDistanceSteps(top.estimatedMeters);
+      if (streetMode) {
+        generatedMessage = dist
+          ? `${top.labelEs} ${spatial}, ${dist}.`
+          : `${top.labelEs} ${spatial}.`;
+      } else {
+        const secondary =
+          selected.length > 1 ? ` También ${this.withArticle(selected[1].labelEs.toLowerCase())}.` : '';
+        generatedMessage = dist
+          ? `${top.labelEs} ${spatial}, ${dist}.${secondary}`
+          : `${top.labelEs} ${spatial}.${secondary}`;
+      }
     } else {
-      generatedMessage =
-        parts.length > 0
-          ? `Al frente: ${this.joinSpanishList(parts)}.`
-          : 'Sin objetos claros.';
+      generatedMessage = 'Sin objetos claros.';
     }
 
     const suppressedDuplicate = this.isDuplicateRecentlySpoken(generatedMessage, now);
@@ -143,8 +163,8 @@ export class MessagePolicy {
       generatedMessage,
       reason:
         policy === 'C00'
-          ? 'Política C00 aplicada sobre detecciones reales por orden de salida.'
-          : 'Política C01 aplicada sobre detecciones reales priorizando obstáculos frontales y evitando repetición.',
+          ? 'Política C00 aplicada sobre detecciones confirmadas por orden de salida.'
+          : 'Política C01 priorizando peligro frontal, posición tipo reloj y distancia en pasos.',
       suppressedDuplicate,
       timestamp: now,
       obstacleAlert,
@@ -153,25 +173,47 @@ export class MessagePolicy {
 
   private detectFrontObstacle(
     detections: Detection[],
-    streetMode = false
+    streetMode = false,
+    useClockFace = false
   ): ObstacleAlert | null {
-    const frontObstacle = detections.find(
-      (d) =>
-        d.isInanimateObstacle &&
-        d.confirmationStatus === 'confirmed' &&
-        (d.proximityZone === 'front_close' || d.proximityZone === 'front_mid')
-    );
+    // Prefer front_close inanimate hazards first
+    const frontObstacle =
+      detections.find(
+        (d) =>
+          d.isInanimateObstacle &&
+          d.confirmationStatus === 'confirmed' &&
+          d.proximityZone === 'front_close'
+      ) ??
+      detections.find(
+        (d) =>
+          d.isInanimateObstacle &&
+          d.confirmationStatus === 'confirmed' &&
+          d.proximityZone === 'front_mid'
+      );
 
     if (!frontObstacle) return null;
 
     const zone = frontObstacle.proximityZone === 'front_close' ? 'front_close' : 'front_mid';
     const labelLower = frontObstacle.labelEs.toLowerCase();
-    const dir = this.directionWord(frontObstacle);
-    const message = streetMode
-      ? `${frontObstacle.labelEs} ${dir}`
-      : zone === 'front_close'
-        ? `Cuidado: ${labelLower} frente a ti.`
+    const spatial = useClockFace
+      ? frontObstacle.clockPosition ?? this.clockPhrase(frontObstacle)
+      : this.directionWord(frontObstacle);
+    const dist = formatDistanceSteps(frontObstacle.estimatedMeters);
+
+    let message: string;
+    if (streetMode) {
+      message = dist
+        ? `${zone === 'front_close' ? 'Alto, ' : ''}${frontObstacle.labelEs} ${spatial}, ${dist}`
+        : `${frontObstacle.labelEs} ${spatial}`;
+    } else if (zone === 'front_close') {
+      message = dist
+        ? `Cuidado: ${labelLower} ${spatial}, ${dist}.`
+        : `Cuidado: ${labelLower} frente a ti.`;
+    } else {
+      message = dist
+        ? `Atención: ${labelLower} ${spatial}, ${dist}.`
         : `Atención: ${labelLower} adelante.`;
+    }
 
     return {
       labelEs: frontObstacle.labelEs,
@@ -180,11 +222,20 @@ export class MessagePolicy {
     };
   }
 
-  private directionWord(det: Detection): 'izquierda' | 'frente' | 'derecha' {
+  private directionWord(det: Detection): 'a tu izquierda' | 'al frente' | 'a tu derecha' {
     const centerX = det.bbox.x + det.bbox.width / 2;
-    if (centerX < 36) return 'izquierda';
-    if (centerX > 64) return 'derecha';
-    return 'frente';
+    if (centerX < 36) return 'a tu izquierda';
+    if (centerX > 64) return 'a tu derecha';
+    return 'al frente';
+  }
+
+  private clockPhrase(det: Detection): string {
+    const centerX = det.bbox.x + det.bbox.width / 2;
+    if (centerX < 20) return 'a las 9';
+    if (centerX < 38) return 'a las 10';
+    if (centerX <= 62) return 'a las 12';
+    if (centerX <= 80) return 'a las 2';
+    return 'a las 3';
   }
 
   private isDuplicateRecentlySpoken(message: string, now: number): boolean {
@@ -210,25 +261,6 @@ export class MessagePolicy {
       firstWord === 'pared';
     return `${feminine ? 'una' : 'un'} ${label}`;
   }
-
-  private pluralize(label: string): string {
-    if (label === 'autobús') return 'autobuses';
-    if (label === 'automóvil') return 'automóviles';
-    if (label === 'señal de alto') return 'señales de alto';
-    if (label === 'bicicleta detenida') return 'bicicletas detenidas';
-    if (label === 'obstáculo en el paso') return 'obstáculos en el paso';
-    if (label === 'objeto en el suelo') return 'objetos en el suelo';
-    if (label.endsWith('z')) return `${label.slice(0, -1)}ces`;
-    if (/[aeiouáéíóú]$/.test(label)) return `${label}s`;
-    return `${label}es`;
-  }
-
-  private joinSpanishList(items: string[]): string {
-    if (items.length === 1) return items[0];
-    if (items.length === 2) return `${items[0]} y ${items[1]}`;
-    return `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
-  }
 }
 
 export const messagePolicy = new MessagePolicy();
-

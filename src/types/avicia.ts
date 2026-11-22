@@ -1,5 +1,9 @@
 export type OperationMode = 'simulation' | 'vision_lab' | 'video_lab' | 'live_camera';
 
+export type DetectorEngineId = 'efficientdet_lite2' | 'yolov10n' | 'efficientdet_lite0';
+
+export type AssistiveChannel = 'explore' | 'scene_ai' | 'read_text' | 'find_object' | 'light';
+
 export type DetectionSource = 'simulated' | 'real_image' | 'real_video';
 
 export type ObjectCategory =
@@ -54,6 +58,14 @@ export interface Detection {
   isInanimateObstacle?: boolean;
   /** Spatial zone relative to the user's forward path */
   proximityZone?: 'front_close' | 'front_mid' | 'side';
+  /** Estimated distance in meters (pinhole geometry or depth fusion) */
+  estimatedMeters?: number | null;
+  /** Clock-face direction relative to user (e.g., "a las 12", "a las 10") */
+  clockPosition?: string;
+  /** Stable temporal track identifier across video frames */
+  trackId?: string;
+  /** Number of consecutive frames confirming this object */
+  framesConfirmed?: number;
 }
 
 export interface ObstacleAlert {
@@ -150,6 +162,7 @@ export interface DetectorStatus {
   loading: boolean;
   error: string | null;
   modelName: string;
+  engineId?: DetectorEngineId;
   inferenceTimeMs: number | null;
 }
 
@@ -160,5 +173,7 @@ export interface StreetAssistFeatures {
   handsFreeWakeWord: boolean;
   headsetButton: boolean;
   depthAnythingEnabled: boolean;
+  detectorEngine: DetectorEngineId;
+  clockFaceDirections: boolean;
 }
 

@@ -195,6 +195,95 @@ export class SpeechService {
     }
   }
 
+  /**
+   * Seeing AI-inspired light detector musical tone:
+   * pitch rises smoothly with ambient luminance (220Hz dark -> 880Hz bright).
+   */
+  playLightTone(brightnessPct: number): void {
+    const ctx = this.getAudioContext();
+    if (!ctx) return;
+    try {
+      const now = ctx.currentTime;
+      const clamped = Math.max(0, Math.min(100, brightnessPct));
+      const freq = 220 + (clamped / 100) * 660;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(0.09, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.17);
+    } catch {
+      // Ignore Web Audio errors
+    }
+  }
+
+  /**
+   * Envision AI-inspired directional radar beep for Find-Object channel.
+   * Higher pitch when the target is centered at 12 o'clock.
+   */
+  playRadarBeep(pan: number, alignment0to1: number): void {
+    const ctx = this.getAudioContext();
+    if (!ctx) return;
+    try {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const clampedAlign = Math.max(0, Math.min(1, alignment0to1));
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(480 + clampedAlign * 540, now);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(0.12, now + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+
+      if (typeof ctx.createStereoPanner === 'function') {
+        const panner = ctx.createStereoPanner();
+        panner.pan.setValueAtTime(Math.max(-1, Math.min(1, pan)), now);
+        osc.connect(gain);
+        gain.connect(panner);
+        panner.connect(ctx.destination);
+      } else {
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+      }
+
+      osc.start(now);
+      osc.stop(now + 0.12);
+    } catch {
+      // Ignore Web Audio errors
+    }
+  }
+
+  /** Distinct tactile haptic patterns for blind non-visual signaling */
+  vibratePattern(pattern: 'danger' | 'step' | 'caution' | 'confirm' | 'blocked'): void {
+    if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+    try {
+      switch (pattern) {
+        case 'danger':
+          navigator.vibrate([120, 55, 120, 55, 180]);
+          break;
+        case 'step':
+          navigator.vibrate([220, 80, 120]);
+          break;
+        case 'caution':
+          navigator.vibrate([70]);
+          break;
+        case 'blocked':
+          navigator.vibrate([300]);
+          break;
+        case 'confirm':
+          navigator.vibrate([45]);
+          break;
+      }
+    } catch {
+      // Ignore vibration API errors
+    }
+  }
+
   speak(
     text: string,
     settings: SpeechSettings,

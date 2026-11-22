@@ -30,6 +30,7 @@ import {
 import type {
   ConversationMessage,
   Detection,
+  DetectorEngineId,
   OperationMode,
   PolicyEvaluation,
   PolicyType,
@@ -42,6 +43,7 @@ import { messagePolicy } from './services/MessagePolicy';
 import { speechService } from './services/SpeechService';
 import { conversationService } from './services/ConversationService';
 import { detectorService } from './services/DetectorService';
+import { assistiveVisionService } from './services/AssistiveVisionService';
 import { locationService, type RealGpsPosition } from './services/LocationService';
 import { SimulatedSceneCanvas } from './components/SimulatedSceneCanvas';
 import { VisionLabPanel } from './components/VisionLabPanel';
@@ -65,6 +67,8 @@ const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
   handsFreeWakeWord: false,
   headsetButton: false,
   depthAnythingEnabled: false,
+  detectorEngine: 'efficientdet_lite2',
+  clockFaceDirections: true,
 };
 
 type MobileTab = 'vision' | 'assistant' | 'analysis' | 'map';
@@ -93,6 +97,13 @@ export function App() {
   const [realDetections, setRealDetections] = useState<Detection[]>([]);
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [autoStartCamera, setAutoStartCamera] = useState<boolean>(false);
+  const liveVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [geminiKeyInput, setGeminiKeyInput] = useState<string>(() =>
+    assistiveVisionService.getGeminiApiKey()
+  );
+  const [geminiKeySaved, setGeminiKeySaved] = useState<boolean>(() =>
+    assistiveVisionService.hasGeminiApiKey()
+  );
 
   const [streetFeatures, setStreetFeatures] = useState<StreetAssistFeatures>(() => {
     try {
@@ -317,9 +328,18 @@ export function App() {
       realDetections,
       policy,
       Date.now(),
-      streetFeatures.streetMode
+      streetFeatures.streetMode,
+      streetFeatures.clockFaceDirections
     );
-  }, [mode, currentStep, simulatedDetections, realDetections, policy, streetFeatures.streetMode]);
+  }, [
+    mode,
+    currentStep,
+    simulatedDetections,
+    realDetections,
+    policy,
+    streetFeatures.streetMode,
+    streetFeatures.clockFaceDirections,
+  ]);
 
   const lastChimedObstacleRef = useRef<string | null>(null);
   const lastAutoSpokenAtRef = useRef<number>(0);
@@ -653,6 +673,46 @@ export function App() {
       source: 'intent_engine',
     });
 
+    const normalizedQ = question
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+    const isCrossingSafetyQuery =
+      normalizedQ.includes('puedo cruzar') ||
+      normalizedQ.includes('cruzar la calle') ||
+      normalizedQ.includes('es seguro caminar') ||
+      normalizedQ.includes('puedo avanzar');
+
+    if (
+      !isCrossingSafetyQuery &&
+      mode === 'live_camera' &&
+      cameraActive &&
+      liveVideoRef.current &&
+      assistiveVisionService.hasGeminiApiKey()
+    ) {
+      void assistiveVisionService
+        .answerVisualQuestion(liveVideoRef.current, question)
+        .then((visualReply) => {
+          const finalReply =
+            visualReply ??
+            conversationService.answerQuestion(question, {
+              mode,
+              scenario: activeScenario,
+              activeDetections,
+              lastMessage: evaluation.generatedMessage,
+              realGps,
+            });
+          appendHistory({
+            sender: 'avicia',
+            text: finalReply,
+            source: visualReply ? 'real_video' : 'intent_engine',
+            spoken: speechSettings.enabled,
+          });
+          speakText(finalReply);
+        });
+      return;
+    }
+
     const answer = conversationService.answerQuestion(question, {
       mode,
       scenario: activeScenario,
@@ -851,8 +911,21 @@ export function App() {
             streetFeatures.soundOnlyMode
           }
           depthAnythingEnabled={streetFeatures.depthAnythingEnabled}
+          detectorEngine={streetFeatures.detectorEngine}
           onCameraStateChange={setCameraActive}
           onDetectionsReady={(dets) => setRealDetections(dets)}
+          onVideoElementChange={(el) => {
+            liveVideoRef.current = el;
+          }}
+          onSpeakNow={(text) => {
+            appendHistory({
+              sender: 'avicia',
+              text,
+              source: 'real_video',
+              spoken: true,
+            });
+            speakText(text);
+          }}
         />
       )}
     </div>
@@ -875,7 +948,7 @@ export function App() {
                     AVISIA
                   </h1>
                   <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                    v2.4 Core
+                    v3.0 Asistiva
                   </span>
                 </div>
                 <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
@@ -1150,6 +1223,109 @@ export function App() {
                   )
                 )}
 
+                {/* v3.0 · Motor de Visión e IA Multimodal (Be My AI / Seeing AI) */}
+                <div className="p-3 rounded-2xl border border-[#22d3ee]/40 bg-[#1c2028] space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#8aebff]">
+                      v3.0 · Precisión de Visión IA
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#22d3ee]/15 text-[#8aebff]">
+                      {geminiKeySaved ? 'Gemini IA ON' : '100% Local'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1">
+                    <span className="text-[10px] text-[#bbc9cd] block">
+                      Motor detector en tiempo real:
+                    </span>
+                    <div className="grid grid-cols-3 gap-1">
+                      {(
+                        [
+                          { id: 'efficientdet_lite2', label: 'Lite2 · 34%' },
+                          { id: 'yolov10n', label: 'YOLOv10n' },
+                          { id: 'efficientdet_lite0', label: 'Lite0 Ráp.' },
+                        ] as Array<{ id: DetectorEngineId; label: string }>
+                      ).map((eng) => {
+                        const selected = streetFeatures.detectorEngine === eng.id;
+                        return (
+                          <button
+                            key={eng.id}
+                            type="button"
+                            onClick={() =>
+                              setStreetFeatures((prev) => ({
+                                ...prev,
+                                detectorEngine: eng.id,
+                              }))
+                            }
+                            className={`py-1.5 px-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                              selected
+                                ? 'bg-[#22d3ee] text-[#00363e] border-[#22d3ee]'
+                                : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/50'
+                            }`}
+                          >
+                            {eng.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={streetFeatures.clockFaceDirections}
+                    onClick={() =>
+                      setStreetFeatures((prev) => ({
+                        ...prev,
+                        clockFaceDirections: !prev.clockFaceDirections,
+                      }))
+                    }
+                    className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
+                  >
+                    <span className="text-[11px] font-medium text-[#dfe2ee]">
+                      Posición tipo reloj (a las 10 / 12 / 2)
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                        streetFeatures.clockFaceDirections
+                          ? 'bg-[#4edea3]/20 text-[#4edea3]'
+                          : 'bg-[#262a33] text-[#859397]'
+                      }`}
+                    >
+                      {streetFeatures.clockFaceDirections ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
+
+                  <div className="space-y-1.5 pt-1 border-t border-[#3c494c]/30">
+                    <label
+                      htmlFor="gemini-key-input"
+                      className="text-[10px] text-[#bbc9cd] block leading-snug"
+                    >
+                      Clave API Gemini Flash (opcional, gratis en AI Studio — desbloquea puertas, gradas, paredes y OCR exacto estilo Be My AI):
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        id="gemini-key-input"
+                        type="password"
+                        value={geminiKeyInput}
+                        onChange={(e) => setGeminiKeyInput(e.target.value)}
+                        placeholder="AIza..."
+                        className="flex-1 min-w-0 h-8 px-2 rounded-lg bg-[#0f131c] border border-[#3c494c]/50 text-xs text-[#dfe2ee]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          assistiveVisionService.setGeminiApiKey(geminiKeyInput);
+                          setGeminiKeySaved(assistiveVisionService.hasGeminiApiKey());
+                        }}
+                        className="h-8 px-2.5 rounded-lg bg-[#4edea3] text-[#003824] font-bold text-[11px] shrink-0"
+                      >
+                        Guardar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 {/* v2.5 · Modo Calle y Manos Libres (Interruptores opcionales) */}
                 <div className="p-3 rounded-2xl border border-[#3c494c]/40 bg-[#1c2028] space-y-2">
                   <div className="flex items-center justify-between gap-2">
@@ -1166,14 +1342,15 @@ export function App() {
                           streetFeatures.handsFreeWakeWord ||
                           streetFeatures.headsetButton ||
                           streetFeatures.depthAnythingEnabled;
-                        setStreetFeatures({
+                        setStreetFeatures((prev) => ({
+                          ...prev,
                           streetMode: !anyOn,
                           stereoSonar: !anyOn,
                           soundOnlyMode: !anyOn,
                           handsFreeWakeWord: !anyOn,
                           headsetButton: !anyOn,
                           depthAnythingEnabled: !anyOn,
-                        });
+                        }));
                       }}
                       className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#262a33] text-[#4edea3] hover:bg-[#31353e]"
                     >

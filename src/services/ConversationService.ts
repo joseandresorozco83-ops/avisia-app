@@ -1,5 +1,6 @@
 import type { Detection, OperationMode, Scenario } from '../types/avicia';
 import type { RealGpsPosition } from './LocationService';
+import { formatDistanceSteps } from './MessagePolicy';
 
 export interface ConversationContext {
   mode: OperationMode;
@@ -124,13 +125,21 @@ export class ConversationService {
         : 'No se detectaron personas sobre el umbral de confianza actual.';
     }
 
-    if (q.includes('que hay') || q.includes('objetos') || q.includes('identificaste') || q.includes('ves')) {
-      return labels.length > 0
-        ? `Detecciones reales actuales: ${labels.join(', ')}.`
-        : 'No hay detecciones reales disponibles o el modelo aún no ha sido ejecutado sobre una imagen.';
+    if (q.includes('que hay') || q.includes('objetos') || q.includes('identificaste') || q.includes('ves') || q.includes('describe')) {
+      if (dets.length === 0) {
+        return 'No hay detecciones confirmadas frente a la cámara en este momento.';
+      }
+      const detailed = dets.slice(0, 4).map((d) => {
+        const pos = d.clockPosition ?? 'al frente';
+        const dist = formatDistanceSteps(d.estimatedMeters);
+        return dist ? `${d.labelEs.toLowerCase()} ${pos} (${dist})` : `${d.labelEs.toLowerCase()} ${pos}`;
+      });
+      return `Frente a ti confirmo: ${detailed.join('; ')}.`;
     }
 
-    return 'En este modo respondo únicamente según las detecciones reales obtenidas por el modelo en el navegador.';
+    return labels.length > 0
+      ? `Detecciones actuales: ${labels.join(', ')}. Usa el canal Escena o Texto para mayor detalle.`
+      : 'En este modo respondo según las detecciones confirmadas por la cámara.';
   }
 
   private normalize(text: string): string {

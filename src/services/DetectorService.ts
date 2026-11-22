@@ -1,67 +1,171 @@
 import { FilesetResolver, ObjectDetector, type Detection as MpDetection } from '@mediapipe/tasks-vision';
-import type { Detection, DetectorStatus, ObjectCategory } from '../types/avicia';
+import type { Detection, DetectorEngineId, DetectorStatus, ObjectCategory } from '../types/avicia';
 
-const CATEGORY_MAP: Record<
-  string,
-  { category: ObjectCategory; labelEs: string; priority: number; isInanimateObstacle?: boolean }
-> = {
-  person: { category: 'person', labelEs: 'Persona', priority: 92 },
-  car: { category: 'car', labelEs: 'Automóvil', priority: 80 },
-  motorcycle: { category: 'motorcycle', labelEs: 'Motocicleta', priority: 85 },
-  bus: { category: 'bus', labelEs: 'Autobús', priority: 95 },
-  bench: { category: 'bench', labelEs: 'Banca', priority: 88, isInanimateObstacle: true },
-  'fire hydrant': { category: 'fire_hydrant', labelEs: 'Hidrante', priority: 90, isInanimateObstacle: true },
-  'traffic light': { category: 'traffic_light', labelEs: 'Semáforo', priority: 84, isInanimateObstacle: true },
-  'stop sign': { category: 'stop_sign', labelEs: 'Señal de alto', priority: 84, isInanimateObstacle: true },
-  chair: { category: 'chair', labelEs: 'Silla', priority: 88, isInanimateObstacle: true },
-  'potted plant': { category: 'potted_plant', labelEs: 'Maceta', priority: 86, isInanimateObstacle: true },
-  bicycle: { category: 'obstacle', labelEs: 'Bicicleta detenida', priority: 86, isInanimateObstacle: true },
-  suitcase: { category: 'obstacle', labelEs: 'Obstáculo en el paso', priority: 87, isInanimateObstacle: true },
-  backpack: { category: 'obstacle', labelEs: 'Objeto en el suelo', priority: 85, isInanimateObstacle: true },
-  'dining table': { category: 'obstacle', labelEs: 'Mesa', priority: 87, isInanimateObstacle: true },
-  couch: { category: 'obstacle', labelEs: 'Sillón', priority: 86, isInanimateObstacle: true },
-  bed: { category: 'obstacle', labelEs: 'Cama', priority: 84, isInanimateObstacle: true },
-  tv: { category: 'obstacle', labelEs: 'Pantalla', priority: 75 },
-  laptop: { category: 'unknown', labelEs: 'Computadora', priority: 70 },
-  'cell phone': { category: 'unknown', labelEs: 'Teléfono', priority: 70 },
-  bottle: { category: 'unknown', labelEs: 'Botella', priority: 68 },
-  cup: { category: 'unknown', labelEs: 'Taza', priority: 68 },
-  book: { category: 'unknown', labelEs: 'Libro', priority: 65 },
-  dog: { category: 'unknown', labelEs: 'Perro', priority: 88 },
-  cat: { category: 'unknown', labelEs: 'Gato', priority: 82 },
-  truck: { category: 'car', labelEs: 'Camión', priority: 88, isInanimateObstacle: true },
-  train: { category: 'bus', labelEs: 'Tren', priority: 90, isInanimateObstacle: true },
-  refrigerator: { category: 'obstacle', labelEs: 'Refrigerador', priority: 86, isInanimateObstacle: true },
-  oven: { category: 'obstacle', labelEs: 'Estufa', priority: 84, isInanimateObstacle: true },
-  microwave: { category: 'obstacle', labelEs: 'Microondas', priority: 75, isInanimateObstacle: true },
-  sink: { category: 'obstacle', labelEs: 'Lavabo', priority: 82, isInanimateObstacle: true },
-  toilet: { category: 'obstacle', labelEs: 'Inodoro', priority: 84, isInanimateObstacle: true },
-  handbag: { category: 'obstacle', labelEs: 'Bolso', priority: 76, isInanimateObstacle: true },
-  umbrella: { category: 'obstacle', labelEs: 'Paraguas', priority: 74 },
-  remote: { category: 'unknown', labelEs: 'Control remoto', priority: 60 },
-  keyboard: { category: 'unknown', labelEs: 'Teclado', priority: 65 },
-  mouse: { category: 'unknown', labelEs: 'Ratón', priority: 60 },
-  clock: { category: 'unknown', labelEs: 'Reloj', priority: 62 },
-  vase: { category: 'obstacle', labelEs: 'Florero', priority: 76, isInanimateObstacle: true },
-  bowl: { category: 'unknown', labelEs: 'Tazón', priority: 64 },
-  'wine glass': { category: 'unknown', labelEs: 'Copa', priority: 64 },
-  scissors: { category: 'unknown', labelEs: 'Tijeras', priority: 62 },
-  skateboard: { category: 'obstacle', labelEs: 'Patineta', priority: 85, isInanimateObstacle: true },
-  'sports ball': { category: 'obstacle', labelEs: 'Pelota', priority: 74 },
-  'teddy bear': { category: 'unknown', labelEs: 'Peluche', priority: 60 },
-  bird: { category: 'unknown', labelEs: 'Ave', priority: 70 },
-  horse: { category: 'unknown', labelEs: 'Caballo', priority: 88 },
+export interface ClassMeta {
+  category: ObjectCategory;
+  labelEs: string;
+  priority: number;
+  isInanimateObstacle?: boolean;
+  /** Typical real-world vertical height in meters for pinhole distance estimation */
+  typicalHeightMeters: number;
+}
+
+/**
+ * Complete 80-class COCO Spanish mapping with realistic physical heights (m)
+ * and obstacle priority weights for blind mobility assistance.
+ */
+export const CATEGORY_MAP: Record<string, ClassMeta> = {
+  // People & transport (high mobility relevance)
+  person: { category: 'person', labelEs: 'Persona', priority: 93, typicalHeightMeters: 1.68 },
+  bicycle: { category: 'obstacle', labelEs: 'Bicicleta', priority: 89, isInanimateObstacle: true, typicalHeightMeters: 1.05 },
+  car: { category: 'car', labelEs: 'Automóvil', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 1.50 },
+  motorcycle: { category: 'motorcycle', labelEs: 'Motocicleta', priority: 91, isInanimateObstacle: true, typicalHeightMeters: 1.15 },
+  airplane: { category: 'unknown', labelEs: 'Avión', priority: 40, typicalHeightMeters: 10.0 },
+  bus: { category: 'bus', labelEs: 'Autobús', priority: 96, isInanimateObstacle: true, typicalHeightMeters: 3.10 },
+  train: { category: 'bus', labelEs: 'Tren', priority: 94, isInanimateObstacle: true, typicalHeightMeters: 3.60 },
+  truck: { category: 'car', labelEs: 'Camión', priority: 92, isInanimateObstacle: true, typicalHeightMeters: 2.80 },
+  boat: { category: 'unknown', labelEs: 'Bote', priority: 60, typicalHeightMeters: 1.80 },
+
+  // Street furniture & urban hazards
+  'traffic light': { category: 'traffic_light', labelEs: 'Semáforo', priority: 86, isInanimateObstacle: true, typicalHeightMeters: 0.90 },
+  'fire hydrant': { category: 'fire_hydrant', labelEs: 'Hidrante', priority: 92, isInanimateObstacle: true, typicalHeightMeters: 0.78 },
+  'stop sign': { category: 'stop_sign', labelEs: 'Señal de alto', priority: 86, isInanimateObstacle: true, typicalHeightMeters: 0.75 },
+  'parking meter': { category: 'pole', labelEs: 'Parquímetro', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 1.35 },
+  bench: { category: 'bench', labelEs: 'Banca', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 0.82 },
+
+  // Animals
+  bird: { category: 'unknown', labelEs: 'Ave', priority: 65, typicalHeightMeters: 0.25 },
+  cat: { category: 'unknown', labelEs: 'Gato', priority: 82, typicalHeightMeters: 0.30 },
+  dog: { category: 'unknown', labelEs: 'Perro', priority: 88, typicalHeightMeters: 0.55 },
+  horse: { category: 'unknown', labelEs: 'Caballo', priority: 90, typicalHeightMeters: 1.65 },
+  sheep: { category: 'unknown', labelEs: 'Oveja', priority: 75, typicalHeightMeters: 0.80 },
+  cow: { category: 'unknown', labelEs: 'Vaca', priority: 86, typicalHeightMeters: 1.45 },
+  elephant: { category: 'unknown', labelEs: 'Elefante', priority: 88, typicalHeightMeters: 2.80 },
+  bear: { category: 'unknown', labelEs: 'Oso', priority: 88, typicalHeightMeters: 1.40 },
+  zebra: { category: 'unknown', labelEs: 'Cebra', priority: 75, typicalHeightMeters: 1.40 },
+  giraffe: { category: 'unknown', labelEs: 'Jirafa', priority: 75, typicalHeightMeters: 4.50 },
+
+  // Personal items & trip hazards
+  backpack: { category: 'obstacle', labelEs: 'Mochila', priority: 85, isInanimateObstacle: true, typicalHeightMeters: 0.48 },
+  umbrella: { category: 'obstacle', labelEs: 'Paraguas', priority: 78, isInanimateObstacle: true, typicalHeightMeters: 0.85 },
+  handbag: { category: 'obstacle', labelEs: 'Bolso', priority: 78, isInanimateObstacle: true, typicalHeightMeters: 0.35 },
+  tie: { category: 'unknown', labelEs: 'Corbata', priority: 45, typicalHeightMeters: 0.45 },
+  suitcase: { category: 'obstacle', labelEs: 'Maleta', priority: 89, isInanimateObstacle: true, typicalHeightMeters: 0.65 },
+  frisbee: { category: 'unknown', labelEs: 'Disco', priority: 50, typicalHeightMeters: 0.25 },
+  skis: { category: 'obstacle', labelEs: 'Esquís', priority: 72, isInanimateObstacle: true, typicalHeightMeters: 1.60 },
+  snowboard: { category: 'obstacle', labelEs: 'Tabla', priority: 72, isInanimateObstacle: true, typicalHeightMeters: 1.50 },
+  'sports ball': { category: 'obstacle', labelEs: 'Pelota', priority: 76, isInanimateObstacle: true, typicalHeightMeters: 0.24 },
+  kite: { category: 'unknown', labelEs: 'Cometa', priority: 45, typicalHeightMeters: 0.60 },
+  'baseball bat': { category: 'unknown', labelEs: 'Bate', priority: 60, typicalHeightMeters: 0.85 },
+  'baseball glove': { category: 'unknown', labelEs: 'Guante', priority: 50, typicalHeightMeters: 0.25 },
+  skateboard: { category: 'obstacle', labelEs: 'Patineta', priority: 86, isInanimateObstacle: true, typicalHeightMeters: 0.20 },
+  surfboard: { category: 'obstacle', labelEs: 'Tabla de surf', priority: 75, isInanimateObstacle: true, typicalHeightMeters: 1.80 },
+  'tennis racket': { category: 'unknown', labelEs: 'Raqueta', priority: 55, typicalHeightMeters: 0.68 },
+
+  // Kitchen / tabletop objects
+  bottle: { category: 'unknown', labelEs: 'Botella', priority: 68, typicalHeightMeters: 0.25 },
+  'wine glass': { category: 'unknown', labelEs: 'Copa', priority: 64, typicalHeightMeters: 0.20 },
+  cup: { category: 'unknown', labelEs: 'Taza', priority: 66, typicalHeightMeters: 0.12 },
+  fork: { category: 'unknown', labelEs: 'Tenedor', priority: 50, typicalHeightMeters: 0.18 },
+  knife: { category: 'unknown', labelEs: 'Cuchillo', priority: 72, typicalHeightMeters: 0.22 },
+  spoon: { category: 'unknown', labelEs: 'Cuchara', priority: 50, typicalHeightMeters: 0.18 },
+  bowl: { category: 'unknown', labelEs: 'Tazón', priority: 62, typicalHeightMeters: 0.14 },
+  banana: { category: 'unknown', labelEs: 'Banano', priority: 52, typicalHeightMeters: 0.18 },
+  apple: { category: 'unknown', labelEs: 'Manzana', priority: 52, typicalHeightMeters: 0.09 },
+  sandwich: { category: 'unknown', labelEs: 'Sándwich', priority: 52, typicalHeightMeters: 0.10 },
+  orange: { category: 'unknown', labelEs: 'Naranja', priority: 52, typicalHeightMeters: 0.09 },
+  broccoli: { category: 'unknown', labelEs: 'Brócoli', priority: 48, typicalHeightMeters: 0.15 },
+  carrot: { category: 'unknown', labelEs: 'Zanahoria', priority: 48, typicalHeightMeters: 0.18 },
+  'hot dog': { category: 'unknown', labelEs: 'Perro caliente', priority: 50, typicalHeightMeters: 0.15 },
+  pizza: { category: 'unknown', labelEs: 'Pizza', priority: 52, typicalHeightMeters: 0.25 },
+  donut: { category: 'unknown', labelEs: 'Dona', priority: 50, typicalHeightMeters: 0.10 },
+  cake: { category: 'unknown', labelEs: 'Pastel', priority: 55, typicalHeightMeters: 0.18 },
+
+  // Indoor furniture & static obstacles (crucial for blind navigation)
+  chair: { category: 'chair', labelEs: 'Silla', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 0.85 },
+  couch: { category: 'obstacle', labelEs: 'Sillón', priority: 89, isInanimateObstacle: true, typicalHeightMeters: 0.85 },
+  'potted plant': { category: 'potted_plant', labelEs: 'Maceta', priority: 88, isInanimateObstacle: true, typicalHeightMeters: 0.90 },
+  bed: { category: 'obstacle', labelEs: 'Cama', priority: 86, isInanimateObstacle: true, typicalHeightMeters: 0.70 },
+  'dining table': { category: 'obstacle', labelEs: 'Mesa', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 0.78 },
+  toilet: { category: 'obstacle', labelEs: 'Inodoro', priority: 84, isInanimateObstacle: true, typicalHeightMeters: 0.78 },
+  tv: { category: 'obstacle', labelEs: 'Pantalla', priority: 78, isInanimateObstacle: true, typicalHeightMeters: 0.65 },
+  laptop: { category: 'unknown', labelEs: 'Computadora', priority: 70, typicalHeightMeters: 0.26 },
+  mouse: { category: 'unknown', labelEs: 'Ratón', priority: 55, typicalHeightMeters: 0.06 },
+  remote: { category: 'unknown', labelEs: 'Control remoto', priority: 58, typicalHeightMeters: 0.18 },
+  keyboard: { category: 'unknown', labelEs: 'Teclado', priority: 64, typicalHeightMeters: 0.15 },
+  'cell phone': { category: 'unknown', labelEs: 'Teléfono', priority: 70, typicalHeightMeters: 0.15 },
+  microwave: { category: 'obstacle', labelEs: 'Microondas', priority: 76, isInanimateObstacle: true, typicalHeightMeters: 0.34 },
+  oven: { category: 'obstacle', labelEs: 'Estufa', priority: 86, isInanimateObstacle: true, typicalHeightMeters: 0.90 },
+  toaster: { category: 'unknown', labelEs: 'Tostadora', priority: 60, typicalHeightMeters: 0.22 },
+  sink: { category: 'obstacle', labelEs: 'Lavabo', priority: 84, isInanimateObstacle: true, typicalHeightMeters: 0.85 },
+  refrigerator: { category: 'obstacle', labelEs: 'Refrigerador', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 1.75 },
+  book: { category: 'unknown', labelEs: 'Libro', priority: 60, typicalHeightMeters: 0.24 },
+  clock: { category: 'unknown', labelEs: 'Reloj', priority: 60, typicalHeightMeters: 0.32 },
+  vase: { category: 'obstacle', labelEs: 'Florero', priority: 78, isInanimateObstacle: true, typicalHeightMeters: 0.32 },
+  scissors: { category: 'unknown', labelEs: 'Tijeras', priority: 66, typicalHeightMeters: 0.18 },
+  'teddy bear': { category: 'unknown', labelEs: 'Peluche', priority: 55, typicalHeightMeters: 0.35 },
+  'hair drier': { category: 'unknown', labelEs: 'Secadora', priority: 55, typicalHeightMeters: 0.24 },
+  toothbrush: { category: 'unknown', labelEs: 'Cepillo', priority: 48, typicalHeightMeters: 0.18 },
 };
+
+const MEDIAPIPE_WASM_URL =
+  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm';
+
+const MODEL_URLS: Record<'efficientdet_lite2' | 'efficientdet_lite0', string> = {
+  efficientdet_lite2:
+    'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite2/float16/latest/efficientdet_lite2.tflite',
+  efficientdet_lite0:
+    'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite',
+};
+
+const MODEL_DISPLAY_NAMES: Record<DetectorEngineId, string> = {
+  efficientdet_lite2: 'EfficientDet-Lite2 448px (34% mAP · MediaPipe)',
+  yolov10n: 'YOLOv10n ONNX (38.5% mAP · Transformers.js)',
+  efficientdet_lite0: 'EfficientDet-Lite0 320px (Rápido · MediaPipe)',
+};
+
+type YoloDetectionResult = {
+  label: string;
+  score: number;
+  box: { xmin: number; ymin: number; xmax: number; ymax: number };
+};
+
+type YoloPipelineFn = (
+  input: unknown,
+  options?: { threshold?: number; percentage?: boolean }
+) => Promise<YoloDetectionResult[]>;
+
+export function computeClockPosition(centerX: number): string {
+  if (centerX < 20) return 'a las 9';
+  if (centerX < 38) return 'a las 10';
+  if (centerX <= 62) return 'a las 12';
+  if (centerX <= 80) return 'a las 2';
+  return 'a las 3';
+}
+
+export function estimatePinholeMeters(
+  bboxHeightPct: number,
+  typicalHeightMeters: number
+): number {
+  // Standard smartphone vertical FOV ~55 deg => normalized focal length ~0.96
+  const heightFrac = Math.max(0.06, bboxHeightPct / 100);
+  const rawMeters = (typicalHeightMeters * 0.96) / heightFrac;
+  return Number(Math.min(14.0, Math.max(0.4, rawMeters)).toFixed(1));
+}
 
 export class DetectorService {
   private detector: ObjectDetector | null = null;
+  private yoloPipeline: YoloPipelineFn | null = null;
+  private yoloCanvas: HTMLCanvasElement | null = null;
+  private activeEngine: DetectorEngineId = 'efficientdet_lite2';
   private currentRunningMode: 'IMAGE' | 'VIDEO' = 'IMAGE';
-  private lastScoreThreshold = 0.45;
+  private lastScoreThreshold = 0.36;
   private status: DetectorStatus = {
     ready: false,
     loading: false,
     error: null,
-    modelName: 'EfficientDet-Lite0 (MediaPipe Tasks Vision)',
+    modelName: MODEL_DISPLAY_NAMES.efficientdet_lite2,
+    engineId: 'efficientdet_lite2',
     inferenceTimeMs: null,
   };
 
@@ -69,8 +173,92 @@ export class DetectorService {
     return { ...this.status };
   }
 
-  async initialize(scoreThreshold = 0.45): Promise<DetectorStatus> {
+  getEngine(): DetectorEngineId {
+    return this.activeEngine;
+  }
+
+  async setEngine(engine: DetectorEngineId, scoreThreshold = this.lastScoreThreshold): Promise<DetectorStatus> {
+    if (engine === this.activeEngine && this.status.ready) {
+      return this.getStatus();
+    }
+    this.activeEngine = engine;
     if (this.detector) {
+      try {
+        this.detector.close();
+      } catch {
+        // Ignore close errors
+      }
+      this.detector = null;
+    }
+    this.status = {
+      ready: false,
+      loading: false,
+      error: null,
+      modelName: MODEL_DISPLAY_NAMES[engine],
+      engineId: engine,
+      inferenceTimeMs: null,
+    };
+    return this.initialize(scoreThreshold);
+  }
+
+  private async detectYoloBackend(): Promise<'webgpu' | 'wasm'> {
+    try {
+      const nav = navigator as unknown as {
+        gpu?: { requestAdapter?: () => Promise<unknown | null> };
+      };
+      if (nav.gpu && typeof nav.gpu.requestAdapter === 'function') {
+        const adapter = await nav.gpu.requestAdapter();
+        if (adapter) return 'webgpu';
+      }
+    } catch {
+      // Fallback to WASM
+    }
+    return 'wasm';
+  }
+
+  private async initMediaPipeModel(
+    engine: 'efficientdet_lite2' | 'efficientdet_lite0',
+    scoreThreshold: number
+  ): Promise<boolean> {
+    const url = MODEL_URLS[engine];
+    for (const delegate of ['GPU', 'CPU'] as const) {
+      try {
+        const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_URL);
+        this.detector = await ObjectDetector.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: url,
+            delegate,
+          },
+          scoreThreshold,
+          maxResults: 12,
+          runningMode: 'IMAGE',
+        });
+        this.currentRunningMode = 'IMAGE';
+        this.lastScoreThreshold = scoreThreshold;
+        this.activeEngine = engine;
+        this.status = {
+          ready: true,
+          loading: false,
+          error: null,
+          modelName: `${MODEL_DISPLAY_NAMES[engine]} · ${delegate}`,
+          engineId: engine,
+          inferenceTimeMs: null,
+        };
+        return true;
+      } catch {
+        // Try next delegate or fallback model
+      }
+    }
+    return false;
+  }
+
+  async initialize(scoreThreshold = 0.36): Promise<DetectorStatus> {
+    this.lastScoreThreshold = scoreThreshold;
+
+    if (this.activeEngine === 'yolov10n' && this.yoloPipeline) {
+      return this.getStatus();
+    }
+    if (this.activeEngine !== 'yolov10n' && this.detector) {
       await this.detector.setOptions({ scoreThreshold });
       return this.getStatus();
     }
@@ -79,81 +267,133 @@ export class DetectorService {
       ...this.status,
       loading: true,
       error: null,
+      modelName: MODEL_DISPLAY_NAMES[this.activeEngine],
+      engineId: this.activeEngine,
     };
 
-    try {
-      const vision = await FilesetResolver.forVisionTasks(
-        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
-      );
-
-      this.detector = await ObjectDetector.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite',
-          delegate: 'GPU',
-        },
-        scoreThreshold,
-        maxResults: 10,
-        runningMode: 'IMAGE',
-      });
-
-      this.status = {
-        ...this.status,
-        ready: true,
-        loading: false,
-        error: null,
-      };
-    } catch (err) {
-      // Fallback to CPU delegate if GPU delegate fails, or report pending integration
+    if (this.activeEngine === 'yolov10n') {
       try {
-        const vision = await FilesetResolver.forVisionTasks(
-          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
-        );
-        this.detector = await ObjectDetector.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath:
-              'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite',
-            delegate: 'CPU',
-          },
-          scoreThreshold,
-          maxResults: 10,
-          runningMode: 'IMAGE',
+        const backend = await this.detectYoloBackend();
+        const transformers = await import('@huggingface/transformers');
+        const createPipeline = transformers.pipeline as unknown as (
+          task: string,
+          model: string,
+          opts?: Record<string, unknown>
+        ) => Promise<YoloPipelineFn>;
+
+        this.yoloPipeline = await createPipeline('object-detection', 'onnx-community/yolov10n', {
+          device: backend,
+          dtype: backend === 'webgpu' ? 'fp16' : 'q8',
         });
         this.status = {
-          ...this.status,
           ready: true,
           loading: false,
           error: null,
+          modelName: `YOLOv10n (${backend.toUpperCase()} · 38.5% mAP)`,
+          engineId: 'yolov10n',
+          inferenceTimeMs: null,
         };
-      } catch (innerErr) {
-        const msg =
-          innerErr instanceof Error
-            ? innerErr.message
-            : err instanceof Error
-              ? err.message
-              : 'No se pudo cargar el modelo EfficientDet-Lite0.';
-        this.status = {
-          ...this.status,
-          ready: false,
-          loading: false,
-          error: `Integración pendiente o sin conectividad para descargar pesos WASM/TFLite (${msg}).`,
-        };
+        return this.getStatus();
+      } catch {
+        // Gracefully fall back to EfficientDet-Lite2 if YOLOv10n fails to load
+        this.yoloPipeline = null;
+        this.activeEngine = 'efficientdet_lite2';
       }
     }
 
+    if (this.activeEngine === 'efficientdet_lite2') {
+      const okLite2 = await this.initMediaPipeModel('efficientdet_lite2', scoreThreshold);
+      if (okLite2) return this.getStatus();
+      // Fallback to Lite0 if Lite2 download or memory fails
+      const okLite0 = await this.initMediaPipeModel('efficientdet_lite0', scoreThreshold);
+      if (okLite0) return this.getStatus();
+    } else {
+      const okLite0 = await this.initMediaPipeModel('efficientdet_lite0', scoreThreshold);
+      if (okLite0) return this.getStatus();
+    }
+
+    this.status = {
+      ready: false,
+      loading: false,
+      error:
+        'Sin conectividad para descargar pesos del modelo visual (EfficientDet-Lite2 / WASM).',
+      modelName: MODEL_DISPLAY_NAMES[this.activeEngine],
+      engineId: this.activeEngine,
+      inferenceTimeMs: null,
+    };
     return this.getStatus();
+  }
+
+  private async runYoloOnSource(
+    sourceEl: HTMLImageElement | HTMLVideoElement,
+    scoreThreshold: number,
+    sourceType: 'real_image' | 'real_video'
+  ): Promise<{ detections: Detection[]; inferenceTimeMs: number }> {
+    if (!this.yoloPipeline) {
+      throw new Error('YOLOv10n no está inicializado.');
+    }
+
+    if (!this.yoloCanvas) {
+      this.yoloCanvas = document.createElement('canvas');
+    }
+    const srcW =
+      sourceEl instanceof HTMLVideoElement
+        ? sourceEl.videoWidth || 640
+        : sourceEl.naturalWidth || sourceEl.width || 640;
+    const srcH =
+      sourceEl instanceof HTMLVideoElement
+        ? sourceEl.videoHeight || 480
+        : sourceEl.naturalHeight || sourceEl.height || 480;
+
+    const maxDim = 512;
+    const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
+    this.yoloCanvas.width = Math.max(64, Math.round(srcW * scale));
+    this.yoloCanvas.height = Math.max(64, Math.round(srcH * scale));
+    const ctx = this.yoloCanvas.getContext('2d');
+    if (!ctx) return { detections: [], inferenceTimeMs: 0 };
+    ctx.drawImage(sourceEl, 0, 0, this.yoloCanvas.width, this.yoloCanvas.height);
+
+    const start = performance.now();
+    const { RawImage } = await import('@huggingface/transformers');
+    const rawImg = RawImage.fromCanvas(this.yoloCanvas);
+    const results = await this.yoloPipeline(rawImg, {
+      threshold: scoreThreshold,
+      percentage: true,
+    });
+    const elapsed = Math.round(performance.now() - start);
+    this.status.inferenceTimeMs = elapsed;
+
+    const now = Date.now();
+    const mapped: Detection[] = results.slice(0, 12).map((item, idx) => {
+      const x = Math.max(0, Math.min(100, item.box.xmin * 100));
+      const y = Math.max(0, Math.min(100, item.box.ymin * 100));
+      const width = Math.max(1, Math.min(100 - x, (item.box.xmax - item.box.xmin) * 100));
+      const height = Math.max(1, Math.min(100 - y, (item.box.ymax - item.box.ymin) * 100));
+      return this.buildDetection(item.label, item.score, { x, y, width, height }, idx, now, sourceType);
+    });
+
+    return { detections: mapped, inferenceTimeMs: elapsed };
   }
 
   async detectOnImage(
     imageElement: HTMLImageElement,
-    scoreThreshold = 0.45
+    scoreThreshold = 0.36
   ): Promise<{ detections: Detection[]; inferenceTimeMs: number }> {
-    if (!this.detector) {
+    if (!this.status.ready) {
       const initStatus = await this.initialize(scoreThreshold);
-      if (!initStatus.ready || !this.detector) {
+      if (!initStatus.ready) {
         throw new Error(initStatus.error ?? 'Detector no disponible.');
       }
     }
+
+    if (this.activeEngine === 'yolov10n' && this.yoloPipeline) {
+      return this.runYoloOnSource(imageElement, scoreThreshold, 'real_image');
+    }
+
+    if (!this.detector) {
+      throw new Error('Detector no disponible.');
+    }
+
     if (this.currentRunningMode !== 'IMAGE' || this.lastScoreThreshold !== scoreThreshold) {
       await this.detector.setOptions({ runningMode: 'IMAGE', scoreThreshold });
       this.currentRunningMode = 'IMAGE';
@@ -174,11 +414,20 @@ export class DetectorService {
 
   async detectOnVideoFrame(
     videoElement: HTMLVideoElement,
-    scoreThreshold = 0.45
+    scoreThreshold = 0.36
   ): Promise<{ detections: Detection[]; inferenceTimeMs: number }> {
-    if (!this.detector) {
-      throw new Error('El modelo EfficientDet-Lite0 no está inicializado.');
+    if (!this.status.ready) {
+      throw new Error('El modelo visual no está inicializado.');
     }
+
+    if (this.activeEngine === 'yolov10n' && this.yoloPipeline) {
+      return this.runYoloOnSource(videoElement, scoreThreshold, 'real_video');
+    }
+
+    if (!this.detector) {
+      throw new Error('El modelo EfficientDet no está inicializado.');
+    }
+
     if (this.currentRunningMode !== 'VIDEO' || this.lastScoreThreshold !== scoreThreshold) {
       await this.detector.setOptions({ runningMode: 'VIDEO', scoreThreshold });
       this.currentRunningMode = 'VIDEO';
@@ -197,6 +446,54 @@ export class DetectorService {
     return { detections, inferenceTimeMs: elapsed };
   }
 
+  private buildDetection(
+    rawCategoryName: string,
+    score: number,
+    bbox: { x: number; y: number; width: number; height: number },
+    idx: number,
+    now: number,
+    source: 'real_image' | 'real_video'
+  ): Detection {
+    const rawName = (rawCategoryName || '').toLowerCase().trim();
+    const known = CATEGORY_MAP[rawName];
+    const labelEs = known ? known.labelEs : rawName;
+    const category: ObjectCategory = known ? known.category : 'unknown';
+    const priority = known ? known.priority : 55;
+    const typicalHeight = known ? known.typicalHeightMeters : 0.85;
+
+    const centerX = bbox.x + bbox.width / 2;
+    const bottomY = bbox.y + bbox.height;
+    const overlapsCenterCorridor = bbox.x + bbox.width >= 26 && bbox.x <= 74;
+    const isCentered = (centerX >= 22 && centerX <= 78) || overlapsCenterCorridor;
+
+    const estimatedMeters = estimatePinholeMeters(bbox.height, typicalHeight);
+    const clockPosition = computeClockPosition(centerX);
+
+    const proximityZone: Detection['proximityZone'] = isCentered
+      ? estimatedMeters <= 1.8 || bbox.height >= 34 || (bottomY >= 78 && bbox.width >= 26)
+        ? 'front_close'
+        : 'front_mid'
+      : 'side';
+
+    return {
+      id: `real-${idx}-${now}`,
+      category,
+      labelEs: labelEs.charAt(0).toUpperCase() + labelEs.slice(1),
+      source,
+      confidence: score,
+      bbox,
+      confirmationStatus: 'confirmed',
+      priority,
+      firstSeenAt: now,
+      lastSeenAt: now,
+      isNew: true,
+      isInanimateObstacle: Boolean(known?.isInanimateObstacle),
+      proximityZone,
+      estimatedMeters,
+      clockPosition,
+    };
+  }
+
   private mapDetections(
     mpDetections: MpDetection[],
     imgWidth: number,
@@ -210,42 +507,21 @@ export class DetectorService {
       const topCat = det.categories[0];
       if (!topCat || !det.boundingBox) return;
 
-      const rawName = (topCat.categoryName || '').toLowerCase();
-      const known = CATEGORY_MAP[rawName];
-      const labelEs = known ? known.labelEs : rawName;
-      const category: ObjectCategory = known ? known.category : 'unknown';
-      const priority = known ? known.priority : 50;
-
       const x = Math.max(0, (det.boundingBox.originX / imgWidth) * 100);
       const y = Math.max(0, (det.boundingBox.originY / imgHeight) * 100);
-      const width = Math.min(100, (det.boundingBox.width / imgWidth) * 100);
-      const height = Math.min(100, (det.boundingBox.height / imgHeight) * 100);
+      const width = Math.min(100 - x, (det.boundingBox.width / imgWidth) * 100);
+      const height = Math.min(100 - y, (det.boundingBox.height / imgHeight) * 100);
 
-      const centerX = x + width / 2;
-      const bottomY = y + height;
-      const overlapsCenterCorridor = x + width >= 28 && x <= 72;
-      const isCentered = (centerX >= 22 && centerX <= 78) || overlapsCenterCorridor;
-      const proximityZone: Detection['proximityZone'] = isCentered
-        ? height >= 28 || bottomY >= 70 || width >= 42
-          ? 'front_close'
-          : 'front_mid'
-        : 'side';
-
-      mapped.push({
-        id: `real-${idx}-${now}`,
-        category,
-        labelEs: labelEs.charAt(0).toUpperCase() + labelEs.slice(1),
-        source,
-        confidence: topCat.score,
-        bbox: { x, y, width, height },
-        confirmationStatus: 'confirmed',
-        priority,
-        firstSeenAt: now,
-        lastSeenAt: now,
-        isNew: true,
-        isInanimateObstacle: Boolean(known?.isInanimateObstacle),
-        proximityZone,
-      });
+      mapped.push(
+        this.buildDetection(
+          topCat.categoryName || '',
+          topCat.score,
+          { x, y, width, height },
+          idx,
+          now,
+          source
+        )
+      );
     });
 
     return mapped;
@@ -253,4 +529,3 @@ export class DetectorService {
 }
 
 export const detectorService = new DetectorService();
-
