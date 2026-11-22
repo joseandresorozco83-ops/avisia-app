@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Video, VideoOff, AlertTriangle, RefreshCw, Radar, SwitchCamera } from 'lucide-react';
+import { Video, VideoOff, AlertTriangle, Radar, SwitchCamera } from 'lucide-react';
 import { cameraService, type CameraDeviceInfo } from '../services/CameraService';
 import { detectorService } from '../services/DetectorService';
 import {
@@ -11,6 +11,7 @@ import {
   type DepthMapSummary,
 } from '../services/DepthModelService';
 import { telemetryService } from '../services/TelemetryService';
+import { speechService } from '../services/SpeechService';
 import type { Detection } from '../types/avicia';
 
 interface LiveCameraPanelProps {
@@ -233,6 +234,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     if (!videoRef.current) return;
     setError(null);
     setDetectorPendingNote(null);
+    speechService.unlockAudio();
 
     try {
       await cameraService.startCamera(videoRef.current, selectedDeviceId || undefined);
@@ -342,15 +344,15 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   };
 
   return (
-    <div className="space-y-2.5">
+    <div className={expandedView ? 'flex flex-col h-full min-h-0 gap-2' : 'space-y-2.5'}>
       {/* Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-[#111827] border border-white/10">
-        <div className="flex items-center gap-1.5">
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-[#181c24] border border-[#3c494c]/40">
+        <div className="flex items-center gap-2">
           {!cameraActive ? (
             <button
               type="button"
               onClick={handleStart}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs transition-colors"
+              className="inline-flex items-center gap-2 h-11 px-4 rounded-xl bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] font-bold text-sm transition-colors"
             >
               <Video className="w-4 h-4" />
               Activar cámara
@@ -359,7 +361,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             <button
               type="button"
               onClick={handleStop}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-400 text-slate-950 font-semibold text-xs transition-colors"
+              className="inline-flex items-center gap-2 h-11 px-4 rounded-xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-sm transition-colors"
             >
               <VideoOff className="w-4 h-4" />
               Detener
@@ -372,21 +374,12 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               onClick={handleCycleCamera}
               disabled={switchingCamera}
               title="Cambiar entre cámaras disponibles"
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-200 font-semibold text-xs transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 h-11 px-3 rounded-xl bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/50 text-[#8aebff] font-semibold text-xs transition-colors disabled:opacity-50"
             >
-              <SwitchCamera className={`w-3.5 h-3.5 ${switchingCamera ? 'animate-spin' : ''}`} />
+              <SwitchCamera className={`w-4 h-4 ${switchingCamera ? 'animate-spin' : ''}`} />
               Cambiar ({devices.length})
             </button>
           )}
-
-          <button
-            type="button"
-            onClick={refreshDevices}
-            aria-label="Actualizar lista de cámaras"
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/10 text-slate-300"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-          </button>
         </div>
 
         <select
@@ -394,7 +387,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           value={selectedDeviceId}
           onChange={(e) => void handleSwitchToDevice(e.target.value)}
           disabled={switchingCamera}
-          className="bg-[#0b0f17] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-200 max-w-[180px]"
+          className="h-11 bg-[#0a0e16] border border-[#3c494c]/50 rounded-xl px-2.5 text-xs text-[#dfe2ee] max-w-[140px]"
         >
           {devices.length === 0 ? (
             <option value="">Cámara predeterminada</option>
@@ -424,8 +417,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
       {/* Video + Bounding Box Canvas Overlay */}
       <div
-        className={`relative w-full rounded-2xl overflow-hidden border border-white/10 bg-[#05080f] flex items-center justify-center ${
-          expandedView ? 'h-[360px] sm:h-[390px]' : 'aspect-[16/10]'
+        className={`relative w-full rounded-2xl overflow-hidden border border-[#3c494c]/40 bg-[#05080f] flex items-center justify-center ${
+          expandedView ? 'flex-1 min-h-[240px]' : 'aspect-[16/10]'
         }`}
       >
         <video
@@ -480,7 +473,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       </div>
 
       {/* Corridor Depth & Proximity Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-[#111827] border border-white/10 text-xs">
+      <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#181c24] border border-[#3c494c]/40 text-xs">
         <div className="flex items-center gap-2 min-w-0">
           <Radar
             className={`w-4 h-4 shrink-0 ${

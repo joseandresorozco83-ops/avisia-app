@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import {
   Play,
   Eye,
@@ -23,6 +24,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Power,
+  Bluetooth,
 } from 'lucide-react';
 import type {
   ConversationMessage,
@@ -68,12 +70,13 @@ type MobileTab = 'vision' | 'assistant' | 'analysis' | 'map';
 type EcosystemTab = 'core' | 'pipeline' | 'map' | 'tech';
 
 export function App() {
+  const isNativeApp = Capacitor.isNativePlatform();
   const scenarios = useMemo(() => scenarioManager.getAllScenarios(), []);
 
   const [mobileTab, setMobileTab] = useState<MobileTab>('vision');
   const [androidMenuOpen, setAndroidMenuOpen] = useState<boolean>(false);
   const [ecosystemTab, setEcosystemTab] = useState<EcosystemTab>('core');
-  const [mode, setMode] = useState<OperationMode>('simulation');
+  const [mode, setMode] = useState<OperationMode>(isNativeApp ? 'live_camera' : 'simulation');
   const [scenarioId, setScenarioId] = useState<string>(scenarios[0].id);
   const [simStepIndex, setSimStepIndex] = useState<number>(0);
   const [simPlaying, setSimPlaying] = useState<boolean>(false);
@@ -693,7 +696,13 @@ export function App() {
   };
 
   const renderEnvironmentContent = () => (
-    <div className="space-y-2.5 overflow-x-hidden">
+    <div
+      className={
+        mode === 'live_camera'
+          ? 'flex-1 min-h-0 flex flex-col overflow-hidden'
+          : 'space-y-2.5 overflow-x-hidden'
+      }
+    >
       {mode === 'simulation' && (
         <>
           {/* Compact Zero-Scroll Scenario Selector with Hamburger Trigger */}
@@ -822,9 +831,10 @@ export function App() {
   );
 
   return (
-    <div className="min-h-screen lg:h-screen lg:overflow-hidden bg-[#0f131c] text-[#dfe2ee] flex flex-col">
-      {/* Stitch Telemetry Header with Official UAM Logo */}
-      <header className="shrink-0 z-30 border-b border-[#3c494c]/40 bg-[#0a0e16]/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.35)]">
+    <div className="h-[100dvh] lg:h-screen overflow-hidden bg-[#0f131c] text-[#dfe2ee] flex flex-col">
+      {/* Desktop Telemetry Header (hidden on native Android app and mobile screens) */}
+      {!isNativeApp && (
+        <header className="hidden lg:block shrink-0 z-30 border-b border-[#3c494c]/40 bg-[#0a0e16]/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.35)]">
         <div className="max-w-[1680px] mx-auto px-4 py-2 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2.5">
@@ -907,72 +917,128 @@ export function App() {
           </div>
         </div>
       </header>
+      )}
 
-      {/* SPLIT-SCREEN LAYOUT: 30% ANDROID DEVICE + 70% TELEMETRY ECOSYSTEM */}
-      <div className="flex-1 min-h-0 max-w-[1680px] w-full mx-auto px-3 sm:px-5 py-3 flex flex-col lg:flex-row gap-4 items-stretch">
-        {/* LEFT 30%: ANDROID SMARTPHONE CHASSIS (M3 LIGHT MODE) */}
+      {/* SPLIT-SCREEN ON DESKTOP, FULL-SCREEN NATIVE APP ON ANDROID/MOBILE */}
+      <div
+        className={`flex-1 min-h-0 w-full mx-auto flex flex-col lg:flex-row items-stretch ${
+          isNativeApp ? 'p-0' : 'max-w-[1680px] lg:px-5 lg:py-3 lg:gap-4'
+        }`}
+      >
+        {/* LEFT 30% ON DESKTOP / FULL-SCREEN ON ANDROID APP */}
         <aside
-          aria-label="Vista desde Android"
-          className="w-full lg:w-[32%] xl:w-[30%] lg:h-full flex flex-col items-center justify-center relative"
+          aria-label="Vista móvil AVISIA"
+          className={`w-full h-full flex flex-col items-center justify-center relative ${
+            isNativeApp ? '' : 'lg:w-[32%] xl:w-[30%]'
+          }`}
         >
-          <div className="w-full max-w-[400px] lg:max-w-none lg:h-full rounded-[40px] bg-slate-900 p-[9px] ring-1 ring-white/15 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.85)] flex flex-col relative">
-            {/* Physical side hardware button accents */}
-            <div className="hidden lg:block absolute -left-[3px] top-24 w-[3px] h-9 bg-slate-700/70 rounded-l" />
-            <div className="hidden lg:block absolute -left-[3px] top-36 w-[3px] h-11 bg-slate-700/70 rounded-l" />
-            <div className="hidden lg:block absolute -right-[3px] top-28 w-[3px] h-12 bg-slate-700/70 rounded-r" />
+          <div
+            className={`w-full h-full flex flex-col relative ${
+              isNativeApp
+                ? ''
+                : 'lg:rounded-[40px] lg:bg-slate-900 lg:p-[9px] lg:ring-1 lg:ring-white/15 lg:shadow-[0_25px_60px_-15px_rgba(0,0,0,0.85)]'
+            }`}
+          >
+            {/* Physical side hardware button accents (desktop simulator only) */}
+            {!isNativeApp && (
+              <>
+                <div className="hidden lg:block absolute -left-[3px] top-24 w-[3px] h-9 bg-slate-700/70 rounded-l" />
+                <div className="hidden lg:block absolute -left-[3px] top-36 w-[3px] h-11 bg-slate-700/70 rounded-l" />
+                <div className="hidden lg:block absolute -right-[3px] top-28 w-[3px] h-12 bg-slate-700/70 rounded-r" />
+              </>
+            )}
 
-            <div className="w-full h-full flex flex-col bg-[#0f131c] text-[#dfe2ee] rounded-[32px] overflow-hidden relative">
-              {/* Android 14 M3 Status Bar with Punch-Hole Camera */}
-              <div className="flex items-center justify-between px-5 pt-2 pb-1 text-[10px] font-mono font-semibold text-[#bbc9cd] bg-[#0a0e16] select-none">
-                <span>10:42</span>
-                <div className="w-3.5 h-3.5 rounded-full bg-black border border-[#3c494c]/50 flex items-center justify-center" aria-hidden="true">
-                  {cameraActive && <span className="w-1.5 h-1.5 rounded-full bg-[#4edea3] animate-pulse" />}
+            <div
+              className={`w-full h-full flex flex-col bg-[#0f131c] text-[#dfe2ee] overflow-hidden relative ${
+                isNativeApp ? '' : 'lg:rounded-[32px]'
+              }`}
+            >
+              {/* Simulated Android Status Bar (desktop simulator only, never on real phone) */}
+              {!isNativeApp && (
+                <div className="hidden lg:flex items-center justify-between px-5 pt-2 pb-1 text-[10px] font-mono font-semibold text-[#bbc9cd] bg-[#0a0e16] select-none">
+                  <span>10:42</span>
+                  <div className="w-3.5 h-3.5 rounded-full bg-black border border-[#3c494c]/50 flex items-center justify-center" aria-hidden="true">
+                    {cameraActive && <span className="w-1.5 h-1.5 rounded-full bg-[#4edea3] animate-pulse" />}
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[#bbc9cd]">
+                    <span className="text-[9px] text-[#859397]">5G</span>
+                    <Wifi className="w-3 h-3" />
+                    <BatteryCharging className="w-3.5 h-3.5 text-[#4edea3]" />
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5 text-[#bbc9cd]">
-                  <span className="text-[9px] text-[#859397]">5G</span>
-                  <Wifi className="w-3 h-3" />
-                  <BatteryCharging className="w-3.5 h-3.5 text-[#4edea3]" />
-                </div>
-              </div>
+              )}
 
-              {/* Stitch Native Assistive Top AppBar */}
-              <div className="px-3 py-2 bg-[#181c24] border-b border-[#3c494c]/40 flex items-center justify-between gap-2 shadow-sm">
-                <div className="flex items-center gap-2 min-w-0">
+              {/* Minimalist Native Top AppBar with Visible Bluetooth & Audio Controls */}
+              <div className="shrink-0 h-14 px-3 bg-[#181c24] border-b border-[#3c494c]/40 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
                   <button
                     type="button"
                     onClick={() => setAndroidMenuOpen((o) => !o)}
-                    aria-label="Menú principal de opciones y accesibilidad"
-                    className="w-9 h-9 rounded-full bg-[#1c2028] hover:bg-[#262a33] text-[#dfe2ee] flex items-center justify-center transition-colors active:scale-95 shrink-0"
+                    aria-label="Menú principal"
+                    className="w-11 h-11 rounded-full bg-[#1c2028] hover:bg-[#262a33] text-[#dfe2ee] flex items-center justify-center transition-colors active:scale-95 shrink-0"
                   >
-                    {androidMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+                    {androidMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
                   </button>
                   <div className="flex items-center gap-2 min-w-0">
                     <div className="p-0.5 rounded-full bg-white border border-[#8aebff]/40 flex items-center justify-center shrink-0">
                       <AvisiaLogo className="w-7 h-7" variant="dark" />
                     </div>
                     <div className="flex flex-col leading-none min-w-0">
-                      <div className="flex items-center gap-1">
-                        <span className="text-sm font-bold text-[#8aebff] tracking-tight">AVISIA</span>
-                        <span className="px-1.5 py-0.5 rounded bg-[#22d3ee] text-[#005763] font-mono text-[8px] font-bold uppercase tracking-wider">
-                          UAM
-                        </span>
-                      </div>
-                      <span className="font-mono text-[9px] text-[#bbc9cd] flex items-center gap-1 mt-0.5 truncate">
-                        <MapPin className="w-2.5 h-2.5 text-[#ffd6a7] shrink-0" />
-                        Campus Managua
-                      </span>
+                      <span className="text-base font-bold text-[#8aebff] tracking-tight">AVISIA</span>
+                      <span className="font-mono text-[10px] text-[#bbc9cd] truncate">UAM Managua</span>
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#262a33] shadow-inner shrink-0">
-                  <span className="w-2 h-2 rounded-full bg-[#4edea3] animate-ping" />
-                  <span className="font-mono text-[9px] text-[#4edea3] font-semibold">
-                    {cameraActive ? 'LIVE' : '60 FPS'}
-                  </span>
-                  <span className="text-[#3c494c] font-mono text-[9px]">|</span>
-                  <span className="font-mono text-[9px] text-[#dfe2ee]">
-                    {detectorService.getStatus().inferenceTimeMs ?? 38}ms
-                  </span>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Dedicated Visible Bluetooth Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      speechService.unlockAudio();
+                      const next = !streetFeatures.headsetButton;
+                      setStreetFeatures((prev) => ({ ...prev, headsetButton: next }));
+                      speakText(next ? 'Bluetooth activado.' : 'Bluetooth desactivado.');
+                    }}
+                    aria-label={
+                      streetFeatures.headsetButton
+                        ? 'Desactivar botón Bluetooth'
+                        : 'Activar botón Bluetooth'
+                    }
+                    className={`h-10 px-3 rounded-full flex items-center gap-1.5 text-xs font-semibold border transition-colors ${
+                      streetFeatures.headsetButton
+                        ? 'bg-[#22d3ee]/20 border-[#22d3ee] text-[#8aebff]'
+                        : 'bg-[#262a33] border-[#3c494c]/50 text-[#bbc9cd]'
+                    }`}
+                  >
+                    <Bluetooth className="w-4 h-4" />
+                    <span>{streetFeatures.headsetButton ? 'BT ON' : 'BT'}</span>
+                  </button>
+
+                  {/* Quick Sound Mute/Unmute */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      speechService.unlockAudio();
+                      if (speechSettings.enabled) {
+                        speechService.cancel();
+                        setIsSpeaking(false);
+                      }
+                      setSpeechSettings((s) => ({ ...s, enabled: !s.enabled }));
+                    }}
+                    aria-label={speechSettings.enabled ? 'Silenciar voz' : 'Activar voz'}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center border transition-colors ${
+                      speechSettings.enabled
+                        ? 'bg-[#262a33] border-[#3c494c]/50 text-[#4edea3]'
+                        : 'bg-[#93000a]/60 border-[#ffb4ab]/40 text-[#ffdad6]'
+                    }`}
+                  >
+                    {speechSettings.enabled ? (
+                      <Volume2 className="w-4 h-4" />
+                    ) : (
+                      <VolumeX className="w-4 h-4" />
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -1211,157 +1277,71 @@ export function App() {
               </div>
             )}
 
-            {/* Android Scrollable Viewport (Zero Horizontal Scroll) */}
-            <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2.5 space-y-2.5">
+            {/* Android Viewport (Zero Scroll on Main Vision Screen) */}
+            <div
+              className={`flex-1 min-h-0 px-3 py-2 ${
+                mobileTab === 'vision'
+                  ? 'flex flex-col overflow-hidden'
+                  : 'overflow-y-auto overflow-x-hidden space-y-2.5'
+              }`}
+            >
               {mobileTab === 'vision' && (
-                <div className="space-y-2.5">
-                  {/* Stitch Mode Selector Carousel (M3 Tactile Pills) */}
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAutoStartCamera(true);
-                        handleModeChange('live_camera');
-                      }}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-mono text-[11px] font-semibold whitespace-nowrap active:scale-95 transition-transform ${
-                        mode === 'live_camera'
-                          ? 'bg-[#22d3ee] text-[#005763]'
-                          : 'bg-[#262a33] text-[#dfe2ee]'
-                      }`}
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-                      Cámara
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleModeChange('simulation')}
-                      className={`flex items-center gap-1 px-3 py-1.5 rounded-full font-mono text-[11px] font-semibold whitespace-nowrap active:scale-95 transition-transform ${
-                        mode === 'simulation'
-                          ? 'bg-[#22d3ee] text-[#005763]'
-                          : 'bg-[#262a33] text-[#dfe2ee]'
-                      }`}
-                    >
-                      Escenas IA
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleModeChange('vision_lab')}
-                      className={`flex items-center gap-1 px-3 py-1.5 rounded-full font-mono text-[11px] font-semibold whitespace-nowrap active:scale-95 transition-transform ${
-                        mode === 'vision_lab'
-                          ? 'bg-[#22d3ee] text-[#005763]'
-                          : 'bg-[#262a33] text-[#dfe2ee]'
-                      }`}
-                    >
-                      Imagen
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleModeChange('video_lab')}
-                      className={`flex items-center gap-1 px-3 py-1.5 rounded-full font-mono text-[11px] font-semibold whitespace-nowrap active:scale-95 transition-transform ${
-                        mode === 'video_lab'
-                          ? 'bg-[#22d3ee] text-[#005763]'
-                          : 'bg-[#262a33] text-[#dfe2ee]'
-                      }`}
-                    >
-                      Video
-                    </button>
-                  </div>
-
+                <div className="flex-1 min-h-0 flex flex-col gap-2">
                   {evaluation.obstacleAlert && (
                     <div
                       role="alert"
-                      className="p-2.5 rounded-xl bg-[#93000a]/80 border border-[#ffb4ab]/40 text-xs text-[#ffdad6] flex items-center gap-2 shadow-sm"
+                      className="shrink-0 px-3 py-2 rounded-xl bg-[#93000a]/85 border border-[#ffb4ab]/40 text-xs text-[#ffdad6] flex items-center gap-2"
                     >
                       <ShieldAlert className="w-4 h-4 text-[#ffb4ab] shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <div className="font-mono font-bold text-[10px] text-[#ffb4ab] uppercase tracking-wide">
-                          Obstáculo Detectado
-                        </div>
-                        <div className="text-[11px] truncate">{evaluation.obstacleAlert.labelEs}</div>
-                      </div>
+                      <span className="font-semibold truncate">{evaluation.obstacleAlert.message}</span>
                     </div>
                   )}
 
-                  {renderEnvironmentContent()}
+                  <div className="flex-1 min-h-0 flex flex-col">
+                    {renderEnvironmentContent()}
+                  </div>
 
-                  {/* Stitch Audio Synthesis & Accessibility Card */}
-                  <div className="p-3 rounded-xl bg-[#1c2028] border border-[#3c494c]/30 shadow-md space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-[#22d3ee] text-[#005763] flex items-center justify-center">
-                          <Volume2 className="w-3.5 h-3.5" />
-                        </div>
-                        <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-[#bbc9cd]">
-                          Voz Sintetizada
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1 h-4 px-2 bg-[#262a33] rounded-full" aria-hidden="true">
-                        <span className={`w-1 bg-[#4edea3] rounded-full h-2.5 ${isSpeaking ? 'animate-eq-1' : ''}`} />
-                        <span className={`w-1 bg-[#4edea3] rounded-full h-3.5 ${isSpeaking ? 'animate-eq-2' : ''}`} />
-                        <span className={`w-1 bg-[#4edea3] rounded-full h-2 ${isSpeaking ? 'animate-eq-3' : ''}`} />
-                        <span className={`w-1 bg-[#4edea3] rounded-full h-3 ${isSpeaking ? 'animate-eq-4' : ''}`} />
-                      </div>
-                    </div>
-
+                  {/* Minimalist Accessible Voice Bar (Large Touch Targets, Zero Scroll) */}
+                  <div className="shrink-0 p-2.5 rounded-2xl bg-[#1c2028] border border-[#3c494c]/30 space-y-2">
                     <div
                       aria-live="assertive"
                       role="alert"
-                      className="p-2.5 rounded-lg bg-[#181c24] border border-[#3c494c]/25"
+                      className="px-2.5 py-2 rounded-xl bg-[#181c24] border border-[#3c494c]/25"
                     >
-                      <p className="text-sm text-[#dfe2ee] font-medium leading-relaxed">
+                      <p className="text-sm text-[#dfe2ee] font-medium leading-snug line-clamp-2">
                         {evaluation.generatedMessage}
                       </p>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-2.5">
                       <button
                         type="button"
                         onClick={() => {
+                          speechService.unlockAudio();
                           if (typeof navigator !== 'undefined' && navigator.vibrate) {
                             navigator.vibrate([80, 50, 80]);
                           }
                           handleSpeakCurrent();
                         }}
-                        className="h-11 px-3 rounded-full bg-[#31353e] hover:bg-[#353942] text-[#dfe2ee] flex items-center justify-center gap-1.5 font-semibold text-xs active:scale-95 transition-all"
+                        className="h-12 px-3 rounded-full bg-[#31353e] hover:bg-[#353942] text-[#dfe2ee] flex items-center justify-center gap-2 font-bold text-sm active:scale-95 transition-all"
                       >
-                        <Volume2 className="w-4 h-4 text-[#8aebff]" />
+                        <Volume2 className="w-5 h-5 text-[#8aebff]" />
                         Repetir
                       </button>
                       <button
                         type="button"
                         onClick={() => {
+                          speechService.unlockAudio();
                           if (typeof navigator !== 'undefined' && navigator.vibrate) {
                             navigator.vibrate(120);
                           }
                           setMobileTab('assistant');
                         }}
-                        className="h-11 px-3 rounded-full bg-[#22d3ee] hover:bg-[#8aebff] text-[#005763] flex items-center justify-center gap-1.5 font-bold text-xs active:scale-95 transition-all shadow-md"
+                        className="h-12 px-3 rounded-full bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] flex items-center justify-center gap-2 font-bold text-sm active:scale-95 transition-all shadow-md"
                       >
-                        <MessageSquare className="w-4 h-4" />
+                        <MessageSquare className="w-5 h-5" />
                         Consultar
                       </button>
-                    </div>
-                  </div>
-
-                  {/* Active Safety Policy Pill Card */}
-                  <div className="bg-[#181c24] border border-[#3c494c]/30 rounded-xl p-2.5 flex items-center justify-between">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-7 h-7 rounded-lg bg-[#93000a] text-[#ffdad6] flex items-center justify-center shrink-0">
-                        <ShieldAlert className="w-4 h-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono text-[10px] font-bold text-[#dfe2ee]">
-                            Política {policy} Activada
-                          </span>
-                          <span className="px-1 py-0.5 rounded bg-[#ffb4ab] text-[#690005] font-mono text-[8px] font-bold">
-                            {evaluation.obstacleAlert ? 'CRÍTICO' : 'ACTIVA'}
-                          </span>
-                        </div>
-                        <span className="text-[10px] text-[#bbc9cd] block truncate">
-                          {policy === 'C01' ? 'Prioridad de impacto frontal' : 'Orden de llegada'}
-                        </span>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -1550,8 +1530,9 @@ export function App() {
           </div>
         </aside>
 
-        {/* RIGHT 70%: MINIMALIST ECOSYSTEM (TABBED, ZERO-SCROLL) */}
-        <main className="w-full lg:w-[68%] xl:w-[70%] lg:h-full flex flex-col gap-3 min-h-0">
+        {/* RIGHT 70%: DESKTOP TELEMETRY ECOSYSTEM (hidden on native Android app and mobile screens) */}
+        {!isNativeApp && (
+        <main className="hidden lg:flex w-full lg:w-[68%] xl:w-[70%] lg:h-full flex-col gap-3 min-h-0">
           <div className="shrink-0">
             <GuidedDemoBanner
               active={demoActive}
@@ -1751,6 +1732,7 @@ export function App() {
             )}
           </div>
         </main>
+        )}
       </div>
     </div>
   );

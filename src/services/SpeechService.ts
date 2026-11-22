@@ -1,3 +1,5 @@
+import { Capacitor } from '@capacitor/core';
+import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import type { SpeechSettings } from '../types/avicia';
 
 interface SpeechRecognitionAlternativeLike {
@@ -30,8 +32,32 @@ export class SpeechService {
   private lastSpokenText = '';
   private activeUtterance: SpeechSynthesisUtterance | null = null;
   private fallbackTimer: number | null = null;
+  private sharedAudioCtx: AudioContext | null = null;
+
+  private getAudioContext(): AudioContext | null {
+    if (typeof window === 'undefined') return null;
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return null;
+    if (!this.sharedAudioCtx || this.sharedAudioCtx.state === 'closed') {
+      this.sharedAudioCtx = new AudioCtx();
+    }
+    if (this.sharedAudioCtx.state === 'suspended') {
+      void this.sharedAudioCtx.resume().catch(() => {});
+    }
+    return this.sharedAudioCtx;
+  }
+
+  unlockAudio(): void {
+    const ctx = this.getAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+      void ctx.resume().catch(() => {});
+    }
+  }
 
   isSynthesisSupported(): boolean {
+    if (Capacitor.isNativePlatform()) return true;
     return typeof window !== 'undefined' && 'speechSynthesis' in window;
   }
 
@@ -75,14 +101,10 @@ export class SpeechService {
    * when an inanimate obstacle is detected in front of the user.
    */
   playObstacleChime(): void {
-    if (typeof window === 'undefined') return;
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
+    const ctx = this.getAudioContext();
+    if (!ctx) return;
 
     try {
-      const ctx = new AudioCtx();
       const now = ctx.currentTime;
 
       const playTone = (freq: number, start: number, duration: number) => {
@@ -91,7 +113,7 @@ export class SpeechService {
         osc.type = 'sine';
         osc.frequency.setValueAtTime(freq, start);
         gain.gain.setValueAtTime(0.001, start);
-        gain.gain.exponentialRampToValueAtTime(0.12, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.14, start + 0.02);
         gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
         osc.connect(gain);
         gain.connect(ctx.destination);
@@ -101,10 +123,6 @@ export class SpeechService {
 
       playTone(587.33, now, 0.14); // D5
       playTone(880.0, now + 0.13, 0.18); // A5
-
-      window.setTimeout(() => {
-        void ctx.close();
-      }, 600);
     } catch {
       // Ignore Web Audio errors if blocked
     }
@@ -115,14 +133,10 @@ export class SpeechService {
    * with pitch/duration scaled by proximity urgency.
    */
   playStereoSonarPing(pan: number, urgency: 'caution' | 'danger'): void {
-    if (typeof window === 'undefined') return;
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
+    const ctx = this.getAudioContext();
+    if (!ctx) return;
 
     try {
-      const ctx = new AudioCtx();
       const now = ctx.currentTime;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -133,7 +147,7 @@ export class SpeechService {
 
       const dur = urgency === 'danger' ? 0.08 : 0.11;
       gain.gain.setValueAtTime(0.001, now);
-      gain.gain.exponentialRampToValueAtTime(urgency === 'danger' ? 0.11 : 0.06, now + 0.015);
+      gain.gain.exponentialRampToValueAtTime(urgency === 'danger' ? 0.13 : 0.07, now + 0.015);
       gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
 
       if (typeof ctx.createStereoPanner === 'function') {
@@ -149,10 +163,6 @@ export class SpeechService {
 
       osc.start(now);
       osc.stop(now + dur);
-
-      window.setTimeout(() => {
-        void ctx.close();
-      }, 250);
     } catch {
       // Ignore Web Audio errors
     }
@@ -162,14 +172,10 @@ export class SpeechService {
    * Plays a brief confirmation chime when wake word ("Avisia") is recognized.
    */
   playWakeConfirmTone(): void {
-    if (typeof window === 'undefined') return;
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
+    const ctx = this.getAudioContext();
+    if (!ctx) return;
 
     try {
-      const ctx = new AudioCtx();
       const now = ctx.currentTime;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -177,15 +183,12 @@ export class SpeechService {
       osc.frequency.setValueAtTime(660, now);
       osc.frequency.exponentialRampToValueAtTime(990, now + 0.11);
       gain.gain.setValueAtTime(0.001, now);
-      gain.gain.exponentialRampToValueAtTime(0.1, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start(now);
       osc.stop(now + 0.15);
-      window.setTimeout(() => {
-        void ctx.close();
-      }, 300);
     } catch {
       // Ignore Web Audio errors
     }
@@ -201,7 +204,38 @@ export class SpeechService {
     }
   ): void {
     this.lastSpokenText = text;
-    if (!settings.enabled || !this.isSynthesisSupported() || !text.trim()) {
+    if (!settings.enabled || !text.trim()) {
+      callbacks?.onEnd?.();
+      return;
+    }
+
+    const naturalText = this.prepareNaturalProsody(text);
+
+    // Native Android / Capacitor TextToSpeech (works reliably even when WebView speechSynthesis is silent)
+    if (Capacitor.isNativePlatform()) {
+      callbacks?.onStart?.();
+      void TextToSpeech.stop()
+        .catch(() => {})
+        .then(() =>
+          TextToSpeech.speak({
+            text: naturalText,
+            lang: 'es-ES',
+            rate: Math.min(1.4, Math.max(0.75, settings.rate)),
+            pitch: 1.03,
+            volume: 1.0,
+            category: 'playback',
+          })
+        )
+        .then(() => {
+          callbacks?.onEnd?.();
+        })
+        .catch(() => {
+          callbacks?.onError?.();
+        });
+      return;
+    }
+
+    if (!this.isSynthesisSupported()) {
       callbacks?.onEnd?.();
       return;
     }
@@ -212,7 +246,6 @@ export class SpeechService {
     }
 
     window.speechSynthesis.cancel();
-    const naturalText = this.prepareNaturalProsody(text);
     const utterance = new SpeechSynthesisUtterance(naturalText);
     this.activeUtterance = utterance;
     utterance.lang = 'es-419';
@@ -274,7 +307,10 @@ export class SpeechService {
   }
 
   cancel(): void {
-    if (this.isSynthesisSupported()) {
+    if (Capacitor.isNativePlatform()) {
+      void TextToSpeech.stop().catch(() => {});
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
   }
