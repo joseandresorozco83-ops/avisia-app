@@ -3,6 +3,12 @@ import { Upload, Cpu, AlertCircle, Volume2, SlidersHorizontal, Sparkles, FileTex
 import type { Detection, DetectorStatus } from '../types/avicia';
 import { detectorService } from '../services/DetectorService';
 import { architecturalSegmenterService } from '../services/ArchitecturalSegmenterService';
+import { depthModelService } from '../services/DepthModelService';
+import {
+  computeStixelCorridor,
+  enrichDoorsWithDepth,
+  type StixelNavigationPlan,
+} from '../services/DoorAndStixelService';
 import { assistiveVisionService } from '../services/AssistiveVisionService';
 import { formatDistanceSteps } from '../services/MessagePolicy';
 
@@ -25,6 +31,7 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
   const [running, setRunning] = useState(false);
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistText, setAssistText] = useState<string | null>(null);
+  const [stixelPlan, setStixelPlan] = useState<StixelNavigationPlan | null>(null);
 
   const imgRef = useRef<HTMLImageElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -35,7 +42,7 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
     };
   }, [imageUrl]);
 
-  const drawBoxes = (dets: Detection[]) => {
+  const drawBoxes = (dets: Detection[], plan?: StixelNavigationPlan | null) => {
     const canvas = canvasRef.current;
     const img = imgRef.current;
     if (!canvas || !img) return;
@@ -47,13 +54,52 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    if (plan) {
+      const sectorW = canvas.width / 5;
+      const maxBarH = canvas.height * 0.24;
+      const baseY = canvas.height - 6;
+      ctx.save();
+      for (const sec of plan.sectors) {
+        const sx = sec.index * sectorW + 4;
+        const sw = sectorW - 8;
+        const barH = Math.max(12, (sec.reachPct / 100) * maxBarH);
+        ctx.fillStyle =
+          sec.status === 'clear'
+            ? 'rgba(52, 211, 153, 0.28)'
+            : sec.status === 'caution'
+              ? 'rgba(251, 191, 36, 0.28)'
+              : 'rgba(244, 63, 94, 0.32)';
+        ctx.fillRect(sx, baseY - barH, sw, barH);
+        ctx.strokeStyle =
+          sec.status === 'clear'
+            ? 'rgba(52, 211, 153, 0.85)'
+            : sec.status === 'caution'
+              ? 'rgba(251, 191, 36, 0.85)'
+              : 'rgba(244, 63, 94, 0.9)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sx, baseY - barH, sw, barH);
+      }
+      ctx.restore();
+    }
+
     for (const det of dets) {
       const x = (det.bbox.x / 100) * canvas.width;
       const y = (det.bbox.y / 100) * canvas.height;
       const w = (det.bbox.width / 100) * canvas.width;
       const h = (det.bbox.height / 100) * canvas.height;
 
-      ctx.strokeStyle = '#34d399';
+      const color =
+        det.doorState === 'open'
+          ? '#34d399'
+          : det.doorState === 'semi_open'
+            ? '#fb7185'
+            : det.doorState === 'closed'
+              ? '#f59e0b'
+              : det.id.startsWith('arch-')
+                ? '#c084fc'
+                : '#22d3ee';
+
+      ctx.strokeStyle = color;
       ctx.lineWidth = Math.max(2, canvas.width * 0.004);
       ctx.strokeRect(x, y, w, h);
 
@@ -62,7 +108,7 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
       const textWidth = ctx.measureText(label).width;
       const boxHeight = Math.max(22, Math.round(canvas.width * 0.032));
 
-      ctx.fillStyle = '#34d399';
+      ctx.fillStyle = color;
       ctx.fillRect(x, Math.max(0, y - boxHeight), textWidth + 12, boxHeight);
       ctx.fillStyle = '#060d18';
       ctx.fillText(label, x + 6, Math.max(boxHeight - 6, y - 6));
@@ -75,11 +121,13 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
     try {
       const result = await detectorService.detectOnImage(imgRef.current, threshold);
       let merged = [...result.detections];
+      let archResult = null;
+      let depthResult = null;
       try {
-        const arch = await architecturalSegmenterService.analyzeSource(imgRef.current);
-        if (arch) {
+        archResult = await architecturalSegmenterService.analyzeSource(imgRef.current);
+        if (archResult) {
           const existing = new Set(merged.map((d) => d.labelEs.toLowerCase()));
-          for (const ad of arch.detections) {
+          for (const ad of archResult.detections) {
             if (!existing.has(ad.labelEs.toLowerCase())) {
               merged.push({ ...ad, source: 'real_image' });
               existing.add(ad.labelEs.toLowerCase());
@@ -89,14 +137,28 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
       } catch {
         // Architectural segmentation is best-effort enrichment
       }
+      if (depthModelService.getStatus().ready) {
+        try {
+          depthResult = await depthModelService.estimateFromSource(imgRef.current);
+        } catch {
+          // Optional depth enrichment
+        }
+      }
+      merged = enrichDoorsWithDepth(merged, archResult, depthResult).map((d) => ({
+        ...d,
+        source: 'real_image',
+      }));
+      const plan = computeStixelCorridor(merged, archResult, depthResult, null);
+      setStixelPlan(plan);
       setStatus(detectorService.getStatus());
       setDetections(merged);
-      drawBoxes(merged);
+      drawBoxes(merged, plan);
       onDetectionsReady(merged, result.inferenceTimeMs);
     } catch {
       setStatus(detectorService.getStatus());
       setDetections([]);
-      drawBoxes([]);
+      setStixelPlan(null);
+      drawBoxes([], null);
       onDetectionsReady([], 0);
     } finally {
       setRunning(false);
@@ -284,6 +346,11 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
               </button>
             </div>
           </div>
+          {stixelPlan && (
+            <p className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-400/30 text-emerald-200 font-medium">
+              Stixel 5 sectores: {stixelPlan.guidanceText}
+            </p>
+          )}
           {assistText && (
             <p className="p-2 rounded-lg bg-slate-950/80 border border-slate-700/60 text-slate-200 leading-relaxed">
               {assistText}

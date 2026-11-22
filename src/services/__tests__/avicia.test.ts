@@ -11,6 +11,12 @@ import {
 } from '../DetectorService';
 import { assistiveVisionService } from '../AssistiveVisionService';
 import { parseArchitecturalSegments } from '../ArchitecturalSegmenterService';
+import {
+  classifyDoorState,
+  computeStixelCorridor,
+  enrichDoorsWithDepth,
+} from '../DoorAndStixelService';
+import type { DepthGrid } from '../DepthModelService';
 import type { Detection } from '../../types/avicia';
 
 describe('AVICIA Core Services', () => {
@@ -246,5 +252,96 @@ describe('AVISIA v3.0 Assistive Vision & Anti-False-Alarm Suite', () => {
     ]);
     expect(blockedWall.detectedLabelsEs).toContain('Pared');
     expect(blockedWall.pathVisuallyClear).toBe(false);
+  });
+
+  it('classifies open, closed, and semi-open doors using depth discontinuity', () => {
+    const makeGrid = (fillFn: (xPct: number, yPct: number) => number): DepthGrid => {
+      const width = 24;
+      const height = 18;
+      const values = new Float32Array(width * height);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          values[y * width + x] = fillFn((x / width) * 100, (y / height) * 100);
+        }
+      }
+      return { width, height, values };
+    };
+
+    const doorBox = { x: 35, y: 15, width: 30, height: 70 };
+
+    // Open door: surrounding wall frame is closer (0.72) than deeper open interior (0.34)
+    const openGrid = makeGrid((x) => (x >= 35 && x <= 65 ? 0.34 : 0.72));
+    const openRes = classifyDoorState(doorBox, openGrid, 70);
+    expect(openRes.state).toBe('open');
+    expect(openRes.isInanimateObstacle).toBe(false);
+
+    // Closed door: interior depth matches surrounding wall plane (~0.68)
+    const closedGrid = makeGrid(() => 0.68);
+    const closedRes = classifyDoorState(doorBox, closedGrid, 15);
+    expect(closedRes.state).toBe('closed');
+    expect(closedRes.isInanimateObstacle).toBe(true);
+
+    // Semi-open door: strong left-vs-right depth slant across door leaf
+    const semiGrid = makeGrid((x) => (x >= 35 && x < 50 ? 0.85 : x >= 50 && x <= 65 ? 0.45 : 0.62));
+    const semiRes = classifyDoorState(doorBox, semiGrid, 30);
+    expect(semiRes.state).toBe('semi_open');
+    expect(semiRes.isInanimateObstacle).toBe(true);
+  });
+
+  it('detects geometric open doorway between flanking walls and computes 5-sector Stixel detours', () => {
+    const w = 40;
+    const h = 40;
+    const makeRectMask = (x1: number, y1: number, x2: number, y2: number) => {
+      const data = new Uint8Array(w * h);
+      for (let y = y1; y < y2; y++) {
+        for (let x = x1; x < x2; x++) {
+          data[y * w + x] = 255;
+        }
+      }
+      return { data, width: w, height: h };
+    };
+
+    // Flanking walls on left (x:0..14) and right (x:26..40), floor penetrating straight through center (x:15..25)
+    const leftWall = makeRectMask(0, 4, 15, 34);
+    const rightWall = makeRectMask(25, 4, 40, 34);
+    const mergedWallData = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      mergedWallData[i] = Math.max(leftWall.data[i], rightWall.data[i]);
+    }
+
+    const doorwayArch = parseArchitecturalSegments([
+      { label: 'wall', mask: { data: mergedWallData, width: w, height: h } },
+      { label: 'floor', mask: makeRectMask(15, 16, 25, 39) },
+    ]);
+
+    expect(doorwayArch.openDoorwayDetected).toBe(true);
+    const enriched = enrichDoorsWithDepth(doorwayArch.detections, doorwayArch, null);
+    expect(enriched.some((d) => d.doorState === 'open')).toBe(true);
+
+    // Stixel corridor with left + center blocked by a close chair, right side open => recommends detour to right (a las 2)
+    const openFloorArch = parseArchitecturalSegments([
+      { label: 'floor', mask: makeRectMask(0, 16, 40, 39) },
+    ]);
+    const centerLeftChair: Detection = {
+      id: 'trk-chair',
+      category: 'chair',
+      labelEs: 'Silla',
+      source: 'real_video',
+      confidence: 0.85,
+      bbox: { x: 4, y: 42, width: 58, height: 50 },
+      confirmationStatus: 'confirmed',
+      priority: 90,
+      firstSeenAt: 1000,
+      lastSeenAt: 1500,
+      isInanimateObstacle: true,
+      proximityZone: 'front_close',
+      estimatedMeters: 0.7,
+      clockPosition: 'a las 12',
+    };
+
+    const plan = computeStixelCorridor([centerLeftChair], openFloorArch, null, null);
+    expect(plan.centerClear).toBe(false);
+    expect(plan.recommendedDetour?.direction).toBe('right');
+    expect(plan.guidanceText.toLowerCase()).toContain('derecha');
   });
 });

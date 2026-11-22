@@ -1,7 +1,7 @@
 {
   "name": "avicia-simulador",
   "private": true,
-  "version": "3.1.0",
+  "version": "3.2.0",
   "type": "module",
   "description": "AVICIA — Simulador interactivo de asistencia visual inteligente (UAM Managua)",
   "scripts": {

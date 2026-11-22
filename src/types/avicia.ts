@@ -2,6 +2,10 @@ export type OperationMode = 'simulation' | 'vision_lab' | 'video_lab' | 'live_ca
 
 export type DetectorEngineId = 'efficientdet_lite2' | 'yolov10n' | 'efficientdet_lite0';
 
+export type ArchModelVariant = 'segformer_b0' | 'segformer_b1';
+
+export type DoorState = 'open' | 'closed' | 'semi_open' | 'unknown';
+
 export type AssistiveChannel = 'explore' | 'scene_ai' | 'read_text' | 'find_object' | 'light';
 
 export type DetectionSource = 'simulated' | 'real_image' | 'real_video';
@@ -66,6 +70,8 @@ export interface Detection {
   trackId?: string;
   /** Number of consecutive frames confirming this object */
   framesConfirmed?: number;
+  /** Door physical state when architectural/depth fusion classifies a door or doorway */
+  doorState?: DoorState;
 }
 
 export interface ObstacleAlert {
@@ -174,6 +180,8 @@ export interface StreetAssistFeatures {
   headsetButton: boolean;
   depthAnythingEnabled: boolean;
   architecturalVisionEnabled: boolean;
+  archModelVariant: ArchModelVariant;
+  showStixelOverlay: boolean;
   detectorEngine: DetectorEngineId;
   clockFaceDirections: boolean;
 }

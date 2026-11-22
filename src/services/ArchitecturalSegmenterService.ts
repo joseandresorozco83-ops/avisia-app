@@ -1,9 +1,11 @@
-import type { Detection, ObjectCategory } from '../types/avicia';
+import type { ArchModelVariant, Detection, ObjectCategory } from '../types/avicia';
 import { computeClockPosition, estimatePinholeMeters } from './DetectorService';
 
 export interface ArchitecturalStatus {
   ready: boolean;
   loading: boolean;
+  variant: ArchModelVariant;
+  modelName: string;
   backend: 'webgpu' | 'wasm' | null;
   error: string | null;
   inferenceMs: number | null;
@@ -25,6 +27,14 @@ export interface ArchitecturalAnalysis {
   detections: Detection[];
   walkableCorridorPct: number; // 0..100 (% of lower-center corridor that is floor/sidewalk/path)
   wallCorridorPct: number; // 0..100 (% of center corridor blocked by wall)
+  /** Per-sector continuous floor reach [0..100] from bottom upward for 5 sectors (10h, 11h, 12h, 1h, 2h) */
+  sectorFloorReachPct: [number, number, number, number, number];
+  /** Per-sector wall occupancy [0..100] in middle band (y: 25%..85%) for open-doorway detection */
+  sectorWallPct: [number, number, number, number, number];
+  /** True when floor penetrates forward between two flanking wall sectors (geometric open doorway) */
+  openDoorwayDetected: boolean;
+  /** Estimated center sector index (1..3) of geometric open doorway, if found */
+  openDoorwaySectorIdx: number | null;
   pathVisuallyClear: boolean;
   detectedLabelsEs: string[];
   inferenceMs: number;
@@ -39,13 +49,23 @@ interface ArchClassConfig {
   typicalHeightMeters: number;
 }
 
+const ARCH_MODEL_IDS: Record<ArchModelVariant, string> = {
+  segformer_b0: 'Xenova/segformer-b0-finetuned-ade-512-512',
+  segformer_b1: 'Xenova/segformer-b1-finetuned-ade-512-512',
+};
+
+const ARCH_MODEL_NAMES: Record<ArchModelVariant, string> = {
+  segformer_b0: 'SegFormer-B0 ADE20K (37.4% mIoU · Rápido)',
+  segformer_b1: 'SegFormer-B1 ADE20K (42.2% mIoU · Puertas+)',
+};
+
 const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
   door: {
     labelEs: 'Puerta',
     category: 'obstacle',
     priority: 95,
     isInanimateObstacle: true,
-    minAreaPct: 3.5,
+    minAreaPct: 3.0,
     typicalHeightMeters: 2.05,
   },
   'screen door': {
@@ -53,7 +73,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'obstacle',
     priority: 94,
     isInanimateObstacle: true,
-    minAreaPct: 3.5,
+    minAreaPct: 3.0,
     typicalHeightMeters: 2.05,
   },
   curtain: {
@@ -61,7 +81,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'obstacle',
     priority: 89,
     isInanimateObstacle: true,
-    minAreaPct: 4.5,
+    minAreaPct: 4.0,
     typicalHeightMeters: 2.1,
   },
   stairs: {
@@ -69,7 +89,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'obstacle',
     priority: 98,
     isInanimateObstacle: true,
-    minAreaPct: 3.0,
+    minAreaPct: 2.8,
     typicalHeightMeters: 1.2,
   },
   stairway: {
@@ -77,7 +97,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'obstacle',
     priority: 98,
     isInanimateObstacle: true,
-    minAreaPct: 3.0,
+    minAreaPct: 2.8,
     typicalHeightMeters: 1.2,
   },
   step: {
@@ -85,7 +105,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'obstacle',
     priority: 98,
     isInanimateObstacle: true,
-    minAreaPct: 2.5,
+    minAreaPct: 2.4,
     typicalHeightMeters: 0.45,
   },
   escalator: {
@@ -109,7 +129,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'pole',
     priority: 93,
     isInanimateObstacle: true,
-    minAreaPct: 3.2,
+    minAreaPct: 3.0,
     typicalHeightMeters: 2.4,
   },
   pillar: {
@@ -117,7 +137,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'pole',
     priority: 93,
     isInanimateObstacle: true,
-    minAreaPct: 3.2,
+    minAreaPct: 3.0,
     typicalHeightMeters: 2.4,
   },
   pole: {
@@ -125,7 +145,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'pole',
     priority: 94,
     isInanimateObstacle: true,
-    minAreaPct: 2.2,
+    minAreaPct: 2.0,
     typicalHeightMeters: 2.2,
   },
   streetlight: {
@@ -133,7 +153,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'pole',
     priority: 92,
     isInanimateObstacle: true,
-    minAreaPct: 2.2,
+    minAreaPct: 2.0,
     typicalHeightMeters: 2.5,
   },
   railing: {
@@ -141,7 +161,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'obstacle',
     priority: 90,
     isInanimateObstacle: true,
-    minAreaPct: 4.0,
+    minAreaPct: 3.8,
     typicalHeightMeters: 1.0,
   },
   banister: {
@@ -149,7 +169,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'obstacle',
     priority: 90,
     isInanimateObstacle: true,
-    minAreaPct: 4.0,
+    minAreaPct: 3.8,
     typicalHeightMeters: 1.0,
   },
   fence: {
@@ -224,7 +244,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     minAreaPct: 5.5,
     typicalHeightMeters: 1.4,
   },
-  'glass': {
+  glass: {
     labelEs: 'Vidrio',
     category: 'obstacle',
     priority: 89,
@@ -250,9 +270,10 @@ const WALKABLE_LABELS = new Set([
 type SegmentPipelineFn = (input: unknown) => Promise<RawSegmentItem[]>;
 
 /**
- * Pure helper to convert ADE20K semantic segmentation masks (from SegFormer-B0)
- * into architectural detections (doors, curtains, stairs, walls, columns, cabinets)
- * and compute whether the lower-center walking corridor is visually clear.
+ * Pure helper to convert ADE20K semantic segmentation masks (from SegFormer B0/B1)
+ * into architectural detections (doors, curtains, stairs, walls, columns, cabinets),
+ * compute 5-sector bottom-to-top floor reach (Stixels), and detect geometric open doorways
+ * (walkable floor penetrating between flanking wall sectors).
  */
 export function parseArchitecturalSegments(
   segments: RawSegmentItem[],
@@ -265,6 +286,14 @@ export function parseArchitecturalSegments(
   let wallCorridorPct = 0;
   let wallBbox: { x: number; y: number; width: number; height: number } | null = null;
   let corridorBlockedByArch = false;
+
+  // Compact 5-sector x 20-row occupancy grids for Stixel floor reach & flanking wall detection
+  const NUM_SECTORS = 5;
+  const NUM_ROWS = 20; // row 0 = top (0%), row 19 = bottom (100%)
+  const walkableGrid = new Float32Array(NUM_SECTORS * NUM_ROWS);
+  const walkableCount = new Float32Array(NUM_SECTORS * NUM_ROWS);
+  const wallGrid = new Float32Array(NUM_SECTORS * NUM_ROWS);
+  const wallCount = new Float32Array(NUM_SECTORS * NUM_ROWS);
 
   for (let sIdx = 0; sIdx < segments.length; sIdx++) {
     const seg = segments[sIdx];
@@ -282,6 +311,9 @@ export function parseArchitecturalSegments(
     const corrY2 = Math.floor(h * 0.95);
     const floorY1 = Math.floor(h * 0.54);
 
+    const isWalkable = WALKABLE_LABELS.has(labelRaw);
+    const isWall = labelRaw === 'wall';
+
     let totalSampled = 0;
     let activePixels = 0;
     let corrTotal = 0;
@@ -295,6 +327,7 @@ export function parseArchitecturalSegments(
     let maxY = 0;
 
     for (let y = 0; y < h; y += stride) {
+      const rBin = Math.min(NUM_ROWS - 1, Math.floor((y / h) * NUM_ROWS));
       for (let x = 0; x < w; x += stride) {
         totalSampled++;
         const inCorr = x >= corrX1 && x <= corrX2 && y >= corrY1 && y <= corrY2;
@@ -302,11 +335,18 @@ export function parseArchitecturalSegments(
         if (inCorr) corrTotal++;
         if (inFloorCorr) floorTotal++;
 
+        const sBin = Math.min(NUM_SECTORS - 1, Math.floor((x / w) * NUM_SECTORS));
+        const cellIdx = sBin * NUM_ROWS + rBin;
+        if (isWalkable) walkableCount[cellIdx]++;
+        if (isWall) wallCount[cellIdx]++;
+
         const val = mask.data[y * w + x];
         if (val > 127) {
           activePixels++;
           if (inCorr) corrActive++;
           if (inFloorCorr) floorActive++;
+          if (isWalkable) walkableGrid[cellIdx]++;
+          if (isWall) wallGrid[cellIdx]++;
           if (x < minX) minX = x;
           if (x > maxX) maxX = x;
           if (y < minY) minY = y;
@@ -321,7 +361,7 @@ export function parseArchitecturalSegments(
     const corrPct = corrTotal > 0 ? (corrActive / corrTotal) * 100 : 0;
     const floorPct = floorTotal > 0 ? (floorActive / floorTotal) * 100 : 0;
 
-    if (WALKABLE_LABELS.has(labelRaw)) {
+    if (isWalkable) {
       walkableCorridorSum += floorPct;
       continue;
     }
@@ -331,7 +371,7 @@ export function parseArchitecturalSegments(
     const bw = Math.min(100 - bx, Math.max(2, ((maxX - minX + stride) / w) * 100));
     const bh = Math.min(100 - by, Math.max(2, ((maxY - minY + stride) / h) * 100));
 
-    if (labelRaw === 'wall') {
+    if (isWall) {
       wallCorridorPct = Math.max(wallCorridorPct, Math.round(corrPct));
       wallBbox = { x: bx, y: by, width: bw, height: bh };
       continue;
@@ -377,13 +417,71 @@ export function parseArchitecturalSegments(
       proximityZone,
       estimatedMeters,
       clockPosition,
+      doorState: labelRaw === 'door' || labelRaw === 'screen door' ? 'unknown' : undefined,
     });
+  }
+
+  // Compute bottom-to-top continuous floor reach & mid-band wall occupancy per sector (0..4)
+  const sectorFloorReachPct: [number, number, number, number, number] = [0, 0, 0, 0, 0];
+  const sectorWallPct: [number, number, number, number, number] = [0, 0, 0, 0, 0];
+
+  for (let s = 0; s < NUM_SECTORS; s++) {
+    // Walk bottom-up from row 19 (bottom) to row 7 (35% from top) allowing at most 1 brief noise gap
+    let consecutiveWalkableRows = 0;
+    let gaps = 0;
+    for (let r = NUM_ROWS - 1; r >= 7; r--) {
+      const idx = s * NUM_ROWS + r;
+      const ratio = walkableCount[idx] > 0 ? walkableGrid[idx] / walkableCount[idx] : 0;
+      if (ratio >= 0.32) {
+        consecutiveWalkableRows++;
+        gaps = 0;
+      } else if (consecutiveWalkableRows > 0 && gaps < 1) {
+        gaps++;
+      } else if (consecutiveWalkableRows > 0) {
+        break;
+      }
+    }
+    // Max possible rows from 19 down to 7 = 13 rows -> map to 0..100%
+    sectorFloorReachPct[s] = Math.min(100, Math.round((consecutiveWalkableRows / 12) * 100));
+
+    // Mid-band wall percentage (rows 5..16 = y 25%..85%)
+    let wSum = 0;
+    let wTot = 0;
+    for (let r = 5; r <= 16; r++) {
+      const idx = s * NUM_ROWS + r;
+      wSum += wallGrid[idx];
+      wTot += wallCount[idx];
+    }
+    sectorWallPct[s] = wTot > 0 ? Math.min(100, Math.round((wSum / wTot) * 100)) : 0;
   }
 
   const walkableCorridorPct = Math.min(100, Math.round(walkableCorridorSum));
 
-  // Emit "Pared" only when a wall truly blocks the immediate forward corridor (and floor is almost absent)
-  if (wallCorridorPct >= 52 && walkableCorridorPct < 14 && wallBbox) {
+  // Geometric Open Doorway Detection:
+  // A central sector (1, 2, or 3) has strong floor penetration (>= 45%) and low wall (<= 35%)
+  // while BOTH left and right flanking sectors have strong wall occupancy (>= 36%) and shorter floor reach!
+  let openDoorwayDetected = false;
+  let openDoorwaySectorIdx: number | null = null;
+  for (const s of [2, 1, 3]) {
+    const leftWall = Math.max(sectorWallPct[s - 1], s >= 2 ? sectorWallPct[0] : 0);
+    const rightWall = Math.max(sectorWallPct[s + 1], s <= 2 ? sectorWallPct[4] : 0);
+    const centerFloor = sectorFloorReachPct[s];
+    const sideFloorAvg = (sectorFloorReachPct[s - 1] + sectorFloorReachPct[s + 1]) / 2;
+    if (
+      centerFloor >= 45 &&
+      sectorWallPct[s] <= 38 &&
+      leftWall >= 34 &&
+      rightWall >= 34 &&
+      centerFloor >= sideFloorAvg + 12
+    ) {
+      openDoorwayDetected = true;
+      openDoorwaySectorIdx = s;
+      break;
+    }
+  }
+
+  // Emit "Pared" only when a wall truly blocks the immediate forward corridor (and no open doorway)
+  if (!openDoorwayDetected && wallCorridorPct >= 52 && walkableCorridorPct < 14 && wallBbox) {
     corridorBlockedByArch = true;
     seenLabels.add('Pared');
     detections.push({
@@ -406,12 +504,17 @@ export function parseArchitecturalSegments(
   }
 
   const pathVisuallyClear =
-    !corridorBlockedByArch && walkableCorridorPct >= 22 && wallCorridorPct < 48;
+    openDoorwayDetected ||
+    (!corridorBlockedByArch && walkableCorridorPct >= 22 && wallCorridorPct < 48);
 
   return {
     detections,
     walkableCorridorPct,
     wallCorridorPct,
+    sectorFloorReachPct,
+    sectorWallPct,
+    openDoorwayDetected,
+    openDoorwaySectorIdx,
     pathVisuallyClear,
     detectedLabelsEs: Array.from(seenLabels),
     inferenceMs,
@@ -420,16 +523,18 @@ export function parseArchitecturalSegments(
 
 /**
  * Local 100%-free Architectural Semantic Segmenter powered by
- * Xenova/segformer-b0-finetuned-ade-512-512 (~4 MB quantized ONNX).
- * Recognizes doors (puertas), curtains (cortinas), stairs (escaleras),
- * windows (ventanas), walls (paredes), columns, cabinets, and walkable floor/sidewalk!
+ * SegFormer-B0 (37.4% mIoU) or SegFormer-B1 (42.2% mIoU, +4.8 pts on doors/curtains/floor)
+ * at crisp 320x240 input resolution.
  */
 export class ArchitecturalSegmenterService {
   private segmenter: SegmentPipelineFn | null = null;
   private captureCanvas: HTMLCanvasElement | null = null;
+  private activeVariant: ArchModelVariant = 'segformer_b0';
   private status: ArchitecturalStatus = {
     ready: false,
     loading: false,
+    variant: 'segformer_b0',
+    modelName: ARCH_MODEL_NAMES.segformer_b0,
     backend: null,
     error: null,
     inferenceMs: null,
@@ -437,6 +542,28 @@ export class ArchitecturalSegmenterService {
 
   getStatus(): ArchitecturalStatus {
     return { ...this.status };
+  }
+
+  getVariant(): ArchModelVariant {
+    return this.activeVariant;
+  }
+
+  async setVariant(variant: ArchModelVariant): Promise<ArchitecturalStatus> {
+    if (variant === this.activeVariant && this.status.ready && this.segmenter) {
+      return this.getStatus();
+    }
+    this.activeVariant = variant;
+    this.segmenter = null;
+    this.status = {
+      ready: false,
+      loading: false,
+      variant,
+      modelName: ARCH_MODEL_NAMES[variant],
+      backend: null,
+      error: null,
+      inferenceMs: null,
+    };
+    return this.initialize(variant);
   }
 
   private async detectBackend(): Promise<'webgpu' | 'wasm'> {
@@ -454,51 +581,63 @@ export class ArchitecturalSegmenterService {
     return 'wasm';
   }
 
-  async initialize(): Promise<ArchitecturalStatus> {
-    if (this.segmenter) return this.getStatus();
+  async initialize(variant: ArchModelVariant = this.activeVariant): Promise<ArchitecturalStatus> {
+    if (this.segmenter && this.activeVariant === variant) return this.getStatus();
     if (this.status.loading) return this.getStatus();
 
-    this.status = { ...this.status, loading: true, error: null };
+    this.activeVariant = variant;
+    this.status = {
+      ...this.status,
+      loading: true,
+      variant,
+      modelName: ARCH_MODEL_NAMES[variant],
+      error: null,
+    };
 
     const preferredBackend = await this.detectBackend();
-    const attempts: Array<'webgpu' | 'wasm'> =
-      preferredBackend === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
+    const variantChain: ArchModelVariant[] =
+      variant === 'segformer_b1' ? ['segformer_b1', 'segformer_b0'] : ['segformer_b0'];
 
-    for (const backend of attempts) {
-      try {
-        const transformers = await import('@huggingface/transformers');
-        const createPipeline = transformers.pipeline as unknown as (
-          task: string,
-          model: string,
-          opts?: Record<string, unknown>
-        ) => Promise<SegmentPipelineFn>;
+    for (const candidate of variantChain) {
+      const backends: Array<'webgpu' | 'wasm'> =
+        preferredBackend === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
+      for (const backend of backends) {
+        try {
+          const transformers = await import('@huggingface/transformers');
+          const createPipeline = transformers.pipeline as unknown as (
+            task: string,
+            model: string,
+            opts?: Record<string, unknown>
+          ) => Promise<SegmentPipelineFn>;
 
-        this.segmenter = await createPipeline(
-          'image-segmentation',
-          'Xenova/segformer-b0-finetuned-ade-512-512',
-          {
+          this.segmenter = await createPipeline('image-segmentation', ARCH_MODEL_IDS[candidate], {
             device: backend,
             dtype: 'q8',
-          }
-        );
+          });
 
-        this.status = {
-          ready: true,
-          loading: false,
-          backend,
-          error: null,
-          inferenceMs: null,
-        };
-        return this.getStatus();
-      } catch (err) {
-        this.status.error =
-          err instanceof Error ? err.message : 'Error cargando SegFormer ADE20K.';
+          this.activeVariant = candidate;
+          this.status = {
+            ready: true,
+            loading: false,
+            variant: candidate,
+            modelName: `${ARCH_MODEL_NAMES[candidate]} · ${backend.toUpperCase()}`,
+            backend,
+            error: null,
+            inferenceMs: null,
+          };
+          return this.getStatus();
+        } catch (err) {
+          this.status.error =
+            err instanceof Error ? err.message : 'Error cargando SegFormer ADE20K.';
+        }
       }
     }
 
     this.status = {
       ready: false,
       loading: false,
+      variant: this.activeVariant,
+      modelName: ARCH_MODEL_NAMES[this.activeVariant],
       backend: null,
       error: this.status.error ?? 'No se pudo cargar SegFormer ADE20K.',
       inferenceMs: null,
@@ -512,14 +651,15 @@ export class ArchitecturalSegmenterService {
     if (source instanceof HTMLVideoElement && source.readyState < 2) return null;
 
     if (!this.segmenter) {
-      const st = await this.initialize();
+      const st = await this.initialize(this.activeVariant);
       if (!st.ready || !this.segmenter) return null;
     }
 
+    // Crisp 320x240 input preserves narrow door frames & curtain edges much better than 256x192
     if (!this.captureCanvas) {
       this.captureCanvas = document.createElement('canvas');
-      this.captureCanvas.width = 256;
-      this.captureCanvas.height = 192;
+      this.captureCanvas.width = 320;
+      this.captureCanvas.height = 240;
     }
 
     const w = this.captureCanvas.width;

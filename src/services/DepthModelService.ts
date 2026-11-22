@@ -6,6 +6,13 @@ export interface DepthModelStatus {
   inferenceMs: number | null;
 }
 
+export interface DepthGrid {
+  width: number;
+  height: number;
+  /** Row-major normalized inverse depth (disparity) in [0..1]: 1.0 = closest, 0.0 = farthest */
+  values: Float32Array;
+}
+
 export interface DepthMapSummary {
   leftCloseness: number; // 0..100
   centerCloseness: number; // 0..100
@@ -15,6 +22,8 @@ export interface DepthMapSummary {
   wallAhead: boolean;
   stepDetectedInDepth: boolean;
   clearSide: 'left' | 'right' | 'center' | null;
+  /** Compact 24x18 normalized inverse-depth grid for door-state & 5-sector Stixel fusion */
+  grid?: DepthGrid;
   inferenceMs: number;
   backend: 'webgpu' | 'wasm';
 }
@@ -30,7 +39,7 @@ type DepthPipelineFn = (
  * Lazy-loaded monocular depth estimator powered by Depth Anything V2 Small
  * via @huggingface/transformers (WebGPU primary, WASM fallback).
  * Depth Anything V2 predicts inverse depth (disparity): higher values = physically CLOSER.
- * Compares upper-center vs lower-center & left/right zones to avoid false alarms on empty floors.
+ * Also outputs a compact 24x18 normalized depth grid for door open/closed fusion & Stixel traversability.
  */
 export class DepthModelService {
   private estimator: DepthPipelineFn | null = null;
@@ -68,50 +77,58 @@ export class DepthModelService {
 
     this.status = { ...this.status, loading: true, error: null };
 
-    try {
-      const backend = await this.detectBackend();
-      const transformers = await import('@huggingface/transformers');
-      const createPipeline = transformers.pipeline as unknown as (
-        task: string,
-        model: string,
-        opts?: Record<string, unknown>
-      ) => Promise<DepthPipelineFn>;
+    const preferred = await this.detectBackend();
+    const backends: Array<'webgpu' | 'wasm'> =
+      preferred === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
 
-      this.estimator = await createPipeline(
-        'depth-estimation',
-        'onnx-community/depth-anything-v2-small',
-        {
-          device: backend,
-          dtype: backend === 'webgpu' ? 'fp16' : 'q8',
-        }
-      );
+    for (const backend of backends) {
+      try {
+        const transformers = await import('@huggingface/transformers');
+        const createPipeline = transformers.pipeline as unknown as (
+          task: string,
+          model: string,
+          opts?: Record<string, unknown>
+        ) => Promise<DepthPipelineFn>;
 
-      this.status = {
-        ready: true,
-        loading: false,
-        backend,
-        error: null,
-        inferenceMs: null,
-      };
-    } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : 'No se pudo cargar Depth Anything V2 Small.';
-      this.status = {
-        ready: false,
-        loading: false,
-        backend: null,
-        error: msg,
-        inferenceMs: null,
-      };
+        this.estimator = await createPipeline(
+          'depth-estimation',
+          'onnx-community/depth-anything-v2-small',
+          {
+            device: backend,
+            dtype: backend === 'webgpu' ? 'fp16' : 'q8',
+          }
+        );
+
+        this.status = {
+          ready: true,
+          loading: false,
+          backend,
+          error: null,
+          inferenceMs: null,
+        };
+        return this.getStatus();
+      } catch (err) {
+        this.status.error =
+          err instanceof Error
+            ? err.message
+            : 'No se pudo cargar Depth Anything V2 Small.';
+      }
     }
 
+    this.status = {
+      ready: false,
+      loading: false,
+      backend: null,
+      error: this.status.error ?? 'No se pudo cargar Depth Anything V2 Small.',
+      inferenceMs: null,
+    };
     return this.getStatus();
   }
 
-  async estimateFromVideo(video: HTMLVideoElement): Promise<DepthMapSummary | null> {
-    if (video.readyState < 2) return null;
+  async estimateFromSource(
+    source: HTMLVideoElement | HTMLImageElement
+  ): Promise<DepthMapSummary | null> {
+    if (source instanceof HTMLVideoElement && source.readyState < 2) return null;
 
     if (!this.estimator) {
       const st = await this.initialize();
@@ -129,7 +146,7 @@ export class DepthModelService {
     const ctx = this.captureCanvas.getContext('2d');
     if (!ctx) return null;
 
-    ctx.drawImage(video, 0, 0, w, h);
+    ctx.drawImage(source, 0, 0, w, h);
 
     const start = performance.now();
     const { RawImage } = await import('@huggingface/transformers');
@@ -155,6 +172,19 @@ export class DepthModelService {
     }
     const span = Math.max(1e-5, maxVal - minVal);
 
+    // Build compact 24x18 normalized inverse-depth grid for door & Stixel fusion
+    const gridW = 24;
+    const gridH = 18;
+    const gridValues = new Float32Array(gridW * gridH);
+    for (let gy = 0; gy < gridH; gy++) {
+      const srcY = Math.min(mapH - 1, Math.floor(((gy + 0.5) / gridH) * mapH));
+      for (let gx = 0; gx < gridW; gx++) {
+        const srcX = Math.min(mapW - 1, Math.floor(((gx + 0.5) / gridW) * mapW));
+        const raw = Number(data[srcY * mapW + srcX]);
+        gridValues[gy * gridW + gx] = Math.max(0, Math.min(1, (raw - minVal) / span));
+      }
+    }
+
     const avgRegion = (xFrom: number, xTo: number, yFrom: number, yTo: number): number => {
       let sum = 0;
       let count = 0;
@@ -174,7 +204,6 @@ export class DepthModelService {
     const yUpperStart = Math.floor(mapH * 0.18);
     const yUpperEnd = Math.floor(mapH * 0.48);
 
-    // Focus on chest/head-level mid corridor rather than bottom floor to avoid floor false alarms
     const leftCloseness = avgRegion(0, third, yMidStart, yMidEnd);
     const centerCloseness = avgRegion(third, third * 2, yMidStart, yMidEnd);
     const rightCloseness = avgRegion(third * 2, mapW, yMidStart, yMidEnd);
@@ -202,7 +231,8 @@ export class DepthModelService {
     const stepDetectedInDepth = abruptDepthRows >= 2;
     const wallAhead = upperCenterCloseness >= 72 && centerCloseness >= 74;
     const closeObstacleAhead =
-      wallAhead || (centerCloseness >= 72 && centerCloseness >= Math.min(leftCloseness, rightCloseness) + 12);
+      wallAhead ||
+      (centerCloseness >= 72 && centerCloseness >= Math.min(leftCloseness, rightCloseness) + 12);
 
     let clearSide: 'left' | 'right' | 'center' | null = null;
     if (closeObstacleAhead) {
@@ -228,9 +258,14 @@ export class DepthModelService {
       wallAhead,
       stepDetectedInDepth,
       clearSide,
+      grid: { width: gridW, height: gridH, values: gridValues },
       inferenceMs,
       backend: this.status.backend ?? 'wasm',
     };
+  }
+
+  async estimateFromVideo(video: HTMLVideoElement): Promise<DepthMapSummary | null> {
+    return this.estimateFromSource(video);
   }
 }
 

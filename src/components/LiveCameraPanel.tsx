@@ -28,11 +28,21 @@ import {
   architecturalSegmenterService,
   type ArchitecturalAnalysis,
 } from '../services/ArchitecturalSegmenterService';
+import {
+  computeStixelCorridor,
+  enrichDoorsWithDepth,
+  type StixelNavigationPlan,
+} from '../services/DoorAndStixelService';
 import { assistiveVisionService } from '../services/AssistiveVisionService';
 import { telemetryService } from '../services/TelemetryService';
 import { speechService } from '../services/SpeechService';
 import { formatDistanceSteps } from '../services/MessagePolicy';
-import type { AssistiveChannel, Detection, DetectorEngineId } from '../types/avicia';
+import type {
+  ArchModelVariant,
+  AssistiveChannel,
+  Detection,
+  DetectorEngineId,
+} from '../types/avicia';
 
 interface LiveCameraPanelProps {
   threshold: number;
@@ -41,10 +51,13 @@ interface LiveCameraPanelProps {
   fastMode?: boolean;
   depthAnythingEnabled?: boolean;
   architecturalVisionEnabled?: boolean;
+  archModelVariant?: ArchModelVariant;
+  showStixelOverlay?: boolean;
   detectorEngine?: DetectorEngineId;
   onCameraStateChange: (active: boolean) => void;
   onDetectionsReady: (detections: Detection[]) => void;
   onPathClearChange?: (clear: boolean) => void;
+  onStixelGuidanceChange?: (plan: StixelNavigationPlan | null) => void;
   onSpeakNow?: (text: string) => void;
   onVideoElementChange?: (video: HTMLVideoElement | null) => void;
 }
@@ -71,10 +84,13 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   fastMode = false,
   depthAnythingEnabled = false,
   architecturalVisionEnabled = true,
+  archModelVariant = 'segformer_b0',
+  showStixelOverlay = true,
   detectorEngine = 'efficientdet_lite2',
   onCameraStateChange,
   onDetectionsReady,
   onPathClearChange,
+  onStixelGuidanceChange,
   onSpeakNow,
   onVideoElementChange,
 }) => {
@@ -91,9 +107,9 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   const [switchingCamera, setSwitchingCamera] = useState<boolean>(false);
   const [depthSummary, setDepthSummary] = useState<DepthMapSummary | null>(null);
   const [depthLoading, setDepthLoading] = useState<boolean>(false);
-  const [archSummary, setArchSummary] = useState<ArchitecturalAnalysis | null>(null);
   const [archLoading, setArchLoading] = useState<boolean>(false);
   const [pathClearConfirmed, setPathClearConfirmed] = useState<boolean>(false);
+  const [stixelPlan, setStixelPlan] = useState<StixelNavigationPlan | null>(null);
 
   // Assistive channel states (Be My AI / Seeing AI / Envision parity)
   const [assistiveBusy, setAssistiveBusy] = useState<boolean>(false);
@@ -106,6 +122,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
   const depthSummaryRef = useRef<DepthMapSummary | null>(null);
   const archSummaryRef = useRef<ArchitecturalAnalysis | null>(null);
+  const stixelPlanRef = useRef<StixelNavigationPlan | null>(null);
+  const showStixelOverlayRef = useRef<boolean>(showStixelOverlay);
   const clearPathStreakRef = useRef<number>(0);
   const latestDetectionsRef = useRef<Detection[]>([]);
   const latestProximityRef = useRef<ProximityAssessment | null>(null);
@@ -134,6 +152,10 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   useEffect(() => {
     lightToneOnRef.current = lightToneOn;
   }, [lightToneOn]);
+
+  useEffect(() => {
+    showStixelOverlayRef.current = showStixelOverlay;
+  }, [showStixelOverlay]);
 
   // Hot-switch detector engine when user changes setting
   useEffect(() => {
@@ -236,10 +258,9 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     };
   }, [depthAnythingEnabled, cameraActive]);
 
-  // Decoupled Architectural Semantic Segmenter (SegFormer ADE20K: doors, curtains, stairs, walls, walkable floor)
+  // Decoupled Architectural Semantic Segmenter (SegFormer B0/B1 ADE20K: doors, curtains, stairs, walls, walkable floor)
   useEffect(() => {
     if (!architecturalVisionEnabled || !cameraActive) {
-      setArchSummary(null);
       archSummaryRef.current = null;
       setArchLoading(false);
       return;
@@ -249,9 +270,12 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     let busy = false;
 
     const initSeg = async () => {
-      if (!architecturalSegmenterService.getStatus().ready) {
+      if (
+        !architecturalSegmenterService.getStatus().ready ||
+        architecturalSegmenterService.getVariant() !== archModelVariant
+      ) {
         setArchLoading(true);
-        await architecturalSegmenterService.initialize();
+        await architecturalSegmenterService.setVariant(archModelVariant);
         if (!cancelled) setArchLoading(false);
       }
     };
@@ -267,7 +291,6 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         .then((analysis) => {
           if (!cancelled && analysis) {
             archSummaryRef.current = analysis;
-            setArchSummary(analysis);
           }
         })
         .catch(() => {
@@ -276,13 +299,13 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         .finally(() => {
           busy = false;
         });
-    }, 1150);
+    }, archModelVariant === 'segformer_b1' ? 1450 : 1100);
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [architecturalVisionEnabled, cameraActive]);
+  }, [architecturalVisionEnabled, archModelVariant, cameraActive]);
 
   const refreshDevices = async () => {
     try {
@@ -303,7 +326,11 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
 
-  const drawBoxes = (dets: Detection[], prox?: ProximityAssessment | null) => {
+  const drawBoxes = (
+    dets: Detection[],
+    prox?: ProximityAssessment | null,
+    plan?: StixelNavigationPlan | null
+  ) => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
     if (!canvas || !video) return;
@@ -318,6 +345,46 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     if (!ctx) return;
 
     ctx.clearRect(0, 0, width, height);
+
+    // 5-Sector Stixel Free-Space Corridor Visual Overlay (10h, 11h, 12h, 1h, 2h)
+    if (showStixelOverlayRef.current && plan && channelRef.current === 'explore') {
+      const sectorW = width / 5;
+      const maxBarH = height * 0.28;
+      const baseY = height - 6;
+
+      ctx.save();
+      for (const sec of plan.sectors) {
+        const sx = sec.index * sectorW + 4;
+        const sw = sectorW - 8;
+        const barH = Math.max(12, (sec.reachPct / 100) * maxBarH);
+        const fillColor =
+          sec.status === 'clear'
+            ? 'rgba(52, 211, 153, 0.28)'
+            : sec.status === 'caution'
+              ? 'rgba(251, 191, 36, 0.28)'
+              : 'rgba(244, 63, 94, 0.32)';
+        const borderColor =
+          sec.status === 'clear'
+            ? 'rgba(52, 211, 153, 0.85)'
+            : sec.status === 'caution'
+              ? 'rgba(251, 191, 36, 0.85)'
+              : 'rgba(244, 63, 94, 0.9)';
+
+        ctx.fillStyle = fillColor;
+        ctx.fillRect(sx, baseY - barH, sw, barH);
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = sec.index === 2 ? 2.5 : 1.5;
+        ctx.strokeRect(sx, baseY - barH, sw, barH);
+
+        const fontSize = Math.max(11, Math.round(width * 0.018));
+        ctx.font = `bold ${fontSize}px monospace`;
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        const stepTxt = sec.freeSteps >= 4 ? '3+p' : `${sec.freeSteps}p`;
+        ctx.fillText(`${sec.shortLabel}·${stepTxt}`, sx + sw / 2, baseY - 6);
+      }
+      ctx.restore();
+    }
 
     if (corridorSensorOn && channelRef.current === 'explore') {
       const cx1 = width * 0.28;
@@ -351,11 +418,17 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         det.isInanimateObstacle && det.proximityZone !== 'side';
       const strokeColor = isTargetMatch
         ? '#4edea3'
-        : isArchitectural
-          ? '#c084fc'
-          : isFrontObstacle
-            ? '#f59e0b'
-            : '#22d3ee';
+        : det.doorState === 'open'
+          ? '#34d399'
+          : det.doorState === 'semi_open'
+            ? '#fb7185'
+            : det.doorState === 'closed'
+              ? '#f59e0b'
+              : isArchitectural
+                ? '#c084fc'
+                : isFrontObstacle
+                  ? '#f59e0b'
+                  : '#22d3ee';
 
       ctx.strokeStyle = strokeColor;
       ctx.lineWidth = Math.max(3, width * (isTargetMatch ? 0.008 : 0.005));
@@ -451,7 +524,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         latestDetectionsRef.current,
         latestProximityRef.current,
         depthSummaryRef.current,
-        archSummaryRef.current
+        archSummaryRef.current,
+        stixelPlanRef.current
       );
       setAssistiveResultText(res.text);
       setAssistiveEngineLabel(
@@ -578,16 +652,21 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           // Multi-frame temporal stabilization: rejects 1-frame noisy hallucinations
           const stabilizedCoco = temporalTrackerService.update(res.detections, Date.now());
 
-          // Fuse SegFormer ADE20K architectural detections (doors, curtains, stairs, windows, walls)
+          // Fuse SegFormer ADE20K architectural detections + Depth open/closed/semi-open door classification & open doorways
           const archDets = archSummaryRef.current?.detections ?? [];
           const existingLabels = new Set(stabilizedCoco.map((d) => d.labelEs.toLowerCase()));
-          const mergedBaseDetections: Detection[] = [...stabilizedCoco];
+          const rawMerged: Detection[] = [...stabilizedCoco];
           for (const ad of archDets) {
             if (!existingLabels.has(ad.labelEs.toLowerCase())) {
-              mergedBaseDetections.push(ad);
+              rawMerged.push(ad);
               existingLabels.add(ad.labelEs.toLowerCase());
             }
           }
+          const mergedBaseDetections = enrichDoorsWithDepth(
+            rawMerged,
+            archSummaryRef.current,
+            depthSummaryRef.current
+          );
 
           const prox = corridorSensorOn
             ? depthProximityService.analyzeVideoCorridor(videoRef.current, mergedBaseDetections)
@@ -697,15 +776,32 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             });
           }
 
+          // 5-Sector Semantic Stixel Navigation Plan (free steps ahead + left/right detour + open doorway)
+          const currentStixelPlan = computeStixelCorridor(
+            combinedDetections,
+            archSummaryRef.current,
+            depthSummaryRef.current,
+            prox
+          );
+          stixelPlanRef.current = currentStixelPlan;
+          setStixelPlan(currentStixelPlan);
+          onStixelGuidanceChange?.(currentStixelPlan);
+
           // Safety-verified Clear Path check (requires >= 3 calm, illuminated, obstacle-free frames)
           const archBlocked =
             archSummaryRef.current !== null &&
+            !archSummaryRef.current.openDoorwayDetected &&
             (archSummaryRef.current.wallCorridorPct >= 46 ||
-              archSummaryRef.current.detections.some(
-                (d) => d.isInanimateObstacle && d.proximityZone === 'front_close'
+              combinedDetections.some(
+                (d) =>
+                  d.id.startsWith('arch-') &&
+                  d.isInanimateObstacle &&
+                  d.doorState !== 'open' &&
+                  d.proximityZone === 'front_close'
               ));
           const isFrameClear =
             channelRef.current === 'explore' &&
+            currentStixelPlan.centerClear &&
             prox !== null &&
             prox.cameraQuality === 'ok' &&
             prox.level === 'clear' &&
@@ -739,7 +835,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           if (!runningRef.current) return;
           latestDetectionsRef.current = combinedDetections;
           setLiveCount(combinedDetections.length);
-          drawBoxes(combinedDetections, prox);
+          drawBoxes(combinedDetections, prox, currentStixelPlan);
           telemetryService.record({
             timestamp: Date.now(),
             mode: fastMode ? 'street_fast' : 'live_camera',
@@ -792,10 +888,12 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     latestDetectionsRef.current = [];
     latestProximityRef.current = null;
     archSummaryRef.current = null;
+    stixelPlanRef.current = null;
     clearPathStreakRef.current = 0;
-    setArchSummary(null);
+    setStixelPlan(null);
     setPathClearConfirmed(false);
     onPathClearChange?.(false);
+    onStixelGuidanceChange?.(null);
     setLiveCount(0);
     setProximity(null);
     setTiltWarning(null);
@@ -975,7 +1073,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v3.1 · Cámara Asistiva
+              AVISIA v3.2 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.
@@ -1002,10 +1100,18 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="absolute bottom-2 left-2 right-2 flex flex-col items-center gap-1 pointer-events-none">
             {pathClearConfirmed && (
               <span className="px-3 py-1 rounded-full bg-emerald-500/90 text-slate-950 font-extrabold text-xs shadow-md">
-                ✓ Camino despejado al frente
-                {archSummary && archSummary.walkableCorridorPct > 0
-                  ? ` · piso ${archSummary.walkableCorridorPct}%`
-                  : ''}
+                {stixelPlan?.openDoorwayAhead
+                  ? `✓ Puerta abierta ${stixelPlan.openDoorwayAhead.clockLabel} · paso libre`
+                  : `✓ Despejado a las 12 · ${
+                      stixelPlan && stixelPlan.centerFreeSteps >= 4
+                        ? '3+ pasos'
+                        : `${stixelPlan?.centerFreeSteps ?? 2} pasos`
+                    }`}
+              </span>
+            )}
+            {!pathClearConfirmed && stixelPlan?.shortDetourHint && (
+              <span className="px-3 py-1 rounded-full bg-cyan-400/90 text-slate-950 font-extrabold text-[11px] shadow-md">
+                ↪ {stixelPlan.shortDetourHint}
               </span>
             )}
             <span className="px-2.5 py-0.5 rounded-full bg-slate-950/75 border border-white/10 text-[10px] text-slate-300">
@@ -1162,27 +1268,17 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             />
             <span className="text-slate-200 truncate text-[11px]">
               {!cameraActive
-                ? 'Sensor estabilizado + puertas/cortinas listo'
+                ? 'Stixel 5 sectores + puertas abiertas/cerradas listo'
                 : archLoading
-                  ? 'Cargando detector de puertas y cortinas (SegFormer)...'
+                  ? `Cargando ${archModelVariant === 'segformer_b1' ? 'SegFormer-B1' : 'SegFormer-B0'} (puertas y piso)...`
                   : depthLoading
                     ? 'Cargando Depth Anything V2...'
                     : proximity?.alertText
                       ? proximity.alertText
-                      : pathClearConfirmed
-                        ? `Camino despejado al frente${
-                            archSummary?.detectedLabelsEs.length
-                              ? ` · entorno: ${archSummary.detectedLabelsEs.slice(0, 2).join(', ')}`
-                              : ''
-                          }`
+                      : stixelPlan
+                        ? stixelPlan.guidanceText
                         : depthSummary
-                          ? `Depth V2 (~${depthSummary.estimatedMeters}m${
-                              depthSummary.clearSide === 'left'
-                                ? ' · libre izq'
-                                : depthSummary.clearSide === 'right'
-                                  ? ' · libre der'
-                                  : ''
-                            })`
+                          ? `Depth V2 (~${depthSummary.estimatedMeters}m)`
                           : proximity?.estimatedMeters !== null &&
                               proximity?.estimatedMeters !== undefined
                             ? `Más cercano: ~${proximity.estimatedMeters} m`

@@ -28,6 +28,7 @@ import {
   Bluetooth,
 } from 'lucide-react';
 import type {
+  ArchModelVariant,
   ConversationMessage,
   Detection,
   DetectorEngineId,
@@ -37,6 +38,7 @@ import type {
   SpeechSettings,
   StreetAssistFeatures,
 } from './types/avicia';
+import type { StixelNavigationPlan } from './services/DoorAndStixelService';
 import { scenarioManager } from './services/ScenarioManager';
 import { simulationEngine } from './services/SimulationEngine';
 import { messagePolicy } from './services/MessagePolicy';
@@ -68,6 +70,8 @@ const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
   headsetButton: false,
   depthAnythingEnabled: false,
   architecturalVisionEnabled: true,
+  archModelVariant: 'segformer_b0',
+  showStixelOverlay: true,
   detectorEngine: 'efficientdet_lite2',
   clockFaceDirections: true,
 };
@@ -98,6 +102,7 @@ export function App() {
   const [realDetections, setRealDetections] = useState<Detection[]>([]);
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [pathClearConfirmed, setPathClearConfirmed] = useState<boolean>(false);
+  const stixelPlanRef = useRef<StixelNavigationPlan | null>(null);
   const [autoStartCamera, setAutoStartCamera] = useState<boolean>(false);
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
   const [geminiKeyInput, setGeminiKeyInput] = useState<string>(() =>
@@ -380,7 +385,11 @@ export function App() {
         if (obstacleSpeakTimerRef.current !== null) {
           window.clearTimeout(obstacleSpeakTimerRef.current);
         }
-        const msgToSpeak = alert.message;
+        const detourHint = stixelPlanRef.current?.shortDetourHint;
+        const msgToSpeak =
+          detourHint && mode === 'live_camera'
+            ? `${alert.message} ${detourHint}.`
+            : alert.message;
         obstacleSpeakTimerRef.current = window.setTimeout(() => {
           lastAutoSpokenAtRef.current = Date.now();
           lastSpokenLiveMsgRef.current = { text: msgToSpeak, at: Date.now() };
@@ -477,14 +486,28 @@ export function App() {
       }
     };
 
+    const buildClearPhrase = (short: boolean): string => {
+      const plan = stixelPlanRef.current;
+      if (plan?.openDoorwayAhead) {
+        return `Puerta abierta ${plan.openDoorwayAhead.clockLabel}, paso libre.`;
+      }
+      if (!short && plan?.guidanceText) {
+        return plan.guidanceText;
+      }
+      if (plan && plan.centerFreeSteps >= 4) {
+        return 'Camino despejado, más de tres pasos libres.';
+      }
+      return short ? 'Camino despejado.' : 'Camino despejado al frente.';
+    };
+
     if (!wasPathClearRef.current && !isSpeaking) {
       wasPathClearRef.current = true;
-      announceClear('Camino despejado al frente.');
+      announceClear(buildClearPhrase(false));
     }
 
     const timer = window.setInterval(() => {
       if (!isSpeaking) {
-        announceClear('Camino despejado.');
+        announceClear(buildClearPhrase(true));
       }
     }, 9000);
 
@@ -974,10 +997,15 @@ export function App() {
           }
           depthAnythingEnabled={streetFeatures.depthAnythingEnabled}
           architecturalVisionEnabled={streetFeatures.architecturalVisionEnabled}
+          archModelVariant={streetFeatures.archModelVariant}
+          showStixelOverlay={streetFeatures.showStixelOverlay}
           detectorEngine={streetFeatures.detectorEngine}
           onCameraStateChange={setCameraActive}
           onDetectionsReady={(dets) => setRealDetections(dets)}
           onPathClearChange={setPathClearConfirmed}
+          onStixelGuidanceChange={(plan) => {
+            stixelPlanRef.current = plan;
+          }}
           onVideoElementChange={(el) => {
             liveVideoRef.current = el;
           }}
@@ -1012,7 +1040,7 @@ export function App() {
                     AVISIA
                   </h1>
                   <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                    v3.1 Asistiva
+                    v3.2 Asistiva
                   </span>
                 </div>
                 <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
@@ -1152,7 +1180,7 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-bold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[9px] font-bold text-[#8aebff]">
-                          v3.1
+                          v3.2
                         </span>
                       </div>
                       <span className="font-mono text-[10px] text-[#bbc9cd] truncate">UAM Managua</span>
@@ -1296,7 +1324,7 @@ export function App() {
                 <div className="p-3 rounded-2xl border border-[#22d3ee]/40 bg-[#1c2028] space-y-2.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#8aebff]">
-                      v3.0 · Precisión de Visión IA
+                      v3.2 · Puertas, Stixels e IA
                     </span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#22d3ee]/15 text-[#8aebff]">
                       {geminiKeySaved ? 'Gemini IA ON' : '100% Local'}
@@ -1362,6 +1390,69 @@ export function App() {
                       }`}
                     >
                       {streetFeatures.architecturalVisionEnabled ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
+
+                  {streetFeatures.architecturalVisionEnabled && (
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-[#bbc9cd] block">
+                        Calidad de puertas y cortinas (320×240):
+                      </span>
+                      <div className="grid grid-cols-2 gap-1">
+                        {(
+                          [
+                            { id: 'segformer_b0', label: 'SegFormer-B0 · Rápido' },
+                            { id: 'segformer_b1', label: 'SegFormer-B1 · Puertas+' },
+                          ] as Array<{ id: ArchModelVariant; label: string }>
+                        ).map((opt) => {
+                          const selected = streetFeatures.archModelVariant === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() =>
+                                setStreetFeatures((prev) => ({
+                                  ...prev,
+                                  archModelVariant: opt.id,
+                                }))
+                              }
+                              className={`py-1.5 px-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                                selected
+                                  ? 'bg-[#c084fc] text-[#1e1033] border-[#c084fc]'
+                                  : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/50'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={streetFeatures.showStixelOverlay}
+                    onClick={() =>
+                      setStreetFeatures((prev) => ({
+                        ...prev,
+                        showStixelOverlay: !prev.showStixelOverlay,
+                      }))
+                    }
+                    className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
+                  >
+                    <span className="text-[11px] font-medium text-[#dfe2ee]">
+                      Barras Stixel 5 sectores (10h..2h)
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                        streetFeatures.showStixelOverlay
+                          ? 'bg-[#4edea3]/20 text-[#4edea3]'
+                          : 'bg-[#262a33] text-[#859397]'
+                      }`}
+                    >
+                      {streetFeatures.showStixelOverlay ? 'ON' : 'OFF'}
                     </span>
                   </button>
 

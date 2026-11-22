@@ -2,6 +2,7 @@ import type { Detection } from '../types/avicia';
 import type { ArchitecturalAnalysis } from './ArchitecturalSegmenterService';
 import type { DepthMapSummary } from './DepthModelService';
 import type { ProximityAssessment } from './DepthProximityService';
+import type { StixelNavigationPlan } from './DoorAndStixelService';
 import { formatDistanceSteps } from './MessagePolicy';
 
 const GEMINI_KEY_STORAGE = 'avisia_gemini_api_key_v1';
@@ -190,7 +191,8 @@ export class AssistiveVisionService {
     detections: Detection[],
     proximity: ProximityAssessment | null,
     depthSummary: DepthMapSummary | null,
-    archSummary: ArchitecturalAnalysis | null = null
+    archSummary: ArchitecturalAnalysis | null = null,
+    stixelPlan: StixelNavigationPlan | null = null
   ): Promise<AssistiveResult> {
     const start = performance.now();
 
@@ -200,8 +202,8 @@ export class AssistiveVisionService {
         try {
           const prompt = [
             'Eres AVISIA, un asistente visual para una persona ciega en Latinoamérica. Responde en español claro, directo y sin adornos (máximo 3 frases cortas).',
-            '1) Primero indica claramente si el camino inmediato al frente está despejado o si hay obstáculos: puertas (abiertas o cerradas), cortinas, paredes muy cerca, gradas o escalones, muebles, postes o personas.',
-            '2) Indica ubicación tipo carátula de reloj (a las 10, a las 12, a las 2) y distancia aproximada en pasos.',
+            '1) Primero indica claramente si el camino inmediato al frente (a las 12) está despejado y cuántos pasos libres hay, o hacia qué dirección (a las 10 izquierda o a las 2 derecha) hay espacio libre para rodear.',
+            '2) Si hay puertas, especifica si están ABIERTAS (paso libre), CERRADAS (obstáculo) o ENTREABIERTAS (riesgo de golpe con el canto); menciona también cortinas, paredes muy cerca, gradas, muebles o personas con posición de reloj y pasos.',
             '3) Menciona cualquier texto o número de bus claramente legible y el nivel de luz.',
             'Reglas estrictas: nunca inventes objetos si la imagen está borrosa u oscura (dilo honestamente); nunca digas que es seguro cruzar una calle.',
           ].join(' ');
@@ -216,7 +218,8 @@ export class AssistiveVisionService {
             detections,
             proximity,
             depthSummary,
-            archSummary
+            archSummary,
+            stixelPlan
           );
           return {
             text: fallback,
@@ -229,7 +232,13 @@ export class AssistiveVisionService {
     }
 
     return {
-      text: this.buildLocalSceneSummary(detections, proximity, depthSummary, archSummary),
+      text: this.buildLocalSceneSummary(
+        detections,
+        proximity,
+        depthSummary,
+        archSummary,
+        stixelPlan
+      ),
       engine: 'local',
       elapsedMs: Math.round(performance.now() - start),
     };
@@ -239,7 +248,8 @@ export class AssistiveVisionService {
     detections: Detection[],
     proximity: ProximityAssessment | null,
     depthSummary: DepthMapSummary | null,
-    archSummary: ArchitecturalAnalysis | null = null
+    archSummary: ArchitecturalAnalysis | null = null,
+    stixelPlan: StixelNavigationPlan | null = null
   ): string {
     const parts: string[] = [];
 
@@ -259,16 +269,20 @@ export class AssistiveVisionService {
       (d) => d.confirmationStatus === 'confirmed' && !d.id.startsWith('corridor-')
     );
 
-    const hasFrontBlocker =
-      Boolean(proximity?.flatWallAhead) ||
-      Boolean(proximity?.floorVariationDetected) ||
-      Boolean(depthSummary?.wallAhead) ||
-      Boolean(depthSummary?.stepDetectedInDepth) ||
-      confirmed.some((d) => d.isInanimateObstacle && d.proximityZone === 'front_close');
+    if (stixelPlan) {
+      parts.push(stixelPlan.guidanceText);
+    } else {
+      const hasFrontBlocker =
+        Boolean(proximity?.flatWallAhead) ||
+        Boolean(proximity?.floorVariationDetected) ||
+        Boolean(depthSummary?.wallAhead) ||
+        Boolean(depthSummary?.stepDetectedInDepth) ||
+        confirmed.some((d) => d.isInanimateObstacle && d.proximityZone === 'front_close');
 
-    if (!hasFrontBlocker && proximity?.cameraQuality === 'ok') {
-      if (archSummary?.pathVisuallyClear || confirmed.length === 0) {
-        parts.push('El camino al frente se ve despejado.');
+      if (!hasFrontBlocker && proximity?.cameraQuality === 'ok') {
+        if (archSummary?.pathVisuallyClear || confirmed.length === 0) {
+          parts.push('El camino al frente se ve despejado.');
+        }
       }
     }
 
@@ -290,10 +304,12 @@ export class AssistiveVisionService {
       parts.push('Camino despejado al frente, sin obstáculos detectados.');
     }
 
-    if (depthSummary?.clearSide === 'left') {
-      parts.push('Hay más espacio libre hacia tu izquierda.');
-    } else if (depthSummary?.clearSide === 'right') {
-      parts.push('Hay más espacio libre hacia tu derecha.');
+    if (!stixelPlan) {
+      if (depthSummary?.clearSide === 'left') {
+        parts.push('Hay más espacio libre hacia tu izquierda.');
+      } else if (depthSummary?.clearSide === 'right') {
+        parts.push('Hay más espacio libre hacia tu derecha.');
+      }
     }
 
     if (proximity && proximity.cameraQuality === 'ok') {
