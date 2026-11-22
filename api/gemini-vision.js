@@ -1,4 +1,8 @@
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const MODEL_CANDIDATES = [
+  'gemini-3.5-flash-lite',
+  'gemini-3.8-flash',
+  'gemini-flash-latest',
+];
 
 export default async function handler(req, res) {
   // Allow both the Vercel web app and the Capacitor Android WebView
@@ -17,7 +21,7 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     return res.status(200).json({
       configured: apiKey.length >= 15,
-      model: GEMINI_MODEL,
+      model: MODEL_CANDIDATES[0],
     });
   }
 
@@ -46,55 +50,68 @@ export default async function handler(req, res) {
       return res.status(413).json({ error: 'Image payload too large.' });
     }
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-    const upstream = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                inlineData: {
-                  mimeType,
-                  data: imageBase64,
-                },
-              },
-              { text: prompt },
-            ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 260,
+    let lastStatus = 502;
+    let lastDetail = '';
+
+    for (const model of MODEL_CANDIDATES) {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+      const upstream = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
         },
-      }),
-    });
-
-    if (!upstream.ok) {
-      const errText = await upstream.text().catch(() => '');
-      return res.status(upstream.status).json({
-        error: `Upstream Gemini error (${upstream.status})`,
-        detail: errText.slice(0, 160),
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: imageBase64,
+                  },
+                },
+                { text: prompt },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 260,
+          },
+        }),
       });
+
+      if (!upstream.ok) {
+        lastStatus = upstream.status;
+        lastDetail = (await upstream.text().catch(() => '')).slice(0, 180);
+        // Only try next candidate if model not found or unavailable
+        if (upstream.status === 404 || upstream.status === 503) {
+          continue;
+        }
+        return res.status(upstream.status).json({
+          error: `Upstream Gemini error (${upstream.status})`,
+          detail: lastDetail,
+        });
+      }
+
+      const payload = await upstream.json();
+      const text =
+        payload?.candidates?.[0]?.content?.parts
+          ?.map((p) => p.text || '')
+          .join(' ')
+          .trim() || '';
+
+      if (text) {
+        return res.status(200).json({ text, model });
+      }
     }
 
-    const payload = await upstream.json();
-    const text =
-      payload?.candidates?.[0]?.content?.parts
-        ?.map((p) => p.text || '')
-        .join(' ')
-        .trim() || '';
-
-    if (!text) {
-      return res.status(502).json({ error: 'Empty response from vision model.' });
-    }
-
-    return res.status(200).json({ text, model: GEMINI_MODEL });
+    return res.status(lastStatus).json({
+      error: 'No Gemini vision model succeeded.',
+      detail: lastDetail,
+    });
   } catch (err) {
     return res.status(500).json({
       error: 'Internal proxy error',
