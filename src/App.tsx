@@ -31,6 +31,7 @@ import {
   Crosshair,
   BellOff,
   Check,
+  Banknote,
 } from 'lucide-react';
 import type {
   AppPresetId,
@@ -1090,6 +1091,7 @@ export function App() {
           showStixelOverlay={streetFeatures.showStixelOverlay}
           simplifiedControls={isNativeApp}
           detectorEngine={streetFeatures.detectorEngine}
+          preferredChannel={streetFeatures.activePreset === 'currency' ? 'currency' : null}
           banknoteTriggerCount={banknoteTriggerCount}
           onCameraStateChange={setCameraActive}
           onDetectionsReady={(dets) => setRealDetections(dets)}
@@ -1131,7 +1133,7 @@ export function App() {
                     AVISIA
                   </h1>
                   <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                    v3.4 Asistiva
+                    v3.5 Asistiva
                   </span>
                 </div>
                 <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
@@ -1271,7 +1273,7 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-bold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[9px] font-bold text-[#8aebff]">
-                          v3.4
+                          v3.5
                         </span>
                       </div>
                       {isNativeApp ? (
@@ -1364,9 +1366,11 @@ export function App() {
                             ? Home
                             : preset.id === 'street'
                               ? Footprints
-                              : preset.id === 'precision'
-                                ? Crosshair
-                                : BellOff;
+                              : preset.id === 'currency'
+                                ? Banknote
+                                : preset.id === 'precision'
+                                  ? Crosshair
+                                  : BellOff;
                         return (
                           <button
                             key={preset.id}
@@ -1380,6 +1384,9 @@ export function App() {
                               );
                               setMode('live_camera');
                               setMobileTab('vision');
+                              if (preset.id === 'currency') {
+                                setAutoStartCamera(true);
+                              }
                               setAndroidMenuOpen(false);
                               speakText(preset.spokenConfirm);
                             }}

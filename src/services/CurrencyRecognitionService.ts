@@ -5,6 +5,7 @@ const PRODUCTION_PROXY_URL = 'https://avisia-app.vercel.app/api/gemini-vision';
 export type BanknoteCurrency = 'NIO' | 'USD' | 'unknown';
 
 export interface BanknoteInfo {
+  detected: boolean;
   currency: BanknoteCurrency;
   denomination: number | null;
   spokenText: string;
@@ -75,7 +76,13 @@ export type DominantBanknoteHue =
 export function parseBanknoteFromOcrText(
   rawText: string,
   dominantHue: DominantBanknoteHue = 'neutral'
-): { currency: BanknoteCurrency; denomination: number | null; spokenText: string; badgeText: string } {
+): {
+  detected: boolean;
+  currency: BanknoteCurrency;
+  denomination: number | null;
+  spokenText: string;
+  badgeText: string;
+} {
   const norm = rawText
     .toLowerCase()
     .normalize('NFD')
@@ -109,14 +116,12 @@ export function parseBanknoteFromOcrText(
     norm.includes('franklin') ||
     norm.includes('usa');
 
-  // Extract explicit numeric tokens
   const nums = new Set<number>();
   const numMatches = norm.match(/\b(1000|500|200|100|50|20|10|5|2|1)\b/g) ?? [];
   for (const m of numMatches) {
     nums.add(parseInt(m, 10));
   }
 
-  // Extract Spanish & English denomination words
   if (/\bmil\b/.test(norm)) nums.add(1000);
   if (/\bquinientos\b/.test(norm)) nums.add(500);
   if (/\bdoscientos\b/.test(norm)) nums.add(200);
@@ -128,7 +133,6 @@ export function parseBanknoteFromOcrText(
   if (/\btwo\b/.test(norm)) nums.add(2);
   if (/\bone dollar\b|\bone\b/.test(norm) && hasUsdCue) nums.add(1);
 
-  // Portrait cues for USD
   if (norm.includes('franklin')) nums.add(100);
   if (norm.includes('grant')) nums.add(50);
   if (norm.includes('jackson')) nums.add(20);
@@ -137,7 +141,6 @@ export function parseBanknoteFromOcrText(
   if (norm.includes('jefferson')) nums.add(2);
   if (norm.includes('washington')) nums.add(1);
 
-  // Decide currency cleanly
   const isNioOnlyDenom = nums.has(1000) || nums.has(500) || nums.has(200);
   const isUsdOnlyDenom = nums.has(1) || nums.has(2) || nums.has(5);
 
@@ -146,6 +149,7 @@ export function parseBanknoteFromOcrText(
       if (nums.has(d)) {
         const info = NIO_DETAILS[d];
         return {
+          detected: true,
           currency: 'NIO',
           denomination: d,
           spokenText: `Billete de ${d} córdobas (${info.color}).`,
@@ -153,7 +157,6 @@ export function parseBanknoteFromOcrText(
         };
       }
     }
-    // Hue fallback when "Banco Central de Nicaragua" is clearly read
     const hueToNio: Partial<Record<DominantBanknoteHue, number>> = {
       red: 500,
       brown: 200,
@@ -167,9 +170,10 @@ export function parseBanknoteFromOcrText(
     if (hueDenom) {
       const info = NIO_DETAILS[hueDenom];
       return {
+        detected: true,
         currency: 'NIO',
         denomination: hueDenom,
-        spokenText: `Posible billete de ${hueDenom} córdobas (${info.color}). Muéstralo con más luz para confirmar el número.`,
+        spokenText: `Posible billete de ${hueDenom} córdobas (${info.color}).`,
         badgeText: `~ C$ ${hueDenom} córdobas`,
       };
     }
@@ -181,6 +185,7 @@ export function parseBanknoteFromOcrText(
         const info = USD_DETAILS[d];
         const unit = d === 1 ? 'dólar' : 'dólares';
         return {
+          detected: true,
           currency: 'USD',
           denomination: d,
           spokenText: `Billete de ${d} ${unit} estadounidenses (${info.portrait}).`,
@@ -190,12 +195,19 @@ export function parseBanknoteFromOcrText(
     }
   }
 
-  // Shared denominations (10, 20, 50, 100) without explicit country text: use polymer hue cues
-  if (!hasUsdCue && (dominantHue === 'orange' || dominantHue === 'purple' || dominantHue === 'blue' || dominantHue === 'red' || dominantHue === 'brown')) {
+  if (
+    !hasUsdCue &&
+    (dominantHue === 'orange' ||
+      dominantHue === 'purple' ||
+      dominantHue === 'blue' ||
+      dominantHue === 'red' ||
+      dominantHue === 'brown')
+  ) {
     for (const d of [500, 200, 100, 50, 20, 10]) {
       if (nums.has(d)) {
         const info = NIO_DETAILS[d];
         return {
+          detected: true,
           currency: 'NIO',
           denomination: d,
           spokenText: `Billete de ${d} córdobas (${info.color}).`,
@@ -206,6 +218,7 @@ export function parseBanknoteFromOcrText(
   }
 
   return {
+    detected: false,
     currency: 'unknown',
     denomination: null,
     spokenText:
@@ -215,13 +228,59 @@ export function parseBanknoteFromOcrText(
 }
 
 /**
+ * Pure parser for cloud Vision replies in automatic continuous scan mode.
+ * Returns detected=false cleanly when the model replies "NONE" (no banknote visible).
+ */
+export function parseCloudBanknoteReply(text: string): {
+  detected: boolean;
+  currency: BanknoteCurrency;
+  denomination: number | null;
+  badgeText: string;
+} {
+  const cleaned = text.trim();
+  const norm = cleaned
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  if (
+    !norm ||
+    norm === 'none' ||
+    norm.startsWith('none') ||
+    norm.includes('no puedo confirmar') ||
+    norm.includes('no hay ningun billete') ||
+    norm.includes('no se ve ningun billete') ||
+    norm.includes('ningun billete')
+  ) {
+    return { detected: false, currency: 'unknown', denomination: null, badgeText: '' };
+  }
+
+  const m = norm.match(/\b(1000|500|200|100|50|20|10|5|2|1)\b/);
+  const denom = m ? parseInt(m[1], 10) : null;
+
+  if (norm.includes('cordoba') && denom !== null) {
+    return { detected: true, currency: 'NIO', denomination: denom, badgeText: `C$ ${denom} córdobas` };
+  }
+  if (norm.includes('dolar') && denom !== null) {
+    return { detected: true, currency: 'USD', denomination: denom, badgeText: `$ ${denom} USD` };
+  }
+  return { detected: false, currency: 'unknown', denomination: null, badgeText: '' };
+}
+
+/**
  * Currency Recognition Service specialized for Nicaragua:
- * Recognizes ALL 7 Nicaraguan Córdoba denominations (C$10, 20, 50, 100, 200, 500, 1000)
- * and ALL 7 common US Dollar denominations ($1, $2, $5, $10, $20, $50, $100).
- * Uses the private server-side Gemini Vision proxy first, with offline Tesseract OCR + color fallback.
+ * - Automatic continuous hands-free scanning (Seeing AI / Google Lookout Currency style)
+ * - Manual / voice on-demand scanning ("¿De cuánto es este billete?")
+ * - Recognizes ALL 7 Nicaraguan Córdoba denominations (10..1000) & ALL 7 US Dollar denominations ($1..$100).
+ * - Reuses a single offline OCR worker while continuous scanning is active for fast response.
  */
 export class CurrencyRecognitionService {
   private captureCanvas: HTMLCanvasElement | null = null;
+  private reusableWorker: {
+    recognize: (img: HTMLCanvasElement) => Promise<{ data: { text: string } }>;
+    terminate: () => Promise<unknown>;
+  } | null = null;
+  private workerInitPromise: Promise<void> | null = null;
 
   private getProxyUrl(): string {
     if (Capacitor.isNativePlatform()) {
@@ -233,9 +292,30 @@ export class CurrencyRecognitionService {
     return '/api/gemini-vision';
   }
 
+  async disposeOfflineWorker(): Promise<void> {
+    if (this.reusableWorker) {
+      const w = this.reusableWorker;
+      this.reusableWorker = null;
+      this.workerInitPromise = null;
+      await w.terminate().catch(() => {});
+    }
+  }
+
+  private async getOfflineWorker() {
+    if (this.reusableWorker) return this.reusableWorker;
+    if (!this.workerInitPromise) {
+      this.workerInitPromise = (async () => {
+        const tesseract = await import('tesseract.js');
+        this.reusableWorker = await tesseract.createWorker('spa');
+      })();
+    }
+    await this.workerInitPromise;
+    return this.reusableWorker;
+  }
+
   private captureToCanvas(
     source: HTMLVideoElement | HTMLImageElement,
-    maxWidth = 960
+    maxWidth = 840
   ): HTMLCanvasElement | null {
     const srcW =
       source instanceof HTMLVideoElement
@@ -309,33 +389,18 @@ export class CurrencyRecognitionService {
     return 'neutral';
   }
 
-  private extractSummaryFromCloudText(text: string): {
-    currency: BanknoteCurrency;
-    denomination: number | null;
-    badgeText: string;
-  } {
-    const norm = text
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '');
-    const m = norm.match(/\b(1000|500|200|100|50|20|10|5|2|1)\b/);
-    const denom = m ? parseInt(m[1], 10) : null;
-
-    if (norm.includes('cordoba') && denom !== null) {
-      return { currency: 'NIO', denomination: denom, badgeText: `C$ ${denom} córdobas` };
-    }
-    if (norm.includes('dolar') && denom !== null) {
-      return { currency: 'USD', denomination: denom, badgeText: `$ ${denom} USD` };
-    }
-    return { currency: 'unknown', denomination: null, badgeText: 'Resultado IA' };
-  }
-
+  /**
+   * Identifies a banknote on demand (`silentWhenAbsent = false`) OR
+   * continuously/automatically (`silentWhenAbsent = true`, returning `detected: false` silently when no bill is visible).
+   */
   async identifyBanknote(
-    source: HTMLVideoElement | HTMLImageElement | null
+    source: HTMLVideoElement | HTMLImageElement | null,
+    silentWhenAbsent = false
   ): Promise<BanknoteInfo> {
     const start = performance.now();
     if (!source) {
       return {
+        detected: false,
         currency: 'unknown',
         denomination: null,
         spokenText: 'Activa la cámara y muestra el billete frente al lente para identificarlo.',
@@ -345,9 +410,10 @@ export class CurrencyRecognitionService {
       };
     }
 
-    const canvas = this.captureToCanvas(source, 960);
+    const canvas = this.captureToCanvas(source, silentWhenAbsent ? 720 : 960);
     if (!canvas) {
       return {
+        detected: false,
         currency: 'unknown',
         denomination: null,
         spokenText: 'No se pudo capturar la imagen del billete. Intenta nuevamente.',
@@ -357,23 +423,27 @@ export class CurrencyRecognitionService {
       };
     }
 
-    // 1. Primary: Secure server-side Gemini Vision proxy (near-human accuracy on NIO + USD)
+    // 1. Primary: Secure server-side Gemini Vision proxy (fast, near-human accuracy on NIO + USD)
     if (typeof navigator !== 'undefined' && navigator.onLine !== false) {
       try {
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.84);
+        const dataUrl = canvas.toDataURL('image/jpeg', silentWhenAbsent ? 0.78 : 0.84);
         const imageBase64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
 
-        const prompt = [
-          'Eres AVISIA, un asistente para una persona ciega en Nicaragua que necesita identificar billetes con total exactitud.',
-          'Examina la imagen e identifica si hay un billete de CÓRDOBAS NICARAGÜENSES (Banco Central de Nicaragua, polímero: 10 verde claro/Puerto Salvador Allende, 20 naranja/Laguna de Perlas, 50 morado/Masaya, 100 azul/Catedral de Granada, 200 marrón/Teatro Nacional o Güegüense, 500 rojo/Catedral de León o Momotombo, 1000 verde/Rubén Darío) o un billete de DÓLARES ESTADOUNIDENSES ($1 Washington, $2 Jefferson, $5 Lincoln, $10 Hamilton, $20 Jackson, $50 Grant, $100 Franklin).',
-          'Reglas estrictas de seguridad financiera:',
-          '1) Si ves claramente el billete (por número, texto, diseño o retrato), responde en una sola frase directa en español empezando por el valor exacto, por ejemplo: "Es un billete de 100 córdobas (azul)." o "Es un billete de 20 dólares estadounidenses."',
-          '2) Si se ven varios billetes claros, indica cada uno brevemente.',
-          '3) Si NO hay ningún billete en la imagen, o está demasiado borroso, doblado o sin luz para tener certeza, NUNCA adivines: responde exactamente "No puedo confirmar con seguridad el billete. Acércalo un poco, sin doblarlo y con buena luz."',
-        ].join(' ');
+        const prompt = silentWhenAbsent
+          ? [
+              'Detector automático de billetes para Nicaragua.',
+              'Revisa si en la imagen aparece claramente un billete de CÓRDOBAS NICARAGÜENSES (10 verde claro, 20 naranja, 50 morado, 100 azul, 200 marrón, 500 rojo, 1000 verde Rubén Darío) o DÓLARES ESTADOUNIDENSES ($1, $2, $5, $10, $20, $50, $100).',
+              'Si NO hay un billete claramente identificable, responde EXACTAMENTE una sola palabra: NONE',
+              'Si SÍ hay un billete claro, responde en máximo 6 palabras el valor exacto en español, por ejemplo: "Billete de 100 córdobas." o "Billete de 20 dólares."',
+            ].join(' ')
+          : [
+              'Eres AVISIA, asistente para una persona ciega en Nicaragua. Identifica con total exactitud si hay un billete de CÓRDOBAS NICARAGÜENSES (Banco Central de Nicaragua: 10 verde claro, 20 naranja, 50 morado, 100 azul, 200 marrón, 500 rojo, 1000 verde Rubén Darío) o DÓLARES ESTADOUNIDENSES ($1 Washington, $2 Jefferson, $5 Lincoln, $10 Hamilton, $20 Jackson, $50 Grant, $100 Franklin).',
+              'Si lo ves claramente, responde en una frase corta empezando por el valor exacto: "Billete de 100 córdobas (azul)." o "Billete de 20 dólares estadounidenses."',
+              'Si no hay billete o está borroso/doblado, NUNCA adivines: responde exactamente "No puedo confirmar con seguridad el billete. Acércalo un poco, sin doblarlo y con buena luz."',
+            ].join(' ');
 
         const controller = new AbortController();
-        const timeout = window.setTimeout(() => controller.abort(), 14000);
+        const timeout = window.setTimeout(() => controller.abort(), 11000);
         try {
           const response = await fetch(this.getProxyUrl(), {
             method: 'POST',
@@ -390,11 +460,16 @@ export class CurrencyRecognitionService {
             const payload = (await response.json()) as { text?: string };
             const text = (payload.text ?? '').trim();
             if (text) {
-              const parsed = this.extractSummaryFromCloudText(text);
+              const parsed = parseCloudBanknoteReply(text);
               return {
+                detected: parsed.detected,
                 currency: parsed.currency,
                 denomination: parsed.denomination,
-                spokenText: text,
+                spokenText: parsed.detected
+                  ? text
+                  : silentWhenAbsent
+                    ? ''
+                    : text,
                 badgeText: parsed.badgeText,
                 engine: 'gemini',
                 elapsedMs: Math.round(performance.now() - start),
@@ -405,43 +480,50 @@ export class CurrencyRecognitionService {
           window.clearTimeout(timeout);
         }
       } catch {
-        // Gracefully fall back to offline OCR + color heuristics
+        // Fall through to offline OCR fallback
       }
     }
 
-    // 2. Offline / Free Fallback: Tesseract OCR (Spanish + English) + NIO polymer hue verification
+    // 2. Offline Fallback: Reusable Tesseract worker + Córdoba polymer hue cues
     const dominantHue = this.estimateDominantHue(canvas);
-    let worker: {
-      recognize: (img: HTMLCanvasElement) => Promise<{ data: { text: string } }>;
-      terminate: () => Promise<unknown>;
-    } | null = null;
     try {
-      const tesseract = await import('tesseract.js');
-      worker = await tesseract.createWorker(['spa', 'eng']);
+      const worker = await this.getOfflineWorker();
+      if (!worker) {
+        return {
+          detected: false,
+          currency: 'unknown',
+          denomination: null,
+          spokenText: silentWhenAbsent
+            ? ''
+            : 'No se pudo iniciar el lector local de billetes.',
+          badgeText: 'No confirmado',
+          engine: 'offline_ocr',
+          elapsedMs: Math.round(performance.now() - start),
+        };
+      }
       const ocr = await worker.recognize(canvas);
       const parsed = parseBanknoteFromOcrText(ocr.data.text ?? '', dominantHue);
       return {
+        detected: parsed.detected,
         currency: parsed.currency,
         denomination: parsed.denomination,
-        spokenText: parsed.spokenText,
-        badgeText: parsed.badgeText,
+        spokenText: parsed.detected ? parsed.spokenText : silentWhenAbsent ? '' : parsed.spokenText,
+        badgeText: parsed.detected ? parsed.badgeText : '',
         engine: 'offline_ocr',
         elapsedMs: Math.round(performance.now() - start),
       };
     } catch {
       return {
+        detected: false,
         currency: 'unknown',
         denomination: null,
-        spokenText:
-          'No pude leer el billete sin conexión. Acércalo con buena luz o verifica tu acceso a internet.',
+        spokenText: silentWhenAbsent
+          ? ''
+          : 'No pude leer el billete sin conexión. Acércalo con buena luz.',
         badgeText: 'No confirmado',
         engine: 'offline_ocr',
         elapsedMs: Math.round(performance.now() - start),
       };
-    } finally {
-      if (worker) {
-        await worker.terminate().catch(() => {});
-      }
     }
   }
 }

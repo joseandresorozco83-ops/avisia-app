@@ -21,6 +21,7 @@ import {
   isBanknoteQuestion,
   NIO_DENOMINATIONS,
   parseBanknoteFromOcrText,
+  parseCloudBanknoteReply,
   USD_DENOMINATIONS,
 } from '../CurrencyRecognitionService';
 import type { DepthGrid } from '../DepthModelService';
@@ -352,8 +353,8 @@ describe('AVISIA v3.0 Assistive Vision & Anti-False-Alarm Suite', () => {
     expect(plan.guidanceText.toLowerCase()).toContain('derecha');
   });
 
-  it('applies the 4 simplified Android general presets cleanly', () => {
-    expect(APP_PRESETS.length).toBe(4);
+  it('applies the 5 simplified Android general presets cleanly', () => {
+    expect(APP_PRESETS.length).toBe(5);
     const base: StreetAssistFeatures = {
       streetMode: false,
       stereoSonar: false,
@@ -415,7 +416,19 @@ describe('AVISIA v3.0 Assistive Vision & Anti-False-Alarm Suite', () => {
     expect(franklin.denomination).toBe(100);
 
     const unclear = parseBanknoteFromOcrText('texto borroso sin valor');
+    expect(unclear.detected).toBe(false);
     expect(unclear.currency).toBe('unknown');
     expect(unclear.denomination).toBeNull();
+
+    // Automatic continuous scan parser stays silent on NONE and detects real replies
+    expect(parseCloudBanknoteReply('NONE').detected).toBe(false);
+    const autoNio = parseCloudBanknoteReply('Billete de 500 córdobas.');
+    expect(autoNio.detected).toBe(true);
+    expect(autoNio.currency).toBe('NIO');
+    expect(autoNio.denomination).toBe(500);
+    const autoUsd = parseCloudBanknoteReply('Billete de 20 dólares.');
+    expect(autoUsd.detected).toBe(true);
+    expect(autoUsd.currency).toBe('USD');
+    expect(autoUsd.denomination).toBe(20);
   });
 });
