@@ -98,8 +98,8 @@ export class MessagePolicy {
         discardedDetectionIds: detections.map((d) => d.id),
         generatedMessage: streetMode
           ? 'Camino despejado.'
-          : 'Sin obstáculos confirmados frente a ti.',
-        reason: 'Sin detecciones confirmadas en múltiples cuadros.',
+          : 'Camino despejado al frente.',
+        reason: 'Sin obstáculos confirmados frente a la cámara.',
         suppressedDuplicate: false,
         timestamp: now,
       };

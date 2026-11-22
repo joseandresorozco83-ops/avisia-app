@@ -67,6 +67,7 @@ const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
   handsFreeWakeWord: false,
   headsetButton: false,
   depthAnythingEnabled: false,
+  architecturalVisionEnabled: true,
   detectorEngine: 'efficientdet_lite2',
   clockFaceDirections: true,
 };
@@ -96,6 +97,7 @@ export function App() {
 
   const [realDetections, setRealDetections] = useState<Detection[]>([]);
   const [cameraActive, setCameraActive] = useState<boolean>(false);
+  const [pathClearConfirmed, setPathClearConfirmed] = useState<boolean>(false);
   const [autoStartCamera, setAutoStartCamera] = useState<boolean>(false);
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
   const [geminiKeyInput, setGeminiKeyInput] = useState<string>(() =>
@@ -345,6 +347,8 @@ export function App() {
   const lastAutoSpokenAtRef = useRef<number>(0);
   const lastSpokenLiveMsgRef = useRef<{ text: string; at: number } | null>(null);
   const obstacleSpeakTimerRef = useRef<number | null>(null);
+  const wasPathClearRef = useRef<boolean>(false);
+  const lastClearSpokenAtRef = useRef<number>(0);
 
   useEffect(() => {
     if (mode === 'live_camera' && !cameraActive) {
@@ -353,6 +357,8 @@ export function App() {
         obstacleSpeakTimerRef.current = null;
       }
       lastChimedObstacleRef.current = null;
+      wasPathClearRef.current = false;
+      setPathClearConfirmed(false);
       speechService.cancel();
       setIsSpeaking(false);
       return;
@@ -435,6 +441,62 @@ export function App() {
     speechSettings.enabled,
     isSpeaking,
     demoActive,
+  ]);
+
+  // Verified "Camino despejado" spoken confirmation & calm periodic reassurance
+  useEffect(() => {
+    if (
+      mode !== 'live_camera' ||
+      !cameraActive ||
+      demoActive ||
+      !speechSettings.enabled
+    ) {
+      wasPathClearRef.current = false;
+      return;
+    }
+
+    if (!pathClearConfirmed) {
+      wasPathClearRef.current = false;
+      return;
+    }
+
+    const announceClear = (phrase: string) => {
+      const now = Date.now();
+      if (now - lastClearSpokenAtRef.current < 4500) return;
+      lastClearSpokenAtRef.current = now;
+      lastAutoSpokenAtRef.current = now;
+      speechService.playClearPathTone();
+      if (!streetFeatures.soundOnlyMode) {
+        appendHistory({
+          sender: 'avicia',
+          text: phrase,
+          source: 'real_video',
+          spoken: true,
+        });
+        speakText(phrase);
+      }
+    };
+
+    if (!wasPathClearRef.current && !isSpeaking) {
+      wasPathClearRef.current = true;
+      announceClear('Camino despejado al frente.');
+    }
+
+    const timer = window.setInterval(() => {
+      if (!isSpeaking) {
+        announceClear('Camino despejado.');
+      }
+    }, 9000);
+
+    return () => window.clearInterval(timer);
+  }, [
+    mode,
+    cameraActive,
+    pathClearConfirmed,
+    demoActive,
+    speechSettings.enabled,
+    streetFeatures.soundOnlyMode,
+    isSpeaking,
   ]);
 
   // v2.5 Stereo Sonar Ping in Live Camera mode (when stereoSonar or soundOnlyMode is ON)
@@ -911,9 +973,11 @@ export function App() {
             streetFeatures.soundOnlyMode
           }
           depthAnythingEnabled={streetFeatures.depthAnythingEnabled}
+          architecturalVisionEnabled={streetFeatures.architecturalVisionEnabled}
           detectorEngine={streetFeatures.detectorEngine}
           onCameraStateChange={setCameraActive}
           onDetectionsReady={(dets) => setRealDetections(dets)}
+          onPathClearChange={setPathClearConfirmed}
           onVideoElementChange={(el) => {
             liveVideoRef.current = el;
           }}
@@ -1269,6 +1333,32 @@ export function App() {
                       })}
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={streetFeatures.architecturalVisionEnabled}
+                    onClick={() =>
+                      setStreetFeatures((prev) => ({
+                        ...prev,
+                        architecturalVisionEnabled: !prev.architecturalVisionEnabled,
+                      }))
+                    }
+                    className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
+                  >
+                    <span className="text-[11px] font-medium text-[#dfe2ee]">
+                      Puertas, cortinas y piso libre (SegFormer)
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                        streetFeatures.architecturalVisionEnabled
+                          ? 'bg-[#4edea3]/20 text-[#4edea3]'
+                          : 'bg-[#262a33] text-[#859397]'
+                      }`}
+                    >
+                      {streetFeatures.architecturalVisionEnabled ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
 
                   <button
                     type="button"

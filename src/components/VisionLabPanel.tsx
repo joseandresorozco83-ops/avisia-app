@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { Upload, Cpu, AlertCircle, Volume2, SlidersHorizontal, Sparkles, FileText, Loader2 } from 'lucide-react';
 import type { Detection, DetectorStatus } from '../types/avicia';
 import { detectorService } from '../services/DetectorService';
+import { architecturalSegmenterService } from '../services/ArchitecturalSegmenterService';
 import { assistiveVisionService } from '../services/AssistiveVisionService';
 import { formatDistanceSteps } from '../services/MessagePolicy';
 
@@ -73,10 +74,25 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
     setRunning(true);
     try {
       const result = await detectorService.detectOnImage(imgRef.current, threshold);
+      let merged = [...result.detections];
+      try {
+        const arch = await architecturalSegmenterService.analyzeSource(imgRef.current);
+        if (arch) {
+          const existing = new Set(merged.map((d) => d.labelEs.toLowerCase()));
+          for (const ad of arch.detections) {
+            if (!existing.has(ad.labelEs.toLowerCase())) {
+              merged.push({ ...ad, source: 'real_image' });
+              existing.add(ad.labelEs.toLowerCase());
+            }
+          }
+        }
+      } catch {
+        // Architectural segmentation is best-effort enrichment
+      }
       setStatus(detectorService.getStatus());
-      setDetections(result.detections);
-      drawBoxes(result.detections);
-      onDetectionsReady(result.detections, result.inferenceTimeMs);
+      setDetections(merged);
+      drawBoxes(merged);
+      onDetectionsReady(merged, result.inferenceTimeMs);
     } catch {
       setStatus(detectorService.getStatus());
       setDetections([]);

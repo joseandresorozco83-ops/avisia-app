@@ -1,4 +1,5 @@
 import type { Detection } from '../types/avicia';
+import type { ArchitecturalAnalysis } from './ArchitecturalSegmenterService';
 import type { DepthMapSummary } from './DepthModelService';
 import type { ProximityAssessment } from './DepthProximityService';
 import { formatDistanceSteps } from './MessagePolicy';
@@ -188,7 +189,8 @@ export class AssistiveVisionService {
     source: HTMLVideoElement | HTMLImageElement | null,
     detections: Detection[],
     proximity: ProximityAssessment | null,
-    depthSummary: DepthMapSummary | null
+    depthSummary: DepthMapSummary | null,
+    archSummary: ArchitecturalAnalysis | null = null
   ): Promise<AssistiveResult> {
     const start = performance.now();
 
@@ -198,7 +200,7 @@ export class AssistiveVisionService {
         try {
           const prompt = [
             'Eres AVISIA, un asistente visual para una persona ciega en Latinoamérica. Responde en español claro, directo y sin adornos (máximo 3 frases cortas).',
-            '1) Primero advierte obstáculos inmediatos o riesgos físicos: paredes muy cerca, puertas (abiertas/cerradas), gradas o escalones (subiendo/bajando), aceras, muebles, postes o personas.',
+            '1) Primero indica claramente si el camino inmediato al frente está despejado o si hay obstáculos: puertas (abiertas o cerradas), cortinas, paredes muy cerca, gradas o escalones, muebles, postes o personas.',
             '2) Indica ubicación tipo carátula de reloj (a las 10, a las 12, a las 2) y distancia aproximada en pasos.',
             '3) Menciona cualquier texto o número de bus claramente legible y el nivel de luz.',
             'Reglas estrictas: nunca inventes objetos si la imagen está borrosa u oscura (dilo honestamente); nunca digas que es seguro cruzar una calle.',
@@ -210,7 +212,12 @@ export class AssistiveVisionService {
             elapsedMs: Math.round(performance.now() - start),
           };
         } catch (err) {
-          const fallback = this.buildLocalSceneSummary(detections, proximity, depthSummary);
+          const fallback = this.buildLocalSceneSummary(
+            detections,
+            proximity,
+            depthSummary,
+            archSummary
+          );
           return {
             text: fallback,
             engine: 'local',
@@ -222,7 +229,7 @@ export class AssistiveVisionService {
     }
 
     return {
-      text: this.buildLocalSceneSummary(detections, proximity, depthSummary),
+      text: this.buildLocalSceneSummary(detections, proximity, depthSummary, archSummary),
       engine: 'local',
       elapsedMs: Math.round(performance.now() - start),
     };
@@ -231,7 +238,8 @@ export class AssistiveVisionService {
   buildLocalSceneSummary(
     detections: Detection[],
     proximity: ProximityAssessment | null,
-    depthSummary: DepthMapSummary | null
+    depthSummary: DepthMapSummary | null,
+    archSummary: ArchitecturalAnalysis | null = null
   ): string {
     const parts: string[] = [];
 
@@ -251,6 +259,19 @@ export class AssistiveVisionService {
       (d) => d.confirmationStatus === 'confirmed' && !d.id.startsWith('corridor-')
     );
 
+    const hasFrontBlocker =
+      Boolean(proximity?.flatWallAhead) ||
+      Boolean(proximity?.floorVariationDetected) ||
+      Boolean(depthSummary?.wallAhead) ||
+      Boolean(depthSummary?.stepDetectedInDepth) ||
+      confirmed.some((d) => d.isInanimateObstacle && d.proximityZone === 'front_close');
+
+    if (!hasFrontBlocker && proximity?.cameraQuality === 'ok') {
+      if (archSummary?.pathVisuallyClear || confirmed.length === 0) {
+        parts.push('El camino al frente se ve despejado.');
+      }
+    }
+
     if (confirmed.length > 0) {
       const sorted = [...confirmed].sort((a, b) => {
         const am = a.estimatedMeters ?? 99;
@@ -260,11 +281,13 @@ export class AssistiveVisionService {
       const items = sorted.slice(0, 4).map((d) => {
         const pos = d.clockPosition ?? 'al frente';
         const dist = formatDistanceSteps(d.estimatedMeters);
-        return dist ? `${d.labelEs.toLowerCase()} ${pos} (${dist})` : `${d.labelEs.toLowerCase()} ${pos}`;
+        return dist
+          ? `${d.labelEs.toLowerCase()} ${pos} (${dist})`
+          : `${d.labelEs.toLowerCase()} ${pos}`;
       });
-      parts.push(`Frente a ti veo: ${items.join('; ')}.`);
+      parts.push(`Detecto: ${items.join('; ')}.`);
     } else if (parts.length === 0) {
-      parts.push('No identifico objetos claros al frente en este momento.');
+      parts.push('Camino despejado al frente, sin obstáculos detectados.');
     }
 
     if (depthSummary?.clearSide === 'left') {

@@ -173,6 +173,7 @@ export interface StreetAssistFeatures {
   handsFreeWakeWord: boolean;
   headsetButton: boolean;
   depthAnythingEnabled: boolean;
+  architecturalVisionEnabled: boolean;
   detectorEngine: DetectorEngineId;
   clockFaceDirections: boolean;
 }

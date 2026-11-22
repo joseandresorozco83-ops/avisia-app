@@ -10,6 +10,7 @@ import {
   estimatePinholeMeters,
 } from '../DetectorService';
 import { assistiveVisionService } from '../AssistiveVisionService';
+import { parseArchitecturalSegments } from '../ArchitecturalSegmenterService';
 import type { Detection } from '../../types/avicia';
 
 describe('AVICIA Core Services', () => {
@@ -212,5 +213,38 @@ describe('AVISIA v3.0 Assistive Vision & Anti-False-Alarm Suite', () => {
     );
     expect(clearRight.toLowerCase()).toContain('pared');
     expect(clearRight.toLowerCase()).toContain('derecha');
+  });
+
+  it('detects doors, curtains, and clear walkable floor from SegFormer ADE20K masks', () => {
+    const w = 40;
+    const h = 40;
+    const makeRectMask = (x1: number, y1: number, x2: number, y2: number) => {
+      const data = new Uint8Array(w * h);
+      for (let y = y1; y < y2; y++) {
+        for (let x = x1; x < x2; x++) {
+          data[y * w + x] = 255;
+        }
+      }
+      return { data, width: w, height: h };
+    };
+
+    // Scene 1: Door on left (a las 10), curtain on right (a las 2), clear floor in lower-center
+    const indoor = parseArchitecturalSegments([
+      { label: 'door', mask: makeRectMask(2, 6, 12, 32) },
+      { label: 'curtain', mask: makeRectMask(28, 4, 38, 30) },
+      { label: 'floor', mask: makeRectMask(8, 22, 32, 39) },
+    ]);
+
+    expect(indoor.detectedLabelsEs).toContain('Puerta');
+    expect(indoor.detectedLabelsEs).toContain('Cortina');
+    expect(indoor.walkableCorridorPct).toBeGreaterThanOrEqual(40);
+    expect(indoor.pathVisuallyClear).toBe(true);
+
+    // Scene 2: Solid wall filling the center corridor with no floor => blocked!
+    const blockedWall = parseArchitecturalSegments([
+      { label: 'wall', mask: makeRectMask(4, 4, 36, 38) },
+    ]);
+    expect(blockedWall.detectedLabelsEs).toContain('Pared');
+    expect(blockedWall.pathVisuallyClear).toBe(false);
   });
 });

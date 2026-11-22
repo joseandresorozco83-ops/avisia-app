@@ -258,6 +258,36 @@ export class SpeechService {
     }
   }
 
+  /**
+   * Gentle, low-volume ascending chime indicating the forward path is verified clear.
+   * Designed not to mask environmental sounds (traffic, voices).
+   */
+  playClearPathTone(): void {
+    const ctx = this.getAudioContext();
+    if (!ctx) return;
+
+    try {
+      const now = ctx.currentTime;
+      const playNote = (freq: number, start: number, dur: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, start);
+        gain.gain.setValueAtTime(0.001, start);
+        gain.gain.exponentialRampToValueAtTime(0.065, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + dur);
+      };
+      playNote(523.25, now, 0.11); // C5
+      playNote(659.25, now + 0.1, 0.14); // E5
+    } catch {
+      // Ignore Web Audio errors
+    }
+  }
+
   /** Distinct tactile haptic patterns for blind non-visual signaling */
   vibratePattern(pattern: 'danger' | 'step' | 'caution' | 'confirm' | 'blocked'): void {
     if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;

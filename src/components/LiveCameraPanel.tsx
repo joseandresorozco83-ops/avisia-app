@@ -24,6 +24,10 @@ import {
   depthModelService,
   type DepthMapSummary,
 } from '../services/DepthModelService';
+import {
+  architecturalSegmenterService,
+  type ArchitecturalAnalysis,
+} from '../services/ArchitecturalSegmenterService';
 import { assistiveVisionService } from '../services/AssistiveVisionService';
 import { telemetryService } from '../services/TelemetryService';
 import { speechService } from '../services/SpeechService';
@@ -36,17 +40,22 @@ interface LiveCameraPanelProps {
   expandedView?: boolean;
   fastMode?: boolean;
   depthAnythingEnabled?: boolean;
+  architecturalVisionEnabled?: boolean;
   detectorEngine?: DetectorEngineId;
   onCameraStateChange: (active: boolean) => void;
   onDetectionsReady: (detections: Detection[]) => void;
+  onPathClearChange?: (clear: boolean) => void;
   onSpeakNow?: (text: string) => void;
   onVideoElementChange?: (video: HTMLVideoElement | null) => void;
 }
 
 const FIND_TARGETS = [
+  { key: 'puerta', label: 'Puerta' },
+  { key: 'cortina', label: 'Cortina' },
   { key: 'persona', label: 'Persona' },
   { key: 'silla', label: 'Silla' },
   { key: 'mesa', label: 'Mesa' },
+  { key: 'escaleras', label: 'Escaleras' },
   { key: 'autobús', label: 'Autobús' },
   { key: 'automóvil', label: 'Auto' },
   { key: 'teléfono', label: 'Teléfono' },
@@ -61,9 +70,11 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   expandedView = false,
   fastMode = false,
   depthAnythingEnabled = false,
+  architecturalVisionEnabled = true,
   detectorEngine = 'efficientdet_lite2',
   onCameraStateChange,
   onDetectionsReady,
+  onPathClearChange,
   onSpeakNow,
   onVideoElementChange,
 }) => {
@@ -80,21 +91,26 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   const [switchingCamera, setSwitchingCamera] = useState<boolean>(false);
   const [depthSummary, setDepthSummary] = useState<DepthMapSummary | null>(null);
   const [depthLoading, setDepthLoading] = useState<boolean>(false);
+  const [archSummary, setArchSummary] = useState<ArchitecturalAnalysis | null>(null);
+  const [archLoading, setArchLoading] = useState<boolean>(false);
+  const [pathClearConfirmed, setPathClearConfirmed] = useState<boolean>(false);
 
   // Assistive channel states (Be My AI / Seeing AI / Envision parity)
   const [assistiveBusy, setAssistiveBusy] = useState<boolean>(false);
   const [assistiveResultText, setAssistiveResultText] = useState<string | null>(null);
   const [assistiveEngineLabel, setAssistiveEngineLabel] = useState<string | null>(null);
-  const [findTarget, setFindTarget] = useState<string>('silla');
+  const [findTarget, setFindTarget] = useState<string>('puerta');
   const [findMatchedText, setFindMatchedText] = useState<string>('Mueve la cámara despacio para buscar.');
   const [lightToneOn, setLightToneOn] = useState<boolean>(false);
   const [tiltWarning, setTiltWarning] = useState<string | null>(null);
 
   const depthSummaryRef = useRef<DepthMapSummary | null>(null);
+  const archSummaryRef = useRef<ArchitecturalAnalysis | null>(null);
+  const clearPathStreakRef = useRef<number>(0);
   const latestDetectionsRef = useRef<Detection[]>([]);
   const latestProximityRef = useRef<ProximityAssessment | null>(null);
   const channelRef = useRef<AssistiveChannel>('explore');
-  const findTargetRef = useRef<string>('silla');
+  const findTargetRef = useRef<string>('puerta');
   const lightToneOnRef = useRef<boolean>(false);
   const lastTiltWarnAtRef = useRef<number>(0);
   const lastQualityWarnAtRef = useRef<number>(0);
@@ -220,6 +236,54 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     };
   }, [depthAnythingEnabled, cameraActive]);
 
+  // Decoupled Architectural Semantic Segmenter (SegFormer ADE20K: doors, curtains, stairs, walls, walkable floor)
+  useEffect(() => {
+    if (!architecturalVisionEnabled || !cameraActive) {
+      setArchSummary(null);
+      archSummaryRef.current = null;
+      setArchLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let busy = false;
+
+    const initSeg = async () => {
+      if (!architecturalSegmenterService.getStatus().ready) {
+        setArchLoading(true);
+        await architecturalSegmenterService.initialize();
+        if (!cancelled) setArchLoading(false);
+      }
+    };
+
+    void initSeg();
+
+    const timer = window.setInterval(() => {
+      if (cancelled || busy || !videoRef.current || videoRef.current.readyState < 2) return;
+      if (!architecturalSegmenterService.getStatus().ready) return;
+      busy = true;
+      void architecturalSegmenterService
+        .analyzeSource(videoRef.current)
+        .then((analysis) => {
+          if (!cancelled && analysis) {
+            archSummaryRef.current = analysis;
+            setArchSummary(analysis);
+          }
+        })
+        .catch(() => {
+          // Ignore transient segmentation frame errors
+        })
+        .finally(() => {
+          busy = false;
+        });
+    }, 1150);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [architecturalVisionEnabled, cameraActive]);
+
   const refreshDevices = async () => {
     try {
       const list = await cameraService.listCameras();
@@ -282,13 +346,16 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       const isTargetMatch =
         channelRef.current === 'find_object' &&
         det.labelEs.toLowerCase().includes(findTargetRef.current);
+      const isArchitectural = det.id.startsWith('arch-');
       const isFrontObstacle =
         det.isInanimateObstacle && det.proximityZone !== 'side';
       const strokeColor = isTargetMatch
         ? '#4edea3'
-        : isFrontObstacle
-          ? '#f59e0b'
-          : '#22d3ee';
+        : isArchitectural
+          ? '#c084fc'
+          : isFrontObstacle
+            ? '#f59e0b'
+            : '#22d3ee';
 
       ctx.strokeStyle = strokeColor;
       ctx.lineWidth = Math.max(3, width * (isTargetMatch ? 0.008 : 0.005));
@@ -383,7 +450,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         cameraActive ? videoRef.current : null,
         latestDetectionsRef.current,
         latestProximityRef.current,
-        depthSummaryRef.current
+        depthSummaryRef.current,
+        archSummaryRef.current
       );
       setAssistiveResultText(res.text);
       setAssistiveEngineLabel(
@@ -508,10 +576,21 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           if (!runningRef.current) return;
 
           // Multi-frame temporal stabilization: rejects 1-frame noisy hallucinations
-          const stabilizedDetections = temporalTrackerService.update(res.detections, Date.now());
+          const stabilizedCoco = temporalTrackerService.update(res.detections, Date.now());
+
+          // Fuse SegFormer ADE20K architectural detections (doors, curtains, stairs, windows, walls)
+          const archDets = archSummaryRef.current?.detections ?? [];
+          const existingLabels = new Set(stabilizedCoco.map((d) => d.labelEs.toLowerCase()));
+          const mergedBaseDetections: Detection[] = [...stabilizedCoco];
+          for (const ad of archDets) {
+            if (!existingLabels.has(ad.labelEs.toLowerCase())) {
+              mergedBaseDetections.push(ad);
+              existingLabels.add(ad.labelEs.toLowerCase());
+            }
+          }
 
           const prox = corridorSensorOn
-            ? depthProximityService.analyzeVideoCorridor(videoRef.current, stabilizedDetections)
+            ? depthProximityService.analyzeVideoCorridor(videoRef.current, mergedBaseDetections)
             : null;
           setProximity(prox);
           latestProximityRef.current = prox;
@@ -530,10 +609,10 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             }
           }
 
-          // Find-Object Radar channel (Envision AI style)
+          // Find-Object Radar channel (Envision AI style — now includes Puerta, Cortina, Escaleras!)
           if (channelRef.current === 'find_object') {
             const targetKey = findTargetRef.current;
-            const match = stabilizedDetections.find((d) =>
+            const match = mergedBaseDetections.find((d) =>
               d.labelEs.toLowerCase().includes(targetKey)
             );
             if (match) {
@@ -557,9 +636,14 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             }
           }
 
-          const combinedDetections = [...stabilizedDetections];
+          const combinedDetections = [...mergedBaseDetections];
           const hasFrontObstacle = combinedDetections.some(
             (d) => d.isInanimateObstacle && d.proximityZone !== 'side'
+          );
+          const hasClosePersonOrVehicle = combinedDetections.some(
+            (d) =>
+              (d.category === 'person' || d.category === 'car' || d.category === 'bus' || d.category === 'motorcycle') &&
+              d.proximityZone === 'front_close'
           );
 
           const depthWallOrObstacle =
@@ -612,6 +696,36 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
                   : 'front_mid',
             });
           }
+
+          // Safety-verified Clear Path check (requires >= 3 calm, illuminated, obstacle-free frames)
+          const archBlocked =
+            archSummaryRef.current !== null &&
+            (archSummaryRef.current.wallCorridorPct >= 46 ||
+              archSummaryRef.current.detections.some(
+                (d) => d.isInanimateObstacle && d.proximityZone === 'front_close'
+              ));
+          const isFrameClear =
+            channelRef.current === 'explore' &&
+            prox !== null &&
+            prox.cameraQuality === 'ok' &&
+            prox.level === 'clear' &&
+            !prox.flatWallAhead &&
+            !prox.floorVariationDetected &&
+            !prox.verticalObstacleDetected &&
+            !depthWallOrObstacle &&
+            !depthStep &&
+            !hasFrontObstacle &&
+            !hasClosePersonOrVehicle &&
+            !archBlocked;
+
+          if (isFrameClear) {
+            clearPathStreakRef.current = Math.min(10, clearPathStreakRef.current + 1);
+          } else {
+            clearPathStreakRef.current = 0;
+          }
+          const isClearConfirmed = clearPathStreakRef.current >= 3;
+          setPathClearConfirmed(isClearConfirmed);
+          onPathClearChange?.(isClearConfirmed);
 
           // Differentiated haptic signaling (Explore mode only)
           if (channelRef.current === 'explore' && prox) {
@@ -677,6 +791,11 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     clearCanvas();
     latestDetectionsRef.current = [];
     latestProximityRef.current = null;
+    archSummaryRef.current = null;
+    clearPathStreakRef.current = 0;
+    setArchSummary(null);
+    setPathClearConfirmed(false);
+    onPathClearChange?.(false);
     setLiveCount(0);
     setProximity(null);
     setTiltWarning(null);
@@ -880,7 +999,15 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         )}
 
         {cameraActive && channel === 'explore' && (
-          <div className="absolute bottom-2 left-2 right-2 flex justify-center pointer-events-none">
+          <div className="absolute bottom-2 left-2 right-2 flex flex-col items-center gap-1 pointer-events-none">
+            {pathClearConfirmed && (
+              <span className="px-3 py-1 rounded-full bg-emerald-500/90 text-slate-950 font-extrabold text-xs shadow-md">
+                ✓ Camino despejado al frente
+                {archSummary && archSummary.walkableCorridorPct > 0
+                  ? ` · piso ${archSummary.walkableCorridorPct}%`
+                  : ''}
+              </span>
+            )}
             <span className="px-2.5 py-0.5 rounded-full bg-slate-950/75 border border-white/10 text-[10px] text-slate-300">
               1 toque: describir ahora · 2 toques: silenciar
             </span>
@@ -1035,23 +1162,31 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             />
             <span className="text-slate-200 truncate text-[11px]">
               {!cameraActive
-                ? 'Sensor estabilizado + profundidad listo'
-                : depthLoading
-                  ? 'Cargando Depth Anything V2...'
-                  : proximity?.alertText
-                    ? proximity.alertText
-                    : depthSummary
-                      ? `Depth V2 (~${depthSummary.estimatedMeters}m${
-                          depthSummary.clearSide === 'left'
-                            ? ' · libre izq'
-                            : depthSummary.clearSide === 'right'
-                              ? ' · libre der'
+                ? 'Sensor estabilizado + puertas/cortinas listo'
+                : archLoading
+                  ? 'Cargando detector de puertas y cortinas (SegFormer)...'
+                  : depthLoading
+                    ? 'Cargando Depth Anything V2...'
+                    : proximity?.alertText
+                      ? proximity.alertText
+                      : pathClearConfirmed
+                        ? `Camino despejado al frente${
+                            archSummary?.detectedLabelsEs.length
+                              ? ` · entorno: ${archSummary.detectedLabelsEs.slice(0, 2).join(', ')}`
                               : ''
-                        })`
-                      : proximity?.estimatedMeters !== null &&
-                          proximity?.estimatedMeters !== undefined
-                        ? `Más cercano: ~${proximity.estimatedMeters} m`
-                        : 'Camino despejado frente a ti'}
+                          }`
+                        : depthSummary
+                          ? `Depth V2 (~${depthSummary.estimatedMeters}m${
+                              depthSummary.clearSide === 'left'
+                                ? ' · libre izq'
+                                : depthSummary.clearSide === 'right'
+                                  ? ' · libre der'
+                                  : ''
+                            })`
+                          : proximity?.estimatedMeters !== null &&
+                              proximity?.estimatedMeters !== undefined
+                            ? `Más cercano: ~${proximity.estimatedMeters} m`
+                            : 'Analizando camino frente a ti...'}
             </span>
           </div>
           <button
