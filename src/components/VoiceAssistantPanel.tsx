@@ -30,13 +30,13 @@ interface VoiceAssistantPanelProps {
 }
 
 const QUICK_QUESTIONS = [
+  '¿De cuánto es este billete?',
   '¿Qué hay frente a mí?',
   '¿Ves algún autobús?',
   '¿Qué ruta es?',
   '¿Hay personas cerca?',
   '¿Dónde estoy?',
   '¿Qué objetos identificaste?',
-  '¿Qué significa la detección?',
 ];
 
 export const VoiceAssistantPanel: React.FC<VoiceAssistantPanelProps> = ({

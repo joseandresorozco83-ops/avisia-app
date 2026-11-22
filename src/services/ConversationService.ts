@@ -1,6 +1,7 @@
 import type { Detection, OperationMode, Scenario } from '../types/avicia';
 import type { RealGpsPosition } from './LocationService';
 import { formatDistanceSteps } from './MessagePolicy';
+import { isBanknoteQuestion } from './CurrencyRecognitionService';
 
 export interface ConversationContext {
   mode: OperationMode;
@@ -39,6 +40,11 @@ export class ConversationService {
       return ctx.lastMessage
         ? `Repito el último mensaje: ${ctx.lastMessage}`
         : 'Aún no hay un mensaje emitido en este escenario.';
+    }
+
+    // Banknote / currency inquiry (Córdobas NIO & US Dollars)
+    if (isBanknoteQuestion(rawQuestion)) {
+      return 'Para identificar un billete en córdobas o dólares, activa la cámara en vivo o el canal Billetes y muéstralo frente al lente con buena luz.';
     }
 
     // Bus route inquiry (explicit rule for Scenario 2 and general)

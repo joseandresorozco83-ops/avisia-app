@@ -10,7 +10,13 @@ export type AudioVerbosity = 'essential' | 'detailed';
 
 export type AppPresetId = 'indoor' | 'street' | 'precision' | 'silent';
 
-export type AssistiveChannel = 'explore' | 'scene_ai' | 'read_text' | 'find_object' | 'light';
+export type AssistiveChannel =
+  | 'explore'
+  | 'scene_ai'
+  | 'read_text'
+  | 'currency'
+  | 'find_object'
+  | 'light';
 
 export type DetectionSource = 'simulated' | 'real_image' | 'real_video';
 

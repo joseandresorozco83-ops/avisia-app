@@ -17,6 +17,12 @@ import {
   enrichDoorsWithDepth,
 } from '../DoorAndStixelService';
 import { APP_PRESETS, applyAppPreset } from '../AppPresets';
+import {
+  isBanknoteQuestion,
+  NIO_DENOMINATIONS,
+  parseBanknoteFromOcrText,
+  USD_DENOMINATIONS,
+} from '../CurrencyRecognitionService';
 import type { DepthGrid } from '../DepthModelService';
 import type { Detection, StreetAssistFeatures } from '../../types/avicia';
 
@@ -378,5 +384,38 @@ describe('AVISIA v3.0 Assistive Vision & Anti-False-Alarm Suite', () => {
 
     const silent = applyAppPreset(base, 'silent');
     expect(silent.soundOnlyMode).toBe(true);
+  });
+
+  it('recognizes all Nicaraguan Córdoba (NIO) and US Dollar (USD) denominations and voice triggers', () => {
+    expect(isBanknoteQuestion('¿De cuánto es este billete?')).toBe(true);
+    expect(isBanknoteQuestion('de cuanto es este billete')).toBe(true);
+    expect(isBanknoteQuestion('¿Qué billete es este?')).toBe(true);
+    expect(isBanknoteQuestion('¿Qué hay frente a mí?')).toBe(false);
+
+    // All 7 current Nicaraguan Córdoba denominations
+    expect(NIO_DENOMINATIONS).toEqual([10, 20, 50, 100, 200, 500, 1000]);
+    for (const denom of NIO_DENOMINATIONS) {
+      const parsed = parseBanknoteFromOcrText(`BANCO CENTRAL DE NICARAGUA ${denom} CORDOBAS`);
+      expect(parsed.currency).toBe('NIO');
+      expect(parsed.denomination).toBe(denom);
+      expect(parsed.spokenText).toContain(`${denom} córdobas`);
+    }
+
+    // All 7 common US Dollar denominations
+    expect(USD_DENOMINATIONS).toEqual([1, 2, 5, 10, 20, 50, 100]);
+    for (const denom of USD_DENOMINATIONS) {
+      const parsed = parseBanknoteFromOcrText(`THE UNITED STATES OF AMERICA ${denom} DOLLARS`);
+      expect(parsed.currency).toBe('USD');
+      expect(parsed.denomination).toBe(denom);
+    }
+
+    // Portrait cue fallback for USD & safety refusal on blank text
+    const franklin = parseBanknoteFromOcrText('FEDERAL RESERVE NOTE FRANKLIN');
+    expect(franklin.currency).toBe('USD');
+    expect(franklin.denomination).toBe(100);
+
+    const unclear = parseBanknoteFromOcrText('texto borroso sin valor');
+    expect(unclear.currency).toBe('unknown');
+    expect(unclear.denomination).toBeNull();
   });
 });

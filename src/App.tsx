@@ -53,6 +53,7 @@ import { speechService } from './services/SpeechService';
 import { conversationService } from './services/ConversationService';
 import { detectorService } from './services/DetectorService';
 import { assistiveVisionService } from './services/AssistiveVisionService';
+import { isBanknoteQuestion } from './services/CurrencyRecognitionService';
 import { APP_PRESETS, applyAppPreset, getPresetById } from './services/AppPresets';
 import { locationService, type RealGpsPosition } from './services/LocationService';
 import { SimulatedSceneCanvas } from './components/SimulatedSceneCanvas';
@@ -114,6 +115,7 @@ export function App() {
   const [pathClearConfirmed, setPathClearConfirmed] = useState<boolean>(false);
   const stixelPlanRef = useRef<StixelNavigationPlan | null>(null);
   const [autoStartCamera, setAutoStartCamera] = useState<boolean>(false);
+  const [banknoteTriggerCount, setBanknoteTriggerCount] = useState<number>(0);
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const [streetFeatures, setStreetFeatures] = useState<StreetAssistFeatures>(() => {
@@ -826,6 +828,26 @@ export function App() {
       source: 'intent_engine',
     });
 
+    // Dedicated currency identification trigger: "¿De cuánto es este billete?"
+    if (isBanknoteQuestion(question)) {
+      setDemoActive(false);
+      setMode('live_camera');
+      setMobileTab('vision');
+      setAutoStartCamera(true);
+      setBanknoteTriggerCount((c) => c + 1);
+      if (!cameraActive) {
+        const msg = 'Activando cámara para identificar el billete. Muéstralo frente al lente con buena luz.';
+        appendHistory({
+          sender: 'avicia',
+          text: msg,
+          source: 'real_video',
+          spoken: speechSettings.enabled,
+        });
+        speakText(msg);
+      }
+      return;
+    }
+
     const normalizedQ = question
       .toLowerCase()
       .normalize('NFD')
@@ -1068,6 +1090,7 @@ export function App() {
           showStixelOverlay={streetFeatures.showStixelOverlay}
           simplifiedControls={isNativeApp}
           detectorEngine={streetFeatures.detectorEngine}
+          banknoteTriggerCount={banknoteTriggerCount}
           onCameraStateChange={setCameraActive}
           onDetectionsReady={(dets) => setRealDetections(dets)}
           onPathClearChange={setPathClearConfirmed}
@@ -1108,7 +1131,7 @@ export function App() {
                     AVISIA
                   </h1>
                   <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                    v3.3 Asistiva
+                    v3.4 Asistiva
                   </span>
                 </div>
                 <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
@@ -1248,7 +1271,7 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-bold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[9px] font-bold text-[#8aebff]">
-                          v3.3
+                          v3.4
                         </span>
                       </div>
                       {isNativeApp ? (

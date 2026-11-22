@@ -12,6 +12,7 @@ import {
   Eye,
   Volume2,
   Loader2,
+  Banknote,
 } from 'lucide-react';
 import { cameraService, type CameraDeviceInfo } from '../services/CameraService';
 import { detectorService } from '../services/DetectorService';
@@ -34,6 +35,10 @@ import {
   type StixelNavigationPlan,
 } from '../services/DoorAndStixelService';
 import { assistiveVisionService } from '../services/AssistiveVisionService';
+import {
+  currencyRecognitionService,
+  type BanknoteInfo,
+} from '../services/CurrencyRecognitionService';
 import { telemetryService } from '../services/TelemetryService';
 import { speechService } from '../services/SpeechService';
 import { formatDistanceSteps } from '../services/MessagePolicy';
@@ -55,6 +60,7 @@ interface LiveCameraPanelProps {
   showStixelOverlay?: boolean;
   simplifiedControls?: boolean;
   detectorEngine?: DetectorEngineId;
+  banknoteTriggerCount?: number;
   onCameraStateChange: (active: boolean) => void;
   onDetectionsReady: (detections: Detection[]) => void;
   onPathClearChange?: (clear: boolean) => void;
@@ -89,6 +95,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   showStixelOverlay = true,
   simplifiedControls = false,
   detectorEngine = 'efficientdet_lite2',
+  banknoteTriggerCount = 0,
   onCameraStateChange,
   onDetectionsReady,
   onPathClearChange,
@@ -117,6 +124,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   const [assistiveBusy, setAssistiveBusy] = useState<boolean>(false);
   const [assistiveResultText, setAssistiveResultText] = useState<string | null>(null);
   const [assistiveEngineLabel, setAssistiveEngineLabel] = useState<string | null>(null);
+  const [banknoteResult, setBanknoteResult] = useState<BanknoteInfo | null>(null);
   const [findTarget, setFindTarget] = useState<string>('puerta');
   const [findMatchedText, setFindMatchedText] = useState<string>('Mueve la cámara despacio para buscar.');
   const [lightToneOn, setLightToneOn] = useState<boolean>(false);
@@ -137,6 +145,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   const lastRadarSpeakAtRef = useRef<number>(0);
   const lastTapAtRef = useRef<number>(0);
   const singleTapTimerRef = useRef<number | null>(null);
+  const pendingBanknoteScanRef = useRef<boolean>(false);
+  const lastHandledBanknoteTriggerRef = useRef<number>(0);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -532,7 +542,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       setAssistiveResultText(res.text);
       setAssistiveEngineLabel(
         res.engine === 'gemini'
-          ? `Gemini 2.5 Flash · ${res.elapsedMs}ms`
+          ? `IA Visión · ${res.elapsedMs}ms`
           : `Síntesis local · ${res.elapsedMs}ms`
       );
       speakFeedback(res.text);
@@ -540,6 +550,69 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       setAssistiveBusy(false);
     }
   };
+
+  const handleIdentifyBanknoteNow = async () => {
+    speechService.unlockAudio();
+    speechService.vibratePattern('confirm');
+    if (!cameraActive || !videoRef.current || videoRef.current.readyState < 2) {
+      pendingBanknoteScanRef.current = true;
+      setChannel('currency');
+      setAssistiveResultText('Activando cámara para revisar el billete...');
+      speakFeedback('Activando cámara. Muestra el billete frente al lente con buena luz.');
+      void handleStart();
+      return;
+    }
+
+    setAssistiveBusy(true);
+    setBanknoteResult(null);
+    setAssistiveResultText('Identificando billete (córdobas o dólares)...');
+    speakFeedback('Revisando el billete, mantén firme el teléfono.');
+    try {
+      const info = await currencyRecognitionService.identifyBanknote(videoRef.current);
+      setBanknoteResult(info);
+      setAssistiveResultText(info.spokenText);
+      setAssistiveEngineLabel(
+        info.engine === 'gemini'
+          ? `Reconocimiento IA · ${info.elapsedMs}ms`
+          : `OCR Offline · ${info.elapsedMs}ms`
+      );
+      speechService.vibratePattern('confirm');
+      speakFeedback(info.spokenText);
+    } finally {
+      setAssistiveBusy(false);
+    }
+  };
+
+  // Auto-trigger banknote recognition when asked "¿De cuánto es este billete?" from voice/chat
+  useEffect(() => {
+    if (
+      banknoteTriggerCount > 0 &&
+      banknoteTriggerCount !== lastHandledBanknoteTriggerRef.current
+    ) {
+      lastHandledBanknoteTriggerRef.current = banknoteTriggerCount;
+      setChannel('currency');
+      onDetectionsReady([]);
+      if (cameraActive && videoRef.current && videoRef.current.readyState >= 2) {
+        void handleIdentifyBanknoteNow();
+      } else {
+        pendingBanknoteScanRef.current = true;
+        setAssistiveResultText('Activando cámara para identificar el billete...');
+        void handleStart();
+      }
+    }
+  }, [banknoteTriggerCount, cameraActive]);
+
+  // Run queued banknote scan as soon as camera finishes focusing after auto-start
+  useEffect(() => {
+    if (!cameraActive || !pendingBanknoteScanRef.current) return;
+    const timer = window.setTimeout(() => {
+      if (pendingBanknoteScanRef.current && videoRef.current && videoRef.current.readyState >= 2) {
+        pendingBanknoteScanRef.current = false;
+        void handleIdentifyBanknoteNow();
+      }
+    }, 850);
+    return () => window.clearTimeout(timer);
+  }, [cameraActive]);
 
   const handleReadTextNow = async () => {
     speechService.unlockAudio();
@@ -599,6 +672,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       singleTapTimerRef.current = null;
       if (channelRef.current === 'read_text') {
         void handleReadTextNow();
+      } else if (channelRef.current === 'currency') {
+        void handleIdentifyBanknoteNow();
       } else if (channelRef.current === 'light') {
         handleSpeakLightNow();
       } else {
@@ -923,13 +998,14 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       <div
         role="tablist"
         aria-label="Canales de asistencia visual"
-        className="shrink-0 grid grid-cols-5 gap-1 p-1 rounded-xl bg-[#141821] border border-[#3c494c]/40"
+        className="shrink-0 grid grid-cols-6 gap-1 p-1 rounded-xl bg-[#141821] border border-[#3c494c]/40"
       >
         {(
           [
             { id: 'explore', label: 'Explorar', spoken: 'Explorar camino', icon: Eye },
-            { id: 'scene_ai', label: 'Escena', spoken: 'Describir escena con inteligencia artificial', icon: Sparkles },
+            { id: 'scene_ai', label: 'Escena', spoken: 'Describir escena', icon: Sparkles },
             { id: 'read_text', label: 'Texto', spoken: 'Leer texto', icon: FileText },
+            { id: 'currency', label: 'Billetes', spoken: 'Reconocer billetes en córdobas y dólares', icon: Banknote },
             { id: 'find_object', label: 'Buscar', spoken: 'Buscar objeto', icon: Crosshair },
             { id: 'light', label: 'Luz', spoken: 'Detector de luz', icon: Sun },
           ] as const
@@ -1077,7 +1153,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v3.3 · Cámara Asistiva
+              AVISIA v3.4 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.
@@ -1176,6 +1252,42 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               <p>{assistiveResultText}</p>
               {assistiveEngineLabel && (
                 <span className="block mt-1 text-[10px] font-mono text-[#4edea3]">
+                  {assistiveEngineLabel}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {channel === 'currency' && (
+        <div className="shrink-0 p-2 rounded-xl bg-[#181c24] border border-amber-400/50 space-y-1.5">
+          <button
+            type="button"
+            disabled={assistiveBusy}
+            onClick={() => void handleIdentifyBanknoteNow()}
+            className="w-full h-12 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-slate-950 font-extrabold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all shadow-md"
+          >
+            {assistiveBusy ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Banknote className="w-5 h-5" />
+            )}
+            {assistiveBusy ? 'Identificando billete...' : '¿De cuánto es este billete?'}
+          </button>
+          <p className="text-[10px] text-[#bbc9cd] text-center">
+            Córdobas (10, 20, 50, 100, 200, 500, 1000) · Dólares ($1 a $100)
+          </p>
+          {assistiveResultText && (
+            <div className="p-2 rounded-lg bg-[#0f131c] border border-amber-400/35 text-xs text-[#dfe2ee] leading-snug space-y-1">
+              {banknoteResult?.denomination !== null && banknoteResult?.badgeText && (
+                <div className="text-base font-extrabold text-amber-300">
+                  {banknoteResult.badgeText}
+                </div>
+              )}
+              <p>{assistiveResultText}</p>
+              {assistiveEngineLabel && (
+                <span className="block text-[10px] font-mono text-amber-200/80">
                   {assistiveEngineLabel}
                 </span>
               )}

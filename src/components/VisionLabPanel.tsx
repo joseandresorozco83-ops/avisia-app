@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Upload, Cpu, AlertCircle, Volume2, SlidersHorizontal, Sparkles, FileText, Loader2 } from 'lucide-react';
+import { Upload, Cpu, AlertCircle, Volume2, SlidersHorizontal, Sparkles, FileText, Loader2, Banknote } from 'lucide-react';
 import type { Detection, DetectorStatus } from '../types/avicia';
 import { detectorService } from '../services/DetectorService';
 import { architecturalSegmenterService } from '../services/ArchitecturalSegmenterService';
@@ -10,6 +10,7 @@ import {
   type StixelNavigationPlan,
 } from '../services/DoorAndStixelService';
 import { assistiveVisionService } from '../services/AssistiveVisionService';
+import { currencyRecognitionService } from '../services/CurrencyRecognitionService';
 import { formatDistanceSteps } from '../services/MessagePolicy';
 
 interface VisionLabPanelProps {
@@ -215,6 +216,18 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
     }
   };
 
+  const handleIdentifyImageBanknote = async () => {
+    if (!imgRef.current) return;
+    setAssistBusy(true);
+    try {
+      const res = await currencyRecognitionService.identifyBanknote(imgRef.current);
+      setAssistText(res.spokenText);
+      onSpeakDescription(res.spokenText);
+    } finally {
+      setAssistBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-3">
       {/* Controls bar */}
@@ -335,6 +348,15 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
               >
                 <FileText className="w-3.5 h-3.5" />
                 Leer texto
+              </button>
+              <button
+                type="button"
+                disabled={assistBusy}
+                onClick={() => void handleIdentifyImageBanknote()}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-slate-950 font-semibold"
+              >
+                <Banknote className="w-3.5 h-3.5" />
+                ¿Qué billete es?
               </button>
               <button
                 type="button"
