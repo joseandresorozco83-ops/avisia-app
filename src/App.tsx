@@ -697,19 +697,19 @@ export function App() {
       {mode === 'simulation' && (
         <>
           {/* Compact Zero-Scroll Scenario Selector with Hamburger Trigger */}
-          <div className="flex items-center justify-between gap-1.5 p-1.5 rounded-xl bg-white border border-slate-200 shadow-sm">
+          <div className="flex items-center justify-between gap-1.5 p-1.5 rounded-xl bg-[#181c24] border border-[#3c494c]/40">
             <button
               type="button"
               onClick={() => cycleScenario(-1)}
               aria-label="Escenario anterior"
-              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
+              className="p-1.5 rounded-lg hover:bg-[#262a33] text-[#bbc9cd]"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
               type="button"
               onClick={() => setAndroidMenuOpen(true)}
-              className="flex-1 text-center text-xs font-semibold text-slate-900 truncate px-1"
+              className="flex-1 text-center text-xs font-semibold text-[#dfe2ee] truncate px-1"
             >
               {activeScenario.number}. {activeScenario.title}
             </button>
@@ -717,7 +717,7 @@ export function App() {
               type="button"
               onClick={() => cycleScenario(1)}
               aria-label="Siguiente escenario"
-              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
+              className="p-1.5 rounded-lg hover:bg-[#262a33] text-[#bbc9cd]"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -733,8 +733,8 @@ export function App() {
             }
           />
 
-          <div className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-white border border-slate-200 shadow-sm">
-            <p className="text-[11px] text-slate-600 flex-1 line-clamp-2 leading-snug">
+          <div className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-[#181c24] border border-[#3c494c]/40">
+            <p className="text-[11px] text-[#bbc9cd] flex-1 line-clamp-2 leading-snug">
               {activeScenario.description}
             </p>
             <div className="flex items-center gap-1 shrink-0">
@@ -743,12 +743,12 @@ export function App() {
                   type="button"
                   onClick={() => setSimPlaying((p) => !p)}
                   aria-label={simPlaying ? 'Pausar secuencia' : 'Reproducir secuencia'}
-                  className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700"
+                  className="p-1.5 rounded-lg bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/40 text-[#dfe2ee]"
                 >
                   {simPlaying ? (
-                    <PauseCircle className="w-4 h-4 text-amber-600" />
+                    <PauseCircle className="w-4 h-4 text-[#ffb147]" />
                   ) : (
-                    <PlayCircle className="w-4 h-4 text-cyan-600" />
+                    <PlayCircle className="w-4 h-4 text-[#8aebff]" />
                   )}
                 </button>
               )}
@@ -760,7 +760,7 @@ export function App() {
                   setHighlightedDetectionId(null);
                 }}
                 aria-label="Reiniciar escenario"
-                className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700"
+                className="p-1.5 rounded-lg bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/40 text-[#dfe2ee]"
               >
                 <RotateCcw className="w-4 h-4" />
               </button>
@@ -921,86 +921,83 @@ export function App() {
             <div className="hidden lg:block absolute -left-[3px] top-36 w-[3px] h-11 bg-slate-700/70 rounded-l" />
             <div className="hidden lg:block absolute -right-[3px] top-28 w-[3px] h-12 bg-slate-700/70 rounded-r" />
 
-            <div className="android-light w-full h-full flex flex-col bg-slate-50 text-slate-900 rounded-[32px] overflow-hidden relative">
+            <div className="w-full h-full flex flex-col bg-[#0f131c] text-[#dfe2ee] rounded-[32px] overflow-hidden relative">
               {/* Android 14 M3 Status Bar with Punch-Hole Camera */}
-              <div className="flex items-center justify-between px-5 pt-2 pb-1 text-[10px] font-mono font-semibold text-slate-800 bg-slate-100/90 select-none">
+              <div className="flex items-center justify-between px-5 pt-2 pb-1 text-[10px] font-mono font-semibold text-[#bbc9cd] bg-[#0a0e16] select-none">
                 <span>10:42</span>
-                <div className="w-3.5 h-3.5 rounded-full bg-black flex items-center justify-center" aria-hidden="true">
-                  {cameraActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                <div className="w-3.5 h-3.5 rounded-full bg-black border border-[#3c494c]/50 flex items-center justify-center" aria-hidden="true">
+                  {cameraActive && <span className="w-1.5 h-1.5 rounded-full bg-[#4edea3] animate-pulse" />}
                 </div>
-                <div className="flex items-center gap-1.5 text-slate-700">
-                  <span className="text-[9px] text-slate-500">5G</span>
+                <div className="flex items-center gap-1.5 text-[#bbc9cd]">
+                  <span className="text-[9px] text-[#859397]">5G</span>
                   <Wifi className="w-3 h-3" />
-                  <BatteryCharging className="w-3.5 h-3.5 text-emerald-600" />
+                  <BatteryCharging className="w-3.5 h-3.5 text-[#4edea3]" />
                 </div>
               </div>
 
-              {/* Android Material 3 Top AppBar */}
-              <div className="px-3 py-2 border-b border-slate-200 bg-white flex items-center justify-between gap-2 shadow-sm">
-                <div className="flex items-center gap-2">
+              {/* Stitch Native Assistive Top AppBar */}
+              <div className="px-3 py-2 bg-[#181c24] border-b border-[#3c494c]/40 flex items-center justify-between gap-2 shadow-sm">
+                <div className="flex items-center gap-2 min-w-0">
                   <button
                     type="button"
                     onClick={() => setAndroidMenuOpen((o) => !o)}
-                    aria-label="Abrir menú de escenarios y modos"
-                    className="p-1.5 rounded-full hover:bg-slate-100 text-slate-800 transition-colors"
+                    aria-label="Menú principal de opciones y accesibilidad"
+                    className="w-9 h-9 rounded-full bg-[#1c2028] hover:bg-[#262a33] text-[#dfe2ee] flex items-center justify-center transition-colors active:scale-95 shrink-0"
                   >
                     {androidMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
                   </button>
-                  <div className="flex items-center gap-2">
-                    <div className="p-0.5 rounded-full bg-white border border-teal-200 shadow-sm flex items-center justify-center shrink-0">
-                      <AvisiaLogo className="w-7 h-7" variant="light" />
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="p-0.5 rounded-full bg-white border border-[#8aebff]/40 flex items-center justify-center shrink-0">
+                      <AvisiaLogo className="w-7 h-7" variant="dark" />
                     </div>
-                    <div className="flex flex-col leading-none">
+                    <div className="flex flex-col leading-none min-w-0">
                       <div className="flex items-center gap-1">
-                        <span className="text-sm font-black text-slate-900 tracking-tight">AVISIA</span>
-                        <span className="text-[8px] font-mono font-bold uppercase px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-800">
-                          IA
+                        <span className="text-sm font-bold text-[#8aebff] tracking-tight">AVISIA</span>
+                        <span className="px-1.5 py-0.5 rounded bg-[#22d3ee] text-[#005763] font-mono text-[8px] font-bold uppercase tracking-wider">
+                          UAM
                         </span>
                       </div>
-                      <span className="text-[9px] text-slate-500 font-medium mt-0.5">UAM Managua</span>
+                      <span className="font-mono text-[9px] text-[#bbc9cd] flex items-center gap-1 mt-0.5 truncate">
+                        <MapPin className="w-2.5 h-2.5 text-[#ffd6a7] shrink-0" />
+                        Campus Managua
+                      </span>
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  {(cameraActive || demoActive) && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-mono font-semibold">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-ping" />
-                      En Vivo
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={startGuidedDemo}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-teal-700 hover:bg-teal-800 text-white font-semibold text-[11px]"
-                  >
-                    <Play className="w-2.5 h-2.5 fill-current" />
-                    Demo
-                  </button>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#262a33] shadow-inner shrink-0">
+                  <span className="w-2 h-2 rounded-full bg-[#4edea3] animate-ping" />
+                  <span className="font-mono text-[9px] text-[#4edea3] font-semibold">
+                    {cameraActive ? 'LIVE' : '60 FPS'}
+                  </span>
+                  <span className="text-[#3c494c] font-mono text-[9px]">|</span>
+                  <span className="font-mono text-[9px] text-[#dfe2ee]">
+                    {detectorService.getStatus().inferenceTimeMs ?? 38}ms
+                  </span>
                 </div>
               </div>
 
-            {/* Android Hamburger Drawer Overlay (Light Material 3) */}
+            {/* Android Hamburger Drawer Overlay (Stitch Dark Material 3) */}
             {androidMenuOpen && (
-              <div className="absolute inset-x-0 top-[76px] bottom-[62px] z-40 bg-white/95 backdrop-blur-md p-3.5 overflow-y-auto space-y-4 border-b border-slate-200">
-                {/* Primera opción: Activar / Desactivar AVICIA (Cámara en vivo) */}
+              <div className="absolute inset-x-0 top-[76px] bottom-[62px] z-40 bg-[#181c24]/98 backdrop-blur-md p-3.5 overflow-y-auto space-y-4 border-b border-[#3c494c]/40">
+                {/* Primera opción: Activar / Desactivar AVISIA (Cámara en vivo) */}
                 <div
                   className={`p-3 rounded-2xl border transition-colors ${
                     mode === 'live_camera'
-                      ? 'bg-emerald-50 border-emerald-500'
-                      : 'bg-cyan-50 border-cyan-400'
+                      ? 'bg-[#4edea3]/12 border-[#4edea3]/60'
+                      : 'bg-[#22d3ee]/10 border-[#22d3ee]/50'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      <div className="text-xs font-bold text-[#dfe2ee] flex items-center gap-1.5">
                         <Power
                           className={`w-4 h-4 ${
-                            mode === 'live_camera' ? 'text-emerald-600' : 'text-cyan-700'
+                            mode === 'live_camera' ? 'text-[#4edea3]' : 'text-[#8aebff]'
                           }`}
                         />
                         {mode === 'live_camera' ? 'AVISIA Activo' : 'Activar AVISIA'}
                       </div>
-                      <p className="text-[11px] text-slate-600 mt-0.5">
+                      <p className="text-[11px] text-[#bbc9cd] mt-0.5">
                         {mode === 'live_camera'
                           ? 'Cámara en vivo y alertas de voz activas'
                           : 'Inicia la cámara en pantalla amplia con alertas de voz'}
@@ -1024,8 +1021,8 @@ export function App() {
                       }}
                       className={`px-3 py-1.5 rounded-xl text-xs font-semibold shrink-0 transition-colors ${
                         mode === 'live_camera'
-                          ? 'bg-rose-600 hover:bg-rose-500 text-white'
-                          : 'bg-cyan-600 hover:bg-cyan-500 text-white'
+                          ? 'bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6]'
+                          : 'bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e]'
                       }`}
                     >
                       {mode === 'live_camera' ? 'Desactivar' : 'Activar'}
@@ -1034,9 +1031,9 @@ export function App() {
                 </div>
 
                 {/* v2.5 · Modo Calle y Manos Libres (Interruptores opcionales) */}
-                <div className="p-3 rounded-2xl border border-slate-200 bg-slate-50 space-y-2">
+                <div className="p-3 rounded-2xl border border-[#3c494c]/40 bg-[#1c2028] space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-teal-800">
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#8aebff]">
                       v2.5 · Modo Calle (Arnés)
                     </span>
                     <button
@@ -1058,7 +1055,7 @@ export function App() {
                           depthAnythingEnabled: !anyOn,
                         });
                       }}
-                      className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 hover:bg-teal-200"
+                      className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#262a33] text-[#4edea3] hover:bg-[#31353e]"
                     >
                       {streetFeatures.streetMode ||
                       streetFeatures.stereoSonar ||
@@ -1112,16 +1109,16 @@ export function App() {
                             [item.key]: !prev[item.key],
                           }))
                         }
-                        className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 text-left"
+                        className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
                       >
-                        <span className="text-[11px] font-medium text-slate-800">
+                        <span className="text-[11px] font-medium text-[#dfe2ee]">
                           {item.label}
                         </span>
                         <span
                           className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
                             enabled
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-slate-100 text-slate-500'
+                              ? 'bg-[#4edea3]/20 text-[#4edea3]'
+                              : 'bg-[#262a33] text-[#859397]'
                           }`}
                         >
                           {enabled ? 'ON' : 'OFF'}
@@ -1132,7 +1129,7 @@ export function App() {
                 </div>
 
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                  <div className="text-[10px] font-mono font-semibold uppercase tracking-wider text-[#859397] mb-2">
                     Modos de operación
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
@@ -1141,8 +1138,8 @@ export function App() {
                       onClick={() => handleModeChange('simulation')}
                       className={`py-2 px-2.5 rounded-xl text-xs font-medium text-left border ${
                         mode === 'simulation'
-                          ? 'bg-cyan-50 border-cyan-500 text-cyan-900'
-                          : 'bg-slate-50 border-slate-200 text-slate-700'
+                          ? 'bg-[#22d3ee]/20 border-[#22d3ee] text-[#8aebff]'
+                          : 'bg-[#1c2028] border-[#3c494c]/40 text-[#bbc9cd]'
                       }`}
                     >
                       Escenas (A)
@@ -1152,8 +1149,8 @@ export function App() {
                       onClick={() => handleModeChange('vision_lab')}
                       className={`py-2 px-2.5 rounded-xl text-xs font-medium text-left border ${
                         mode === 'vision_lab'
-                          ? 'bg-emerald-50 border-emerald-500 text-emerald-900'
-                          : 'bg-slate-50 border-slate-200 text-slate-700'
+                          ? 'bg-[#4edea3]/20 border-[#4edea3] text-[#6ffbbe]'
+                          : 'bg-[#1c2028] border-[#3c494c]/40 text-[#bbc9cd]'
                       }`}
                     >
                       Imagen IA (B)
@@ -1163,8 +1160,8 @@ export function App() {
                       onClick={() => handleModeChange('video_lab')}
                       className={`py-2 px-2.5 rounded-xl text-xs font-medium text-left border ${
                         mode === 'video_lab'
-                          ? 'bg-cyan-50 border-cyan-500 text-cyan-900'
-                          : 'bg-slate-50 border-slate-200 text-slate-700'
+                          ? 'bg-[#22d3ee]/20 border-[#22d3ee] text-[#8aebff]'
+                          : 'bg-[#1c2028] border-[#3c494c]/40 text-[#bbc9cd]'
                       }`}
                     >
                       Video IA (C)
@@ -1174,8 +1171,8 @@ export function App() {
                       onClick={() => handleModeChange('live_camera')}
                       className={`py-2 px-2.5 rounded-xl text-xs font-medium text-left border ${
                         mode === 'live_camera'
-                          ? 'bg-amber-50 border-amber-500 text-amber-900'
-                          : 'bg-slate-50 border-slate-200 text-slate-700'
+                          ? 'bg-[#ffb147]/20 border-[#ffb147] text-[#ffd6a7]'
+                          : 'bg-[#1c2028] border-[#3c494c]/40 text-[#bbc9cd]'
                       }`}
                     >
                       Cámara (D)
@@ -1184,7 +1181,7 @@ export function App() {
                 </div>
 
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                  <div className="text-[10px] font-mono font-semibold uppercase tracking-wider text-[#859397] mb-2">
                     Escenarios de Managua
                   </div>
                   <div className="space-y-1.5">
@@ -1199,14 +1196,14 @@ export function App() {
                         }}
                         className={`w-full p-2.5 rounded-xl text-left border transition-colors ${
                           s.id === activeScenario.id && mode === 'simulation'
-                            ? 'bg-cyan-50 border-cyan-500 text-cyan-950'
-                            : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300'
+                            ? 'bg-[#22d3ee]/15 border-[#22d3ee] text-[#8aebff]'
+                            : 'bg-[#1c2028] border-[#3c494c]/40 text-[#dfe2ee] hover:border-[#859397]'
                         }`}
                       >
                         <div className="text-xs font-semibold">
                           {s.number}. {s.title}
                         </div>
-                        <div className="text-[11px] text-slate-500">{s.subtitle}</div>
+                        <div className="text-[11px] text-[#bbc9cd]">{s.subtitle}</div>
                       </button>
                     ))}
                   </div>
@@ -1218,15 +1215,67 @@ export function App() {
             <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2.5 space-y-2.5">
               {mobileTab === 'vision' && (
                 <div className="space-y-2.5">
+                  {/* Stitch Mode Selector Carousel (M3 Tactile Pills) */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAutoStartCamera(true);
+                        handleModeChange('live_camera');
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-mono text-[11px] font-semibold whitespace-nowrap active:scale-95 transition-transform ${
+                        mode === 'live_camera'
+                          ? 'bg-[#22d3ee] text-[#005763]'
+                          : 'bg-[#262a33] text-[#dfe2ee]'
+                      }`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                      Cámara
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleModeChange('simulation')}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-full font-mono text-[11px] font-semibold whitespace-nowrap active:scale-95 transition-transform ${
+                        mode === 'simulation'
+                          ? 'bg-[#22d3ee] text-[#005763]'
+                          : 'bg-[#262a33] text-[#dfe2ee]'
+                      }`}
+                    >
+                      Escenas IA
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleModeChange('vision_lab')}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-full font-mono text-[11px] font-semibold whitespace-nowrap active:scale-95 transition-transform ${
+                        mode === 'vision_lab'
+                          ? 'bg-[#22d3ee] text-[#005763]'
+                          : 'bg-[#262a33] text-[#dfe2ee]'
+                      }`}
+                    >
+                      Imagen
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleModeChange('video_lab')}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-full font-mono text-[11px] font-semibold whitespace-nowrap active:scale-95 transition-transform ${
+                        mode === 'video_lab'
+                          ? 'bg-[#22d3ee] text-[#005763]'
+                          : 'bg-[#262a33] text-[#dfe2ee]'
+                      }`}
+                    >
+                      Video
+                    </button>
+                  </div>
+
                   {evaluation.obstacleAlert && (
                     <div
                       role="alert"
-                      className="p-2.5 rounded-xl bg-amber-50 border border-amber-400 text-xs text-amber-950 flex items-center gap-2 shadow-sm"
+                      className="p-2.5 rounded-xl bg-[#93000a]/80 border border-[#ffb4ab]/40 text-xs text-[#ffdad6] flex items-center gap-2 shadow-sm"
                     >
-                      <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="font-semibold text-[11px] text-amber-800 uppercase tracking-wide">
-                          Obstáculo inanimado al frente
+                      <ShieldAlert className="w-4 h-4 text-[#ffb4ab] shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-mono font-bold text-[10px] text-[#ffb4ab] uppercase tracking-wide">
+                          Obstáculo Detectado
                         </div>
                         <div className="text-[11px] truncate">{evaluation.obstacleAlert.labelEs}</div>
                       </div>
@@ -1235,54 +1284,84 @@ export function App() {
 
                   {renderEnvironmentContent()}
 
-                  {/* Stitch Material 3 Voice Feedback Card */}
-                  <div className="p-3 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-2">
+                  {/* Stitch Audio Synthesis & Accessibility Card */}
+                  <div className="p-3 rounded-xl bg-[#1c2028] border border-[#3c494c]/30 shadow-md space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-teal-800 flex items-center gap-1.5">
-                        <Volume2 className="w-3.5 h-3.5 text-teal-700" />
-                        Retroalimentación de Voz
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        {isSpeaking && (
-                          <div className="flex items-center gap-0.5 h-3" aria-hidden="true">
-                            <span className="w-1 bg-teal-600 rounded-full animate-eq-1 h-3" />
-                            <span className="w-1 bg-teal-500 rounded-full animate-eq-2 h-2" />
-                            <span className="w-1 bg-teal-600 rounded-full animate-eq-3 h-3" />
-                          </div>
-                        )}
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold">
-                          {policy}
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-[#22d3ee] text-[#005763] flex items-center justify-center">
+                          <Volume2 className="w-3.5 h-3.5" />
+                        </div>
+                        <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-[#bbc9cd]">
+                          Voz Sintetizada
                         </span>
+                      </div>
+                      <div className="flex items-center gap-1 h-4 px-2 bg-[#262a33] rounded-full" aria-hidden="true">
+                        <span className={`w-1 bg-[#4edea3] rounded-full h-2.5 ${isSpeaking ? 'animate-eq-1' : ''}`} />
+                        <span className={`w-1 bg-[#4edea3] rounded-full h-3.5 ${isSpeaking ? 'animate-eq-2' : ''}`} />
+                        <span className={`w-1 bg-[#4edea3] rounded-full h-2 ${isSpeaking ? 'animate-eq-3' : ''}`} />
+                        <span className={`w-1 bg-[#4edea3] rounded-full h-3 ${isSpeaking ? 'animate-eq-4' : ''}`} />
                       </div>
                     </div>
 
                     <div
-                      className={`p-2.5 rounded-xl border text-xs font-semibold leading-relaxed ${
-                        evaluation.obstacleAlert
-                          ? 'bg-amber-50/90 border-amber-200 text-slate-900'
-                          : 'bg-slate-50 border-slate-200 text-slate-900'
-                      }`}
+                      aria-live="assertive"
+                      role="alert"
+                      className="p-2.5 rounded-lg bg-[#181c24] border border-[#3c494c]/25"
                     >
-                      {evaluation.generatedMessage}
+                      <p className="text-sm text-[#dfe2ee] font-medium leading-relaxed">
+                        {evaluation.generatedMessage}
+                      </p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
-                        onClick={handleSpeakCurrent}
-                        className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 font-bold text-xs transition-colors"
+                        onClick={() => {
+                          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                            navigator.vibrate([80, 50, 80]);
+                          }
+                          handleSpeakCurrent();
+                        }}
+                        className="h-11 px-3 rounded-full bg-[#31353e] hover:bg-[#353942] text-[#dfe2ee] flex items-center justify-center gap-1.5 font-semibold text-xs active:scale-95 transition-all"
                       >
-                        <Volume2 className="w-4 h-4 text-teal-700" />
-                        Escuchar
+                        <Volume2 className="w-4 h-4 text-[#8aebff]" />
+                        Repetir
                       </button>
                       <button
                         type="button"
-                        onClick={() => setMobileTab('assistant')}
-                        className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs transition-colors shadow-sm"
+                        onClick={() => {
+                          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                            navigator.vibrate(120);
+                          }
+                          setMobileTab('assistant');
+                        }}
+                        className="h-11 px-3 rounded-full bg-[#22d3ee] hover:bg-[#8aebff] text-[#005763] flex items-center justify-center gap-1.5 font-bold text-xs active:scale-95 transition-all shadow-md"
                       >
-                        <MessageSquare className="w-3.5 h-3.5" />
+                        <MessageSquare className="w-4 h-4" />
                         Consultar
                       </button>
+                    </div>
+                  </div>
+
+                  {/* Active Safety Policy Pill Card */}
+                  <div className="bg-[#181c24] border border-[#3c494c]/30 rounded-xl p-2.5 flex items-center justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-7 h-7 rounded-lg bg-[#93000a] text-[#ffdad6] flex items-center justify-center shrink-0">
+                        <ShieldAlert className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-[10px] font-bold text-[#dfe2ee]">
+                            Política {policy} Activada
+                          </span>
+                          <span className="px-1 py-0.5 rounded bg-[#ffb4ab] text-[#690005] font-mono text-[8px] font-bold">
+                            {evaluation.obstacleAlert ? 'CRÍTICO' : 'ACTIVA'}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-[#bbc9cd] block truncate">
+                          {policy === 'C01' ? 'Prioridad de impacto frontal' : 'Orden de llegada'}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1349,10 +1428,10 @@ export function App() {
               )}
             </div>
 
-            {/* Android Material 3 Bottom Navigation + Gesture Pill (Light Mode) */}
+            {/* Android Material 3 Bottom Navigation + Gesture Pill (Stitch Dark Mode) */}
             <nav
               aria-label="Navegación Android"
-              className="border-t border-slate-200 bg-white px-2 pt-1.5 pb-1"
+              className="border-t border-[#3c494c]/30 bg-[#1c2028]/95 backdrop-blur-xl px-2 pt-1.5 pb-1"
             >
               <div className="grid grid-cols-4">
                 <button
@@ -1366,15 +1445,15 @@ export function App() {
                   <span
                     className={`px-3.5 py-1 rounded-full transition-colors ${
                       mobileTab === 'vision'
-                        ? 'bg-cyan-100 text-cyan-800'
-                        : 'text-slate-500'
+                        ? 'bg-[#22d3ee] text-[#005763]'
+                        : 'text-[#bbc9cd]'
                     }`}
                   >
                     <Eye className="w-4 h-4" />
                   </span>
                   <span
-                    className={`text-[10px] font-medium ${
-                      mobileTab === 'vision' ? 'text-cyan-800 font-semibold' : 'text-slate-500'
+                    className={`font-mono text-[10px] ${
+                      mobileTab === 'vision' ? 'text-[#8aebff] font-semibold' : 'text-[#bbc9cd]'
                     }`}
                   >
                     Visión
@@ -1392,15 +1471,15 @@ export function App() {
                   <span
                     className={`px-3.5 py-1 rounded-full transition-colors ${
                       mobileTab === 'assistant'
-                        ? 'bg-cyan-100 text-cyan-800'
-                        : 'text-slate-500'
+                        ? 'bg-[#22d3ee] text-[#005763]'
+                        : 'text-[#bbc9cd]'
                     }`}
                   >
                     <MessageSquare className="w-4 h-4" />
                   </span>
                   <span
-                    className={`text-[10px] font-medium ${
-                      mobileTab === 'assistant' ? 'text-cyan-800 font-semibold' : 'text-slate-500'
+                    className={`font-mono text-[10px] ${
+                      mobileTab === 'assistant' ? 'text-[#8aebff] font-semibold' : 'text-[#bbc9cd]'
                     }`}
                   >
                     Asistente
@@ -1418,18 +1497,18 @@ export function App() {
                   <span
                     className={`px-3.5 py-1 rounded-full transition-colors ${
                       mobileTab === 'analysis'
-                        ? 'bg-cyan-100 text-cyan-800'
-                        : 'text-slate-500'
+                        ? 'bg-[#22d3ee] text-[#005763]'
+                        : 'text-[#bbc9cd]'
                     }`}
                   >
                     <Sparkles className="w-4 h-4" />
                   </span>
                   <span
-                    className={`text-[10px] font-medium ${
-                      mobileTab === 'analysis' ? 'text-cyan-800 font-semibold' : 'text-slate-500'
+                    className={`font-mono text-[10px] ${
+                      mobileTab === 'analysis' ? 'text-[#8aebff] font-semibold' : 'text-[#bbc9cd]'
                     }`}
                   >
-                    Análisis
+                    Telemetría
                   </span>
                 </button>
 
@@ -1448,23 +1527,23 @@ export function App() {
                   <span
                     className={`px-3.5 py-1 rounded-full transition-colors ${
                       mobileTab === 'map'
-                        ? 'bg-cyan-100 text-cyan-800'
-                        : 'text-slate-500'
+                        ? 'bg-[#22d3ee] text-[#005763]'
+                        : 'text-[#bbc9cd]'
                     }`}
                   >
                     <MapPin className="w-4 h-4" />
                   </span>
                   <span
-                    className={`text-[10px] font-medium ${
-                      mobileTab === 'map' ? 'text-cyan-800 font-semibold' : 'text-slate-500'
+                    className={`font-mono text-[10px] ${
+                      mobileTab === 'map' ? 'text-[#8aebff] font-semibold' : 'text-[#bbc9cd]'
                     }`}
                   >
-                    Managua
+                    GPS Managua
                   </span>
                 </button>
               </div>
               <div className="flex justify-center pt-1.5 pb-0.5">
-                <div className="w-24 h-1 rounded-full bg-slate-400/70" />
+                <div className="w-24 h-1 rounded-full bg-[#3c494c]" />
               </div>
             </nav>
             </div>
