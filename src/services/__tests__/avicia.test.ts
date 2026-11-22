@@ -420,6 +420,16 @@ describe('AVISIA v3.0 Assistive Vision & Anti-False-Alarm Suite', () => {
     expect(unclear.currency).toBe('unknown');
     expect(unclear.denomination).toBeNull();
 
+    // OCR digit-confusion repair (e.g. "5O0" -> 500, "10O" -> 100, "2O" -> 20)
+    const repaired500 = parseBanknoteFromOcrText('BANCO CENTRAL 5O0 CORDOBAS', 'red');
+    expect(repaired500.detected).toBe(true);
+    expect(repaired500.currency).toBe('NIO');
+    expect(repaired500.denomination).toBe(500);
+
+    const repaired100 = parseBanknoteFromOcrText('NICARAGUA 10O', 'blue');
+    expect(repaired100.detected).toBe(true);
+    expect(repaired100.denomination).toBe(100);
+
     // Automatic continuous scan parser stays silent on NONE and detects real replies
     expect(parseCloudBanknoteReply('NONE').detected).toBe(false);
     const autoNio = parseCloudBanknoteReply('Billete de 500 córdobas.');
@@ -430,5 +440,36 @@ describe('AVISIA v3.0 Assistive Vision & Anti-False-Alarm Suite', () => {
     expect(autoUsd.detected).toBe(true);
     expect(autoUsd.currency).toBe('USD');
     expect(autoUsd.denomination).toBe(20);
+  });
+
+  it('reserves "Alto" strictly for imminent emergencies (<=0.75m / wall / stairs)', () => {
+    const policy = new MessagePolicy();
+    const normalChair: Detection = {
+      id: 'c1',
+      category: 'chair',
+      labelEs: 'Silla',
+      source: 'real_video',
+      confidence: 0.85,
+      bbox: { x: 40, y: 45, width: 22, height: 35 },
+      confirmationStatus: 'confirmed',
+      priority: 90,
+      firstSeenAt: 1000,
+      lastSeenAt: 1500,
+      isInanimateObstacle: true,
+      proximityZone: 'front_close',
+      estimatedMeters: 1.4,
+      clockPosition: 'a las 12',
+    };
+    const normalEval = policy.evaluateRealDetections([normalChair], 'C01', 2000, true, true);
+    expect(normalEval.generatedMessage.toLowerCase()).not.toContain('alto');
+
+    const urgentWall: Detection = {
+      ...normalChair,
+      id: 'w1',
+      labelEs: 'Pared muy cerca',
+      estimatedMeters: 0.5,
+    };
+    const urgentEval = policy.evaluateRealDetections([urgentWall], 'C01', 9000, true, true);
+    expect(urgentEval.generatedMessage).toContain('¡Alto!');
   });
 });

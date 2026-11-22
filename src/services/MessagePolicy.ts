@@ -200,19 +200,31 @@ export class MessagePolicy {
       : this.directionWord(frontObstacle);
     const dist = formatDistanceSteps(frontObstacle.estimatedMeters);
 
+    const isImminentEmergency =
+      zone === 'front_close' &&
+      ((typeof frontObstacle.estimatedMeters === 'number' &&
+        frontObstacle.estimatedMeters <= 0.75) ||
+        labelLower.includes('grada') ||
+        labelLower.includes('escalera') ||
+        labelLower.includes('pared'));
+
     let message: string;
     if (streetMode) {
       message = dist
-        ? `${zone === 'front_close' ? 'Alto, ' : ''}${frontObstacle.labelEs} ${spatial}, ${dist}`
+        ? `${isImminentEmergency ? '¡Alto! ' : ''}${frontObstacle.labelEs} ${spatial}, ${dist}`
         : `${frontObstacle.labelEs} ${spatial}`;
+    } else if (isImminentEmergency) {
+      message = dist
+        ? `¡Alto! ${frontObstacle.labelEs} ${spatial}, ${dist}.`
+        : `¡Alto! ${frontObstacle.labelEs} frente a ti.`;
     } else if (zone === 'front_close') {
       message = dist
-        ? `Cuidado: ${labelLower} ${spatial}, ${dist}.`
-        : `Cuidado: ${labelLower} frente a ti.`;
+        ? `${frontObstacle.labelEs} ${spatial}, ${dist}.`
+        : `${frontObstacle.labelEs} frente a ti.`;
     } else {
       message = dist
-        ? `Atención: ${labelLower} ${spatial}, ${dist}.`
-        : `Atención: ${labelLower} adelante.`;
+        ? `${frontObstacle.labelEs} ${spatial}, ${dist}.`
+        : `${frontObstacle.labelEs} adelante.`;
     }
 
     return {

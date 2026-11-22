@@ -376,6 +376,21 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
     ctx.clearRect(0, 0, width, height);
 
+    // Banknote framing guide rectangle in Billetes channel
+    if (channelRef.current === 'currency') {
+      const bx = width * 0.12;
+      const by = height * 0.18;
+      const bw = width * 0.76;
+      const bh = height * 0.64;
+      ctx.save();
+      ctx.setLineDash([10, 6]);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.9)';
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.restore();
+      return;
+    }
+
     // 5-Sector Stixel Free-Space Corridor Visual Overlay (10h, 11h, 12h, 1h, 2h)
     if (showStixelOverlayRef.current && plan && channelRef.current === 'explore') {
       const sectorW = width / 5;
@@ -629,11 +644,6 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
     const scanOnce = async () => {
       if (cancelled || scanBusy || !videoRef.current || videoRef.current.readyState < 2) return;
-      const prox = latestProximityRef.current;
-      // Skip blurry/dark frames to save battery & avoid false reads
-      if (prox && (prox.cameraQuality === 'lens_blocked' || prox.brightnessPct < 14 || prox.motionScore > 26)) {
-        return;
-      }
 
       scanBusy = true;
       try {
@@ -800,6 +810,15 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         }
         frameBusy = true;
         try {
+          // In Billetes / Texto / Escena channels, skip obstacle detector & wall alerts so holding a bill up NEVER triggers "¡Alto! Pared"
+          if (channelRef.current === 'currency' || channelRef.current === 'read_text') {
+            drawBoxes([], null, null);
+            setLiveCount(0);
+            setPathClearConfirmed(false);
+            onPathClearChange?.(false);
+            return;
+          }
+
           const res = await detectorService.detectOnVideoFrame(videoRef.current, threshold);
           if (!runningRef.current) return;
 
@@ -1237,7 +1256,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v3.5 · Cámara Asistiva
+              AVISIA v3.5.1 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.

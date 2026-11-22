@@ -270,10 +270,10 @@ export class DepthProximityService {
       cameraQuality = 'fast_motion';
       this.stepStreak = 0;
       this.verticalStreak = 0;
-    } else if (centerStd < 8.5 && centerMean >= 42 && detections.length === 0) {
-      // Uniform bright surface filling center of camera => very close wall/door
-      this.flatWallStreak = Math.min(5, this.flatWallStreak + 1);
-      if (this.flatWallStreak >= 2) {
+    } else if (centerStd < 5.2 && centerMean >= 46 && detections.length === 0) {
+      // Strictly uniform bright wall filling center across >= 4 calm frames
+      this.flatWallStreak = Math.min(6, this.flatWallStreak + 1);
+      if (this.flatWallStreak >= 4) {
         cameraQuality = 'flat_wall_close';
       }
     } else {
@@ -366,17 +366,17 @@ export class DepthProximityService {
     } else if (cameraQuality === 'too_dark') {
       alertText = 'Poca luz para detectar con precisión.';
     } else if (flatWallAhead) {
-      alertText = '¡Alto! Pared o superficie muy cerca frente a ti.';
+      alertText = '¡Alto! Pared muy cerca frente a ti.';
     } else if (ttcInfo.approachingFast && ttcInfo.targetLabel) {
-      alertText = `Acercamiento rápido: ${ttcInfo.targetLabel} (~${ttcInfo.ttcSeconds}s)`;
+      alertText = `¡Alto! ${ttcInfo.targetLabel} acercándose rápido (~${ttcInfo.ttcSeconds}s)`;
     } else if (detEstimate.level === 'danger' && detEstimate.closestLabel) {
-      alertText = `Cuidado: ${detEstimate.closestLabel} muy cerca, a ${detEstimate.estimatedMeters} m.`;
+      alertText = `${detEstimate.closestLabel} muy cerca, a ${detEstimate.estimatedMeters} m.`;
     } else if (floorVariationDetected) {
-      alertText = 'Cuidado: posible grada o desnivel adelante.';
+      alertText = '¡Alto! Posible grada o desnivel adelante.';
     } else if (verticalObstacleDetected && detections.length === 0) {
-      alertText = 'Atención: posible obstáculo inmóvil frente a ti.';
+      alertText = 'Posible obstáculo inmóvil frente a ti.';
     } else if (detEstimate.level === 'caution' && detEstimate.closestLabel) {
-      alertText = `Atención: ${detEstimate.closestLabel} a ${detEstimate.estimatedMeters} m.`;
+      alertText = `${detEstimate.closestLabel} a ${detEstimate.estimatedMeters} m.`;
     }
 
     return {

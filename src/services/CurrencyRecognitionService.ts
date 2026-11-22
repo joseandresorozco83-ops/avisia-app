@@ -116,8 +116,17 @@ export function parseBanknoteFromOcrText(
     norm.includes('franklin') ||
     norm.includes('usa');
 
+  // Repair common OCR digit confusions inside numeric tokens (e.g., "10O" -> "100", "5O0" -> "500", "2O" -> "20", "l00" -> "100")
+  const digitRepaired = norm.replace(/\b[0-9oilqs|]{2,4}\b/g, (tok) =>
+    tok
+      .replace(/[oq]/g, '0')
+      .replace(/[il|]/g, '1')
+      .replace(/s/g, '5')
+  );
+
   const nums = new Set<number>();
-  const numMatches = norm.match(/\b(1000|500|200|100|50|20|10|5|2|1)\b/g) ?? [];
+  const numMatches =
+    digitRepaired.match(/\b(1000|500|200|100|50|20|10|5|2|1)\b/g) ?? [];
   for (const m of numMatches) {
     nums.add(parseInt(m, 10));
   }
@@ -342,51 +351,109 @@ export class CurrencyRecognitionService {
     return this.captureCanvas;
   }
 
+  private prepareOcrCanvas(sourceCanvas: HTMLCanvasElement): HTMLCanvasElement {
+    // Center-crop 78% of frame where the user holds the banknote & boost grayscale contrast for Tesseract
+    const w = sourceCanvas.width;
+    const h = sourceCanvas.height;
+    const cx = Math.floor(w * 0.11);
+    const cy = Math.floor(h * 0.11);
+    const cw = Math.max(64, Math.floor(w * 0.78));
+    const ch = Math.max(64, Math.floor(h * 0.78));
+
+    const ocrCanvas = document.createElement('canvas');
+    ocrCanvas.width = cw;
+    ocrCanvas.height = ch;
+    const ctx = ocrCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return sourceCanvas;
+
+    ctx.drawImage(sourceCanvas, cx, cy, cw, ch, 0, 0, cw, ch);
+    const img = ctx.getImageData(0, 0, cw, ch);
+    const d = img.data;
+    let minL = 255;
+    let maxL = 0;
+    const lumas = new Uint8Array(cw * ch);
+    for (let i = 0; i < lumas.length; i++) {
+      const p = i * 4;
+      const l = Math.round(0.299 * d[p] + 0.587 * d[p + 1] + 0.114 * d[p + 2]);
+      lumas[i] = l;
+      if (l < minL) minL = l;
+      if (l > maxL) maxL = l;
+    }
+    const span = Math.max(24, maxL - minL);
+    for (let i = 0; i < lumas.length; i++) {
+      const p = i * 4;
+      const stretched = Math.min(255, Math.max(0, Math.round(((lumas[i] - minL) / span) * 255)));
+      d[p] = stretched;
+      d[p + 1] = stretched;
+      d[p + 2] = stretched;
+    }
+    ctx.putImageData(img, 0, 0);
+    return ocrCanvas;
+  }
+
   private estimateDominantHue(canvas: HTMLCanvasElement): DominantBanknoteHue {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return 'neutral';
     const w = canvas.width;
     const h = canvas.height;
-    const x1 = Math.floor(w * 0.2);
-    const y1 = Math.floor(h * 0.2);
-    const rw = Math.max(1, Math.floor(w * 0.6));
-    const rh = Math.max(1, Math.floor(h * 0.6));
+    const x1 = Math.floor(w * 0.18);
+    const y1 = Math.floor(h * 0.18);
+    const rw = Math.max(1, Math.floor(w * 0.64));
+    const rh = Math.max(1, Math.floor(h * 0.64));
     const data = ctx.getImageData(x1, y1, rw, rh).data;
 
-    let rSum = 0;
-    let gSum = 0;
-    let bSum = 0;
-    let count = 0;
+    // Saturated hue bucket histogram (much more accurate than mean RGB on polymer bills with white margins!)
+    const buckets: Record<Exclude<DominantBanknoteHue, 'neutral'>, number> = {
+      red: 0,
+      orange: 0,
+      brown: 0,
+      green_light: 0,
+      green_dark: 0,
+      blue: 0,
+      purple: 0,
+    };
+    let totalSampled = 0;
+
     for (let i = 0; i < data.length; i += 16) {
-      rSum += data[i];
-      gSum += data[i + 1];
-      bSum += data[i + 2];
-      count++;
+      totalSampled++;
+      const r = data[i] / 255;
+      const g = data[i + 1] / 255;
+      const b = data[i + 2] / 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const d = max - min;
+      const sat = max === 0 ? 0 : d / max;
+      if (sat < 0.2 || max < 0.15) continue;
+
+      let hue = 0;
+      if (d > 0) {
+        if (max === r) hue = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+        else if (max === g) hue = ((b - r) / d + 2) * 60;
+        else hue = ((r - g) / d + 4) * 60;
+      }
+
+      if (hue >= 340 || hue < 14) buckets.red++;
+      else if (hue >= 14 && hue < 42) {
+        if (max < 0.54) buckets.brown++;
+        else buckets.orange++;
+      } else if (hue >= 75 && hue < 168) {
+        if (max < 0.5) buckets.green_dark++;
+        else buckets.green_light++;
+      } else if (hue >= 188 && hue < 252) buckets.blue++;
+      else if (hue >= 252 && hue < 340) buckets.purple++;
     }
-    if (count === 0) return 'neutral';
-    const r = rSum / count / 255;
-    const g = gSum / count / 255;
-    const b = bSum / count / 255;
 
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const d = max - min;
-    const sat = max === 0 ? 0 : d / max;
-    if (sat < 0.16) return 'neutral';
-
-    let hue = 0;
-    if (d > 0) {
-      if (max === r) hue = ((g - b) / d + (g < b ? 6 : 0)) * 60;
-      else if (max === g) hue = ((b - r) / d + 2) * 60;
-      else hue = ((r - g) / d + 4) * 60;
+    let bestHue: DominantBanknoteHue = 'neutral';
+    let bestCount = Math.max(8, totalSampled * 0.08);
+    for (const [k, cnt] of Object.entries(buckets) as Array<
+      [Exclude<DominantBanknoteHue, 'neutral'>, number]
+    >) {
+      if (cnt > bestCount) {
+        bestCount = cnt;
+        bestHue = k;
+      }
     }
-
-    if (hue >= 340 || hue < 15) return 'red';
-    if (hue >= 15 && hue < 42) return max < 0.55 ? 'brown' : 'orange';
-    if (hue >= 75 && hue < 165) return max < 0.52 ? 'green_dark' : 'green_light';
-    if (hue >= 190 && hue < 255) return 'blue';
-    if (hue >= 255 && hue < 335) return 'purple';
-    return 'neutral';
+    return bestHue;
   }
 
   /**
@@ -501,7 +568,8 @@ export class CurrencyRecognitionService {
           elapsedMs: Math.round(performance.now() - start),
         };
       }
-      const ocr = await worker.recognize(canvas);
+      const ocrCanvas = this.prepareOcrCanvas(canvas);
+      const ocr = await worker.recognize(ocrCanvas);
       const parsed = parseBanknoteFromOcrText(ocr.data.text ?? '', dominantHue);
       return {
         detected: parsed.detected,
