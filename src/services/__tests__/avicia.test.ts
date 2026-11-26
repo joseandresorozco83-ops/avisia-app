@@ -374,17 +374,33 @@ describe('AVISIA v3.0 Assistive Vision & Anti-False-Alarm Suite', () => {
     const indoor = applyAppPreset(base, 'indoor');
     expect(indoor.archModelVariant).toBe('segformer_b1');
     expect(indoor.audioVerbosity).toBe('essential');
+    expect(indoor.detectorEngine).toBe('dfine_s_obj365');
+    expect(indoor.soundOnlyMode).toBe(false);
 
-    const street = applyAppPreset(base, 'street');
+    const street = applyAppPreset(indoor, 'street');
     expect(street.streetMode).toBe(true);
     expect(street.stereoSonar).toBe(true);
+    expect(street.handsFreeWakeWord).toBe(true);
+
+    // Switching from street back to indoor or currency must cleanly reset street-only flags (handsFreeWakeWord, streetMode)
+    const backToIndoor = applyAppPreset(street, 'indoor');
+    expect(backToIndoor.streetMode).toBe(false);
+    expect(backToIndoor.handsFreeWakeWord).toBe(false);
+    expect(backToIndoor.stereoSonar).toBe(false);
 
     const precision = applyAppPreset(base, 'precision');
     expect(precision.depthAnythingEnabled).toBe(true);
     expect(precision.audioVerbosity).toBe('detailed');
+    expect(precision.detectorEngine).toBe('dfine_s_obj365');
 
-    const silent = applyAppPreset(base, 'silent');
+    const silent = applyAppPreset(precision, 'silent');
     expect(silent.soundOnlyMode).toBe(true);
+    expect(silent.offlineVlmEnabled).toBe(false);
+
+    for (const preset of APP_PRESETS) {
+      expect(preset.includedSummary.length).toBeGreaterThanOrEqual(3);
+      expect(preset.subtitle.length).toBeGreaterThan(3);
+    }
   });
 
   it('recognizes all Nicaraguan Córdoba (NIO) and US Dollar (USD) denominations and voice triggers', () => {

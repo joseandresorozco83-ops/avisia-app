@@ -26,7 +26,6 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  Power,
   Bluetooth,
   Home,
   Footprints,
@@ -37,7 +36,6 @@ import {
 } from 'lucide-react';
 import type {
   AppPresetId,
-  ArchModelVariant,
   AudioVerbosity,
   ConversationMessage,
   Detection,
@@ -126,6 +124,7 @@ export function App() {
 
   const [mobileTab, setMobileTab] = useState<MobileTab>('vision');
   const [androidMenuOpen, setAndroidMenuOpen] = useState<boolean>(false);
+  const [showAdvancedTech, setShowAdvancedTech] = useState<boolean>(false);
   const [ecosystemTab, setEcosystemTab] = useState<EcosystemTab>('core');
   const [mode, setMode] = useState<OperationMode>(
     isMobileExperience ? 'live_camera' : 'simulation'
@@ -1431,17 +1430,19 @@ export function App() {
                           </span>
                         )}
                       </div>
-                      {isNativeApp ? (
-                        <button
-                          type="button"
-                          onClick={() => setAndroidMenuOpen((o) => !o)}
-                          className="text-left font-mono text-[11px] text-[#4edea3] font-semibold truncate py-0.5"
-                        >
-                          Modo: {getPresetById(streetFeatures.activePreset).shortTitle} ▾
-                        </button>
-                      ) : (
-                        <span className="font-mono text-[10px] text-[#bbc9cd] truncate">UAM Managua</span>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => setAndroidMenuOpen((o) => !o)}
+                        className="text-left font-mono text-[11px] text-[#4edea3] font-semibold truncate py-0.5"
+                      >
+                        {mode === 'live_camera'
+                          ? `Modo: ${getPresetById(streetFeatures.activePreset).shortTitle} ▾`
+                          : mode === 'simulation'
+                            ? `Escena ${activeScenario.number}: ${activeScenario.title} ▾`
+                            : mode === 'vision_lab'
+                              ? 'Laboratorio: Foto ▾'
+                              : 'Laboratorio: Video ▾'}
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1500,195 +1501,148 @@ export function App() {
                 </div>
               </div>
 
-            {/* Android Hamburger Drawer Overlay (Simple 4-Mode Selector on Android App; Full Technical Options on Web) */}
+            {/* Unified Human-Centered Hamburger Menu (Simple 1-Tap Modes & Scenes on both Web and Android) */}
             {androidMenuOpen && (
-              <div className="absolute inset-x-0 top-[76px] bottom-[62px] z-40 bg-[#181c24]/98 backdrop-blur-md p-3.5 overflow-y-auto space-y-4 border-b border-[#3c494c]/40">
-                {isNativeApp ? (
-                  <>
-                    <div className="space-y-1">
+              <div className="absolute inset-x-0 top-[56px] bottom-[62px] z-40 bg-[#181c24]/98 backdrop-blur-md p-3.5 overflow-y-auto space-y-4 border-b border-[#3c494c]/40">
+                {/* 1. SELECCIÓN DE MODO DE USO EN VIVO (1 TOQUE CONFIGURA TODO) */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
                       <h2 className="text-sm font-extrabold text-[#8aebff]">
-                        Elige cómo usar AVISIA
+                        1. Modos de Cámara en Vivo
                       </h2>
-                      <p className="text-xs text-[#bbc9cd]">
-                        Toca un modo general y la app ajusta automáticamente la cámara y el audio.
+                      <p className="text-[11px] text-[#bbc9cd]">
+                        Elige para qué vas a usar AVISIA; cada botón activa los modelos y el audio ideales.
                       </p>
                     </div>
-
-                    <div className="space-y-2.5">
-                      {APP_PRESETS.map((preset) => {
-                        const selected =
-                          (streetFeatures.activePreset ?? 'indoor') === preset.id;
-                        const PresetIcon =
-                          preset.id === 'indoor'
-                            ? Home
-                            : preset.id === 'street'
-                              ? Footprints
-                              : preset.id === 'currency'
-                                ? Banknote
-                                : preset.id === 'precision'
-                                  ? Crosshair
-                                  : BellOff;
-                        return (
-                          <button
-                            key={preset.id}
-                            type="button"
-                            aria-pressed={selected}
-                            onClick={() => {
-                              speechService.unlockAudio();
-                              speechService.vibratePattern('confirm');
-                              setStreetFeatures((prev) =>
-                                applyAppPreset(prev, preset.id as AppPresetId)
-                              );
-                              setPresetSyncKey((k) => k + 1);
-                              setMode('live_camera');
-                              setMobileTab('vision');
-                              if (preset.id === 'currency') {
-                                setAutoStartCamera(true);
-                              }
-                              telemetryService.recordEvent({
-                                type: 'preset_change',
-                                detail: preset.id,
-                                success: true,
-                              });
-                              setAndroidMenuOpen(false);
-                              speakText(preset.spokenConfirm);
-                            }}
-                            className={`w-full p-3.5 rounded-2xl border text-left flex items-start gap-3 transition-all active:scale-[0.98] ${
-                              selected
-                                ? 'bg-[#22d3ee]/18 border-[#22d3ee] shadow-md'
-                                : 'bg-[#1c2028] border-[#3c494c]/50 hover:border-[#8aebff]/50'
-                            }`}
-                          >
-                            <div
-                              className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
-                                selected
-                                  ? 'bg-[#22d3ee] text-[#00363e]'
-                                  : 'bg-[#0f131c] text-[#8aebff]'
-                              }`}
-                            >
-                              <PresetIcon className="w-5 h-5" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-sm font-bold text-[#dfe2ee]">
-                                  {preset.title}
-                                </span>
-                                {selected && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#4edea3]/20 text-[#4edea3] text-[10px] font-bold shrink-0">
-                                    <Check className="w-3 h-3" />
-                                    Activo
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-xs text-[#bbc9cd] mt-0.5 leading-snug">
-                                {preset.description}
-                              </p>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    <div className="pt-2 border-t border-[#3c494c]/40 space-y-2">
-                      {demoActive ? (
-                        <button
-                          type="button"
-                          onClick={stopGuidedDemo}
-                          className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-sm flex items-center justify-center gap-2 shadow-md"
-                        >
-                          <Square className="w-4 h-4 fill-current" />
-                          Detener Demo Autónoma
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            speechService.unlockAudio();
-                            startGuidedDemo();
-                          }}
-                          className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/60 text-[#8aebff] font-bold text-sm flex items-center justify-center gap-2"
-                        >
-                          <Play className="w-4 h-4 fill-current" />
-                          Ver Demostración Guiada
-                        </button>
-                      )}
+                    {mode === 'live_camera' && cameraActive && (
                       <button
                         type="button"
                         onClick={() => {
-                          setAndroidMenuOpen(false);
-                          setConsentModalOpen(true);
-                        }}
-                        className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-[#0f131c] border border-[#3c494c]/60 text-[#bbc9cd] font-semibold text-xs flex items-center justify-center gap-2"
-                      >
-                        <ShieldCheck className="w-4 h-4 text-[#4edea3]" />
-                        Aviso de Seguridad y Privacidad
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                {/* WEB: conserva todas las opciones detalladas */}
-                {/* Primera opción: Activar / Desactivar AVISIA (Cámara en vivo) */}
-                <div
-                  className={`p-3 rounded-2xl border transition-colors ${
-                    mode === 'live_camera'
-                      ? 'bg-[#4edea3]/12 border-[#4edea3]/60'
-                      : 'bg-[#22d3ee]/10 border-[#22d3ee]/50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="text-xs font-bold text-[#dfe2ee] flex items-center gap-1.5">
-                        <Power
-                          className={`w-4 h-4 ${
-                            mode === 'live_camera' ? 'text-[#4edea3]' : 'text-[#8aebff]'
-                          }`}
-                        />
-                        {mode === 'live_camera' ? 'AVISIA Activo' : 'Activar AVISIA'}
-                      </div>
-                      <p className="text-[11px] text-[#bbc9cd] mt-0.5">
-                        {mode === 'live_camera'
-                          ? 'Cámara en vivo y alertas de voz activas'
-                          : 'Inicia la cámara en pantalla amplia con alertas de voz'}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (mode === 'live_camera') {
                           setAutoStartCamera(false);
                           setCameraActive(false);
                           setRealDetections([]);
                           setMode('simulation');
                           setAndroidMenuOpen(false);
-                        } else {
-                          setAutoStartCamera(true);
-                          setMode('live_camera');
-                          setMobileTab('vision');
-                          setAndroidMenuOpen(false);
-                        }
-                      }}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold shrink-0 transition-colors ${
-                        mode === 'live_camera'
-                          ? 'bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6]'
-                          : 'bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e]'
-                      }`}
-                    >
-                      {mode === 'live_camera' ? 'Desactivar' : 'Activar'}
-                    </button>
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] text-[11px] font-bold shrink-0"
+                      >
+                        Apagar cámara
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    {APP_PRESETS.map((preset) => {
+                      const selected =
+                        mode === 'live_camera' &&
+                        (streetFeatures.activePreset ?? 'indoor') === preset.id;
+                      const PresetIcon =
+                        preset.id === 'indoor'
+                          ? Home
+                          : preset.id === 'street'
+                            ? Footprints
+                            : preset.id === 'currency'
+                              ? Banknote
+                              : preset.id === 'precision'
+                                ? Crosshair
+                                : BellOff;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => {
+                            speechService.unlockAudio();
+                            speechService.vibratePattern('confirm');
+                            setStreetFeatures((prev) =>
+                              applyAppPreset(prev, preset.id as AppPresetId)
+                            );
+                            setPresetSyncKey((k) => k + 1);
+                            setDemoActive(false);
+                            setMode('live_camera');
+                            setMobileTab('vision');
+                            setAutoStartCamera(true);
+                            telemetryService.recordEvent({
+                              type: 'preset_change',
+                              detail: preset.id,
+                              success: true,
+                            });
+                            setAndroidMenuOpen(false);
+                            speakText(preset.spokenConfirm);
+                          }}
+                          className={`w-full p-3 rounded-2xl border text-left flex items-start gap-3 transition-all active:scale-[0.98] ${
+                            selected
+                              ? 'bg-[#22d3ee]/16 border-[#22d3ee] shadow-md'
+                              : 'bg-[#1c2028] border-[#3c494c]/50 hover:border-[#8aebff]/50'
+                          }`}
+                        >
+                          <div
+                            className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
+                              selected
+                                ? 'bg-[#22d3ee] text-[#00363e]'
+                                : 'bg-[#0f131c] text-[#8aebff]'
+                            }`}
+                          >
+                            <PresetIcon className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs sm:text-sm font-extrabold text-[#dfe2ee] truncate">
+                                {preset.title}
+                              </span>
+                              {selected ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#4edea3]/20 text-[#4edea3] text-[10px] font-bold shrink-0">
+                                  <Check className="w-3 h-3" />
+                                  Activo
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full bg-[#0f131c] text-[#8aebff] text-[10px] font-medium shrink-0">
+                                  {preset.subtitle}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-[#bbc9cd] mt-1 leading-snug">
+                              {preset.description}
+                            </p>
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {preset.includedSummary.map((tag) => (
+                                <span
+                                  key={tag}
+                                  className="px-2 py-0.5 rounded-md bg-[#0f131c]/90 border border-[#3c494c]/40 text-[10px] text-[#8aebff]"
+                                >
+                                  ✓ {tag}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                {/* Botón de Demo Autónoma (siempre accesible en móvil y app Android) */}
-                {isMobileExperience && (
-                  demoActive ? (
+                {/* 2. ESCENAS SIMULADAS DE MANAGUA Y DEMOSTRACIÓN GUIADA */}
+                <div className="pt-3 border-t border-[#3c494c]/40 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-sm font-extrabold text-[#8aebff]">
+                        2. Escenas de Prueba (Managua)
+                      </h2>
+                      <p className="text-[11px] text-[#bbc9cd]">
+                         Toca una escena para evaluar cómo responde AVISIA o inicia el recorrido guiado.
+                      </p>
+                    </div>
+                  </div>
+
+                  {demoActive ? (
                     <button
                       type="button"
                       onClick={stopGuidedDemo}
-                      className="w-full py-3 px-4 rounded-2xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-sm flex items-center justify-center gap-2 shadow-md"
+                      className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md"
                     >
                       <Square className="w-4 h-4 fill-current" />
-                      Detener Demo Autónoma
+                      Detener Recorrido Guiado
                     </button>
                   ) : (
                     <button
@@ -1697,447 +1651,247 @@ export function App() {
                         speechService.unlockAudio();
                         startGuidedDemo();
                       }}
-                      className="w-full py-3 px-4 rounded-2xl bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] font-bold text-sm flex items-center justify-center gap-2 shadow-md"
+                      className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md"
                     >
                       <Play className="w-4 h-4 fill-current" />
-                      Iniciar Demo Autónoma
+                      Iniciar Recorrido Guiado Automático
                     </button>
-                  )
-                )}
-
-                {/* v5.0 · Motor Neuronal en Web Worker (D-FINE + Plano 3D + VLM) */}
-                <div className="p-3 rounded-2xl border border-[#22d3ee]/40 bg-[#1c2028] space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#8aebff]">
-                      v5.0 · D-FINE, Plano 3D y VLM
-                    </span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#22d3ee]/15 text-[#8aebff]">
-                      Worker ON
-                    </span>
-                  </div>
-
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-[#bbc9cd] block">
-                      Motor detector en tiempo real:
-                    </span>
-                    <div className="grid grid-cols-3 gap-1">
-                      {(
-                        [
-                          { id: 'dfine_s_obj365', label: 'Obj365 · 366cl' },
-                          { id: 'dfine_n', label: 'D-FINE-N · 43%' },
-                          { id: 'dfine_s', label: 'D-FINE-S · 49%' },
-                          { id: 'yolov10n', label: 'YOLOv10n' },
-                          { id: 'efficientdet_lite2', label: 'Lite2 · 34%' },
-                          { id: 'efficientdet_lite0', label: 'Lite0 Ráp.' },
-                        ] as Array<{ id: DetectorEngineId; label: string }>
-                      ).map((eng) => {
-                        const selected = streetFeatures.detectorEngine === eng.id;
-                        return (
-                          <button
-                            key={eng.id}
-                            type="button"
-                            onClick={() =>
-                              setStreetFeatures((prev) => ({
-                                ...prev,
-                                detectorEngine: eng.id,
-                              }))
-                            }
-                            className={`py-1.5 px-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
-                              selected
-                                ? 'bg-[#22d3ee] text-[#00363e] border-[#22d3ee]'
-                                : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/50'
-                            }`}
-                          >
-                            {eng.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={streetFeatures.autoEscalateLowConfVlm !== false}
-                    onClick={() =>
-                      setStreetFeatures((prev) => ({
-                        ...prev,
-                        autoEscalateLowConfVlm: prev.autoEscalateLowConfVlm === false,
-                      }))
-                    }
-                    className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
-                  >
-                    <span className="text-[11px] font-medium text-[#dfe2ee]">
-                      Auto-VLM en imágenes ambiguas (&lt;55%)
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                        streetFeatures.autoEscalateLowConfVlm !== false
-                          ? 'bg-[#4edea3]/20 text-[#4edea3]'
-                          : 'bg-[#262a33] text-[#859397]'
-                      }`}
-                    >
-                      {streetFeatures.autoEscalateLowConfVlm !== false ? 'ON' : 'OFF'}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={Boolean(streetFeatures.offlineVlmEnabled)}
-                    onClick={() =>
-                      setStreetFeatures((prev) => ({
-                        ...prev,
-                        offlineVlmEnabled: !prev.offlineVlmEnabled,
-                      }))
-                    }
-                    className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
-                  >
-                    <span className="text-[11px] font-medium text-[#dfe2ee]">
-                      Respaldo VLM Offline (SmolVLM WebGPU)
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                        streetFeatures.offlineVlmEnabled
-                          ? 'bg-[#c084fc]/25 text-[#d8b4fe]'
-                          : 'bg-[#262a33] text-[#859397]'
-                      }`}
-                    >
-                      {streetFeatures.offlineVlmEnabled ? 'ON' : 'OFF'}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={streetFeatures.architecturalVisionEnabled}
-                    onClick={() =>
-                      setStreetFeatures((prev) => ({
-                        ...prev,
-                        architecturalVisionEnabled: !prev.architecturalVisionEnabled,
-                      }))
-                    }
-                    className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
-                  >
-                    <span className="text-[11px] font-medium text-[#dfe2ee]">
-                      Puertas, cortinas y piso libre (SegFormer)
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                        streetFeatures.architecturalVisionEnabled
-                          ? 'bg-[#4edea3]/20 text-[#4edea3]'
-                          : 'bg-[#262a33] text-[#859397]'
-                      }`}
-                    >
-                      {streetFeatures.architecturalVisionEnabled ? 'ON' : 'OFF'}
-                    </span>
-                  </button>
-
-                  {streetFeatures.architecturalVisionEnabled && (
-                    <div className="space-y-1">
-                      <span className="text-[10px] text-[#bbc9cd] block">
-                        Calidad de puertas y cortinas (320×240):
-                      </span>
-                      <div className="grid grid-cols-2 gap-1">
-                        {(
-                          [
-                            { id: 'segformer_b0', label: 'SegFormer-B0 · Rápido' },
-                            { id: 'segformer_b1', label: 'SegFormer-B1 · Puertas+' },
-                          ] as Array<{ id: ArchModelVariant; label: string }>
-                        ).map((opt) => {
-                          const selected = streetFeatures.archModelVariant === opt.id;
-                          return (
-                            <button
-                              key={opt.id}
-                              type="button"
-                              onClick={() =>
-                                setStreetFeatures((prev) => ({
-                                  ...prev,
-                                  archModelVariant: opt.id,
-                                }))
-                              }
-                              className={`py-1.5 px-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
-                                selected
-                                  ? 'bg-[#c084fc] text-[#1e1033] border-[#c084fc]'
-                                  : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/50'
-                              }`}
-                            >
-                              {opt.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
                   )}
 
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={streetFeatures.showStixelOverlay}
-                    onClick={() =>
-                      setStreetFeatures((prev) => ({
-                        ...prev,
-                        showStixelOverlay: !prev.showStixelOverlay,
-                      }))
-                    }
-                    className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
-                  >
-                    <span className="text-[11px] font-medium text-[#dfe2ee]">
-                      Barras Stixel 5 sectores (10h..2h)
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                        streetFeatures.showStixelOverlay
-                          ? 'bg-[#4edea3]/20 text-[#4edea3]'
-                          : 'bg-[#262a33] text-[#859397]'
-                      }`}
-                    >
-                      {streetFeatures.showStixelOverlay ? 'ON' : 'OFF'}
-                    </span>
-                  </button>
-
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-[#bbc9cd] block">
-                      Frecuencia de alertas de voz:
-                    </span>
-                    <div className="grid grid-cols-2 gap-1">
-                      {(
-                        [
-                          { id: 'essential', label: 'Esenciales (Tranquilo)' },
-                          { id: 'detailed', label: 'Detallado' },
-                        ] as Array<{ id: AudioVerbosity; label: string }>
-                      ).map((opt) => {
-                        const selected = streetFeatures.audioVerbosity === opt.id;
-                        return (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            onClick={() =>
-                              setStreetFeatures((prev) => ({
-                                ...prev,
-                                audioVerbosity: opt.id,
-                              }))
-                            }
-                            className={`py-1.5 px-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
-                              selected
-                                ? 'bg-[#4edea3] text-[#003824] border-[#4edea3]'
-                                : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/50'
-                            }`}
-                          >
-                            {opt.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={streetFeatures.clockFaceDirections}
-                    onClick={() =>
-                      setStreetFeatures((prev) => ({
-                        ...prev,
-                        clockFaceDirections: !prev.clockFaceDirections,
-                      }))
-                    }
-                    className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
-                  >
-                    <span className="text-[11px] font-medium text-[#dfe2ee]">
-                      Posición tipo reloj (a las 10 / 12 / 2)
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                        streetFeatures.clockFaceDirections
-                          ? 'bg-[#4edea3]/20 text-[#4edea3]'
-                          : 'bg-[#262a33] text-[#859397]'
-                      }`}
-                    >
-                      {streetFeatures.clockFaceDirections ? 'ON' : 'OFF'}
-                    </span>
-                  </button>
-                </div>
-
-                {/* v2.5 · Modo Calle y Manos Libres (Interruptores opcionales) */}
-                <div className="p-3 rounded-2xl border border-[#3c494c]/40 bg-[#1c2028] space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#8aebff]">
-                      v2.5 · Modo Calle (Arnés)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const anyOn =
-                          streetFeatures.streetMode ||
-                          streetFeatures.stereoSonar ||
-                          streetFeatures.soundOnlyMode ||
-                          streetFeatures.handsFreeWakeWord ||
-                          streetFeatures.headsetButton ||
-                          streetFeatures.depthAnythingEnabled;
-                        setStreetFeatures((prev) => ({
-                          ...prev,
-                          streetMode: !anyOn,
-                          stereoSonar: !anyOn,
-                          soundOnlyMode: !anyOn,
-                          handsFreeWakeWord: !anyOn,
-                          headsetButton: !anyOn,
-                          depthAnythingEnabled: !anyOn,
-                        }));
-                      }}
-                      className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#262a33] text-[#4edea3] hover:bg-[#31353e]"
-                    >
-                      {streetFeatures.streetMode ||
-                      streetFeatures.stereoSonar ||
-                      streetFeatures.soundOnlyMode ||
-                      streetFeatures.handsFreeWakeWord ||
-                      streetFeatures.headsetButton ||
-                      streetFeatures.depthAnythingEnabled
-                        ? 'Apagar todo'
-                        : 'Activar todo'}
-                    </button>
-                  </div>
-
-                  {(
-                    [
-                      {
-                        key: 'soundOnlyMode',
-                        label: 'Solo sonidos (sin palabras)',
-                      },
-                      {
-                        key: 'depthAnythingEnabled',
-                        label: 'Profundidad IA (Depth Anything V2)',
-                      },
-                      {
-                        key: 'streetMode',
-                        label: 'Micro-alertas rápidas (2-3 palabras)',
-                      },
-                      {
-                        key: 'stereoSonar',
-                        label: 'Sonar estéreo (Izq / Centro / Der)',
-                      },
-                      {
-                        key: 'handsFreeWakeWord',
-                        label: 'Voz manos libres ("Oye Avisia")',
-                      },
-                      {
-                        key: 'headsetButton',
-                        label: 'Botón de audífonos Bluetooth',
-                      },
-                    ] as const
-                  ).map((item) => {
-                    const enabled = streetFeatures[item.key];
-                    return (
-                      <button
-                        key={item.key}
-                        type="button"
-                        role="switch"
-                        aria-checked={enabled}
-                        onClick={() =>
-                          setStreetFeatures((prev) => ({
-                            ...prev,
-                            [item.key]: !prev[item.key],
-                          }))
-                        }
-                        className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
-                      >
-                        <span className="text-[11px] font-medium text-[#dfe2ee]">
-                          {item.label}
-                        </span>
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                            enabled
-                              ? 'bg-[#4edea3]/20 text-[#4edea3]'
-                              : 'bg-[#262a33] text-[#859397]'
+                  <div className="space-y-1.5">
+                    {scenarios.map((s) => {
+                      const isCurrentScene = mode === 'simulation' && s.id === activeScenario.id;
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => {
+                            setDemoActive(false);
+                            setMode('simulation');
+                            setMobileTab('vision');
+                            handleSelectScenario(s.id);
+                          }}
+                          className={`w-full p-2.5 rounded-xl text-left border flex items-center justify-between gap-2 transition-colors ${
+                            isCurrentScene
+                              ? 'bg-[#22d3ee]/16 border-[#22d3ee] text-[#8aebff]'
+                              : 'bg-[#1c2028] border-[#3c494c]/40 text-[#dfe2ee] hover:border-[#859397]'
                           }`}
                         >
-                          {enabled ? 'ON' : 'OFF'}
-                        </span>
-                      </button>
-                    );
-                  })}
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold truncate">
+                              Escena {s.number}: {s.title}
+                            </div>
+                            <div className="text-[11px] text-[#bbc9cd] truncate">{s.subtitle}</div>
+                          </div>
+                          {isCurrentScene && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#4edea3]/20 text-[#4edea3] text-[10px] font-bold shrink-0">
+                              <Check className="w-3 h-3" />
+                              Activa
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div>
-                  <div className="text-[10px] font-mono font-semibold uppercase tracking-wider text-[#859397] mb-2">
-                    Modos de operación
+                {/* 3. LABORATORIO DE ARCHIVOS (SUBIR FOTO / VIDEO) Y SEGURIDAD */}
+                <div className="pt-3 border-t border-[#3c494c]/40 space-y-2">
+                  <div className="text-xs font-extrabold text-[#8aebff]">
+                    3. Evaluar con Foto o Video Guardado
                   </div>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleModeChange('simulation')}
-                      className={`py-2 px-2.5 rounded-xl text-xs font-medium text-left border ${
-                        mode === 'simulation'
-                          ? 'bg-[#22d3ee]/20 border-[#22d3ee] text-[#8aebff]'
-                          : 'bg-[#1c2028] border-[#3c494c]/40 text-[#bbc9cd]'
-                      }`}
-                    >
-                      Escenas (A)
-                    </button>
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => handleModeChange('vision_lab')}
-                      className={`py-2 px-2.5 rounded-xl text-xs font-medium text-left border ${
+                      className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border ${
                         mode === 'vision_lab'
                           ? 'bg-[#4edea3]/20 border-[#4edea3] text-[#6ffbbe]'
-                          : 'bg-[#1c2028] border-[#3c494c]/40 text-[#bbc9cd]'
+                          : 'bg-[#1c2028] border-[#3c494c]/50 text-[#dfe2ee]'
                       }`}
                     >
-                      Imagen IA (B)
+                      <FlaskConical className="w-4 h-4 shrink-0" />
+                      Subir Foto
                     </button>
                     <button
                       type="button"
                       onClick={() => handleModeChange('video_lab')}
-                      className={`py-2 px-2.5 rounded-xl text-xs font-medium text-left border ${
+                      className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border ${
                         mode === 'video_lab'
                           ? 'bg-[#22d3ee]/20 border-[#22d3ee] text-[#8aebff]'
-                          : 'bg-[#1c2028] border-[#3c494c]/40 text-[#bbc9cd]'
+                          : 'bg-[#1c2028] border-[#3c494c]/50 text-[#dfe2ee]'
                       }`}
                     >
-                      Video IA (C)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleModeChange('live_camera')}
-                      className={`py-2 px-2.5 rounded-xl text-xs font-medium text-left border ${
-                        mode === 'live_camera'
-                          ? 'bg-[#ffb147]/20 border-[#ffb147] text-[#ffd6a7]'
-                          : 'bg-[#1c2028] border-[#3c494c]/40 text-[#bbc9cd]'
-                      }`}
-                    >
-                      Cámara (D)
+                      <Film className="w-4 h-4 shrink-0" />
+                      Subir Video
                     </button>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAndroidMenuOpen(false);
+                      setConsentModalOpen(true);
+                    }}
+                    className="w-full min-h-[42px] py-2 px-3 rounded-xl bg-[#0f131c] border border-[#3c494c]/60 text-[#bbc9cd] font-semibold text-xs flex items-center justify-center gap-2"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-[#4edea3]" />
+                    Aviso de Seguridad y Privacidad · UAM
+                  </button>
                 </div>
 
-                <div>
-                  <div className="text-[10px] font-mono font-semibold uppercase tracking-wider text-[#859397] mb-2">
-                    Escenarios de Managua
-                  </div>
-                  <div className="space-y-1.5">
-                    {scenarios.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => {
-                          setMode('simulation');
-                          setMobileTab('vision');
-                          handleSelectScenario(s.id);
-                        }}
-                        className={`w-full p-2.5 rounded-xl text-left border transition-colors ${
-                          s.id === activeScenario.id && mode === 'simulation'
-                            ? 'bg-[#22d3ee]/15 border-[#22d3ee] text-[#8aebff]'
-                            : 'bg-[#1c2028] border-[#3c494c]/40 text-[#dfe2ee] hover:border-[#859397]'
-                        }`}
-                      >
-                        <div className="text-xs font-semibold">
-                          {s.number}. {s.title}
+                {/* 4. AJUSTES TÉCNICOS AVANZADOS (COLAPSADOS POR DEFECTO PARA NO CONFUNDIR) */}
+                {!isNativeApp && (
+                  <div className="pt-2 border-t border-[#3c494c]/30">
+                    <button
+                      type="button"
+                      aria-expanded={showAdvancedTech}
+                      onClick={() => setShowAdvancedTech((v) => !v)}
+                      className="w-full py-2 px-3 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-[11px] font-semibold text-[#859397] hover:text-[#dfe2ee] flex items-center justify-between"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Cpu className="w-3.5 h-3.5 text-[#8aebff]" />
+                        Ajustes técnicos manuales (se configuran solos con el modo)
+                      </span>
+                      <span>{showAdvancedTech ? 'Ocultar ▲' : 'Mostrar ▼'}</span>
+                    </button>
+
+                    {showAdvancedTech && (
+                      <div className="mt-2 p-3 rounded-2xl border border-[#3c494c]/40 bg-[#141821] space-y-2.5">
+                        <div className="space-y-1">
+                          <span className="text-[10px] text-[#bbc9cd] block">
+                            Motor detector neuronal:
+                          </span>
+                          <div className="grid grid-cols-3 gap-1">
+                            {(
+                              [
+                                { id: 'dfine_s_obj365', label: 'Obj365 · 366cl' },
+                                { id: 'dfine_n', label: 'D-FINE-N · 43%' },
+                                { id: 'dfine_s', label: 'D-FINE-S · 49%' },
+                                { id: 'yolov10n', label: 'YOLOv10n' },
+                                { id: 'efficientdet_lite2', label: 'Lite2 · 34%' },
+                                { id: 'efficientdet_lite0', label: 'Lite0 Ráp.' },
+                              ] as Array<{ id: DetectorEngineId; label: string }>
+                            ).map((eng) => {
+                              const selected = streetFeatures.detectorEngine === eng.id;
+                              return (
+                                <button
+                                  key={eng.id}
+                                  type="button"
+                                  onClick={() =>
+                                    setStreetFeatures((prev) => ({
+                                      ...prev,
+                                      detectorEngine: eng.id,
+                                    }))
+                                  }
+                                  className={`py-1.5 px-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                                    selected
+                                      ? 'bg-[#22d3ee] text-[#00363e] border-[#22d3ee]'
+                                      : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/50'
+                                  }`}
+                                >
+                                  {eng.label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                        <div className="text-[11px] text-[#bbc9cd]">{s.subtitle}</div>
-                      </button>
-                    ))}
+
+                        <div className="grid grid-cols-2 gap-1">
+                          {(
+                            [
+                              { id: 'essential', label: 'Voz: Esencial (Tranquilo)' },
+                              { id: 'detailed', label: 'Voz: Detallada' },
+                            ] as Array<{ id: AudioVerbosity; label: string }>
+                          ).map((opt) => {
+                            const selected = streetFeatures.audioVerbosity === opt.id;
+                            return (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() =>
+                                  setStreetFeatures((prev) => ({
+                                    ...prev,
+                                    audioVerbosity: opt.id,
+                                  }))
+                                }
+                                className={`py-1.5 px-2 rounded-lg text-[10px] font-bold border ${
+                                  selected
+                                    ? 'bg-[#4edea3] text-[#003824] border-[#4edea3]'
+                                    : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/50'
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {(
+                          [
+                            {
+                              key: 'architecturalVisionEnabled',
+                              label: 'Puertas, paredes y piso libre (SegFormer)',
+                            },
+                            {
+                              key: 'depthAnythingEnabled',
+                              label: 'Profundidad 3D (Depth Anything V2)',
+                            },
+                            {
+                              key: 'showStixelOverlay',
+                              label: 'Barras visuales de espacio libre (10h..2h)',
+                            },
+                            {
+                              key: 'clockFaceDirections',
+                              label: 'Direcciones tipo reloj (a las 10 / 12 / 2)',
+                            },
+                            {
+                              key: 'stereoSonar',
+                              label: 'Sonar direccional (Izquierda / Centro / Derecha)',
+                            },
+                            {
+                              key: 'soundOnlyMode',
+                              label: 'Solo sonidos y vibración (sin voz)',
+                            },
+                            {
+                              key: 'handsFreeWakeWord',
+                              label: 'Comando manos libres ("Oye Avisia")',
+                            },
+                          ] as const
+                        ).map((item) => {
+                          const enabled = Boolean(streetFeatures[item.key]);
+                          return (
+                            <button
+                              key={item.key}
+                              type="button"
+                              role="switch"
+                              aria-checked={enabled}
+                              onClick={() =>
+                                setStreetFeatures((prev) => ({
+                                  ...prev,
+                                  [item.key]: !prev[item.key],
+                                }))
+                              }
+                              className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
+                            >
+                              <span className="text-[11px] font-medium text-[#dfe2ee]">
+                                {item.label}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                                  enabled
+                                    ? 'bg-[#4edea3]/20 text-[#4edea3]'
+                                    : 'bg-[#262a33] text-[#859397]'
+                                }`}
+                              >
+                                {enabled ? 'ON' : 'OFF'}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                </div>
-                  </>
                 )}
               </div>
             )}

@@ -4,23 +4,32 @@ export interface AppPresetDefinition {
   id: AppPresetId;
   title: string;
   shortTitle: string;
+  subtitle: string;
   description: string;
+  includedSummary: string[];
   spokenConfirm: string;
-  features: Partial<StreetAssistFeatures>;
+  features: StreetAssistFeatures;
 }
 
 /**
- * 5 high-level, jargon-free general modes designed for the Android mobile app (v5.0).
- * Each mode automatically configures D-FINE / EfficientDet, SegFormer, 3D Depth Ground-Plane
- * anti-false-stair verification, and low-cognitive-load Delta Narration in a single tap.
+ * 5 human-centered general modes (v5.1) that consolidate all 15+ technical vision,
+ * depth, segmentation, and audio switches into simple one-tap buttons for both Web and Android.
  */
 export const APP_PRESETS: AppPresetDefinition[] = [
   {
     id: 'indoor',
-    title: 'Interiores',
+    title: '1. Interiores (Casa y Oficina)',
     shortTitle: 'Interiores',
-    description: 'D-FINE Objects365 (366 clases interiores) + puertas, paredes, plano 3D y paso libre.',
-    spokenConfirm: 'Modo Interiores activado. Detección precisa de puertas, paredes, muebles y camino despejado.',
+    subtitle: 'Recomendado bajo techo',
+    description:
+      'Detecta puertas abiertas o cerradas, paredes, escritorios, sillas y gradas, y avisa cuando el pasillo está despejado.',
+    includedSummary: [
+      '366 objetos interiores + Puertas y Paredes',
+      'Detector 3D de camino despejado y gradas',
+      'Voz tranquila (solo avisa lo importante)',
+    ],
+    spokenConfirm:
+      'Modo Interiores activado. Detección de puertas, paredes, muebles y camino despejado.',
     features: {
       activePreset: 'indoor',
       detectorEngine: 'dfine_s_obj365',
@@ -32,17 +41,27 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       stereoSonar: false,
       soundOnlyMode: false,
       handsFreeWakeWord: false,
+      headsetButton: false,
       clockFaceDirections: true,
       showStixelOverlay: true,
+      offlineVlmEnabled: false,
       autoEscalateLowConfVlm: true,
     },
   },
   {
     id: 'street',
-    title: 'Calle / Exterior',
+    title: '2. Calle y Exterior (Manos Libres)',
     shortTitle: 'Calle',
-    description: 'D-FINE rápido, desniveles 3D reales, sonar direccional y manos libres.',
-    spokenConfirm: 'Modo Calle activado. Alertas rápidas y detector de desniveles 3D.',
+    subtitle: 'Caminata en aceras',
+    description:
+      'Alertas cortas y rápidas para vehículos, peatones, postes y desniveles, con sonar direccional y voz "Oye Avisia".',
+    includedSummary: [
+      'Alertas rápidas (2–3 palabras) + Reloj',
+      'Desniveles 3D + Sonar izquierda/derecha',
+      'Manos libres "Oye Avisia" y botón Bluetooth',
+    ],
+    spokenConfirm:
+      'Modo Calle activado. Alertas rápidas, detector de desniveles y manos libres.',
     features: {
       activePreset: 'street',
       detectorEngine: 'dfine_n',
@@ -57,36 +76,56 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       headsetButton: true,
       clockFaceDirections: true,
       showStixelOverlay: true,
+      offlineVlmEnabled: false,
       autoEscalateLowConfVlm: true,
     },
   },
   {
     id: 'currency',
-    title: 'Billetes (Automático)',
+    title: '3. Lector de Billetes (Automático)',
     shortTitle: 'Billetes',
-    description: 'Detecta automáticamente córdobas (10–1000) y dólares ($1–$100) solo al mostrarlos.',
+    subtitle: 'Córdobas y dólares',
+    description:
+      'Identifica automáticamente billetes de Nicaragua (C$10 a C$1000) y dólares ($1 a $100) al mostrarlos frente a la cámara.',
+    includedSummary: [
+      'Lectura automática sin tocar botones',
+      'Córdobas (10–1000) y Dólares ($1–$100)',
+      'Silencia alertas de paredes mientras cuentas',
+    ],
     spokenConfirm:
       'Modo Billetes automático activado. Muestra cualquier billete en córdobas o dólares frente a la cámara.',
     features: {
       activePreset: 'currency',
       detectorEngine: 'efficientdet_lite2',
       architecturalVisionEnabled: false,
+      archModelVariant: 'segformer_b0',
       depthAnythingEnabled: false,
       audioVerbosity: 'essential',
       streetMode: false,
       stereoSonar: false,
       soundOnlyMode: false,
       handsFreeWakeWord: false,
+      headsetButton: false,
       clockFaceDirections: true,
       showStixelOverlay: false,
+      offlineVlmEnabled: false,
+      autoEscalateLowConfVlm: false,
     },
   },
   {
     id: 'precision',
-    title: 'Máxima Precisión',
-    shortTitle: 'Precisión',
-    description: 'D-FINE Objects365 (366 clases), profundidad 3D, puertas abiertas/cerradas y narración detallada.',
-    spokenConfirm: 'Modo Máxima Precisión activado. Reconocimiento avanzado de 366 clases e identificación detallada.',
+    title: '4. Exploración Detallada (Todo)',
+    shortTitle: 'Detallado',
+    subtitle: 'Máxima descripción',
+    description:
+      'Narra todos los objetos y muebles del entorno con el motor de 366 clases, profundidad 3D, puertas e inteligencia artificial.',
+    includedSummary: [
+      'Narra todos los objetos cercanos y medios',
+      'Máxima precisión (366 clases + Puertas+)',
+      'Apoyo IA en escenas complejas + Offline',
+    ],
+    spokenConfirm:
+      'Modo Exploración Detallada activado. Reconocimiento completo e identificación detallada.',
     features: {
       activePreset: 'precision',
       detectorEngine: 'dfine_s_obj365',
@@ -98,30 +137,42 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       stereoSonar: false,
       soundOnlyMode: false,
       handsFreeWakeWord: false,
+      headsetButton: false,
       clockFaceDirections: true,
       showStixelOverlay: true,
+      offlineVlmEnabled: true,
       autoEscalateLowConfVlm: true,
     },
   },
   {
     id: 'silent',
-    title: 'Solo Tonos y Vibración',
-    shortTitle: 'Tonos',
-    description: 'Guía discreta de bajo consumo con tonos y vibración, sin voz automática.',
+    title: '5. Modo Discreto (Tonos y Vibración)',
+    shortTitle: 'Discreto',
+    subtitle: 'Sin voz en público',
+    description:
+      'Guía silenciosa para reuniones o lugares públicos: avisa obstáculos con tonos espaciales y vibración, sin hablar.',
+    includedSummary: [
+      'Sin voz automática (100% discreto)',
+      'Tonos estéreo (izquierda / centro / derecha)',
+      'Vibración háptica según cercanía y puertas',
+    ],
     spokenConfirm: 'Modo discreto activado. Solo tonos y vibración.',
     features: {
       activePreset: 'silent',
-      detectorEngine: 'efficientdet_lite2',
+      detectorEngine: 'dfine_n',
       architecturalVisionEnabled: true,
       archModelVariant: 'segformer_b0',
-      depthAnythingEnabled: false,
+      depthAnythingEnabled: true,
       audioVerbosity: 'essential',
       streetMode: false,
       stereoSonar: true,
       soundOnlyMode: true,
       handsFreeWakeWord: false,
+      headsetButton: false,
       clockFaceDirections: true,
       showStixelOverlay: true,
+      offlineVlmEnabled: false,
+      autoEscalateLowConfVlm: false,
     },
   },
 ];
