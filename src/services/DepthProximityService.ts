@@ -14,7 +14,14 @@ export interface ProximityAssessment {
   estimatedMeters: number | null;
   corridorScore: number;
   verticalObstacleDetected: boolean;
+  /**
+   * 2D horizontal contrast on the floor cannot distinguish flat colored tiles, rugs, or shadows
+   * from real 3D stairs. Therefore floorVariationDetected is NEVER triggered from 2D RGB edges
+   * alone (3D Depth Anything V2 ground-plane fitting + SegFormer stairs handle steps accurately).
+   */
   floorVariationDetected: boolean;
+  /** Informational 2D floor texture/color contrast score [0..100] (never fires a stair alarm) */
+  floorTextureContrast?: number;
   flatWallAhead: boolean;
   approachingFast: boolean;
   ttcSeconds: number | null;
@@ -43,14 +50,12 @@ export class DepthProximityService {
   private offscreenCanvas: HTMLCanvasElement | null = null;
   private prevTracks: TrackedBox[] = [];
   private prevLuma: Float32Array | null = null;
-  private stepStreak = 0;
   private verticalStreak = 0;
   private flatWallStreak = 0;
 
   reset(): void {
     this.prevTracks = [];
     this.prevLuma = null;
-    this.stepStreak = 0;
     this.verticalStreak = 0;
     this.flatWallStreak = 0;
   }
@@ -258,17 +263,14 @@ export class DepthProximityService {
     let cameraQuality: CameraQualityIssue = 'ok';
     if (avgLuma < 14 && lumaStdDev < 10) {
       cameraQuality = 'lens_blocked';
-      this.stepStreak = 0;
       this.verticalStreak = 0;
       this.flatWallStreak = 0;
     } else if (avgLuma < 24) {
       cameraQuality = 'too_dark';
-      this.stepStreak = 0;
       this.verticalStreak = 0;
       this.flatWallStreak = 0;
     } else if (motionScore > 26) {
       cameraQuality = 'fast_motion';
-      this.stepStreak = 0;
       this.verticalStreak = 0;
     } else if (centerStd < 5.2 && centerMean >= 46 && detections.length === 0) {
       // Strictly uniform bright wall filling center across >= 4 calm frames
@@ -285,7 +287,6 @@ export class DepthProximityService {
     // Analyze central walking corridor only when camera is calm & illuminated
     let verticalRatio = 0;
     let horizontalRatio = 0;
-    let stepRows = 0;
 
     if (cameraQuality === 'ok') {
       const xStart = Math.floor(w * 0.28);
@@ -298,38 +299,17 @@ export class DepthProximityService {
       let samples = 0;
 
       for (let y = yStart + 1; y < yEnd - 1; y++) {
-        let rowDySum = 0;
-        let rowDxSum = 0;
-        let rowCount = 0;
         for (let x = xStart + 1; x < xEnd - 1; x++) {
           const dx = Math.abs(lumaAt(x + 1, y) - lumaAt(x - 1, y));
           const dy = Math.abs(lumaAt(x, y + 1) - lumaAt(x, y - 1));
           if (dx > 44 && dx > dy * 1.35) strongVerticalEdges++;
           if (dy > 42 && dy > dx * 1.35) strongHorizontalEdges++;
-          rowDySum += dy;
-          rowDxSum += dx;
-          rowCount++;
           samples++;
-        }
-        // Row-wise horizontal band check for real steps / curbs (stricter to avoid floor tiles)
-        if (y >= Math.floor(h * 0.58) && rowCount > 0) {
-          const avgDy = rowDySum / rowCount;
-          const avgDx = rowDxSum / rowCount;
-          if (avgDy > 22 && avgDy > avgDx * 1.35) {
-            stepRows++;
-          }
         }
       }
 
       verticalRatio = samples > 0 ? strongVerticalEdges / samples : 0;
       horizontalRatio = samples > 0 ? strongHorizontalEdges / samples : 0;
-
-      // Require temporal streak (multi-frame confirmation) to eliminate flicker false alarms
-      if (stepRows >= 2 && horizontalRatio > 0.08) {
-        this.stepStreak = Math.min(6, this.stepStreak + 1);
-      } else {
-        this.stepStreak = Math.max(0, this.stepStreak - 1);
-      }
 
       if (verticalRatio > 0.14) {
         this.verticalStreak = Math.min(6, this.verticalStreak + 1);
@@ -338,7 +318,10 @@ export class DepthProximityService {
       }
     }
 
-    const floorVariationDetected = this.stepStreak >= 3;
+    // 2D RGB edge gradients cannot separate tile seams, shadows, or floor color changes from 3D steps.
+    // Real stair / drop-off detection is handled strictly by 3D Depth Anything V2 ground-plane analysis + SegFormer.
+    const floorVariationDetected = false;
+    const floorTextureContrast = Math.min(100, Math.round(horizontalRatio * 300));
     const verticalObstacleDetected = this.verticalStreak >= 2;
 
     const corridorScore = Math.min(
@@ -346,15 +329,13 @@ export class DepthProximityService {
       Math.round(
         Math.max(
           verticalRatio * 300,
-          horizontalRatio * 300,
-          floorVariationDetected ? 82 : stepRows * 10,
           flatWallAhead ? 90 : 0
         )
       )
     );
 
     let level: ProximityLevel = ttcInfo.approachingFast ? 'danger' : detEstimate.level;
-    if (flatWallAhead || floorVariationDetected || verticalRatio > 0.2) {
+    if (flatWallAhead || verticalRatio > 0.2) {
       level = 'danger';
     } else if (verticalObstacleDetected) {
       level = level === 'danger' ? 'danger' : 'caution';
@@ -371,8 +352,6 @@ export class DepthProximityService {
       alertText = `¡Alto! ${ttcInfo.targetLabel} acercándose rápido (~${ttcInfo.ttcSeconds}s)`;
     } else if (detEstimate.level === 'danger' && detEstimate.closestLabel) {
       alertText = `${detEstimate.closestLabel} muy cerca, a ${detEstimate.estimatedMeters} m.`;
-    } else if (floorVariationDetected) {
-      alertText = '¡Alto! Posible grada o desnivel adelante.';
     } else if (verticalObstacleDetected && detections.length === 0) {
       alertText = 'Posible obstáculo inmóvil frente a ti.';
     } else if (detEstimate.level === 'caution' && detEstimate.closestLabel) {
@@ -385,6 +364,7 @@ export class DepthProximityService {
       corridorScore,
       verticalObstacleDetected,
       floorVariationDetected,
+      floorTextureContrast,
       flatWallAhead,
       approachingFast: ttcInfo.approachingFast,
       ttcSeconds: ttcInfo.ttcSeconds,

@@ -1,5 +1,6 @@
 import type { ArchModelVariant, Detection, ObjectCategory } from '../types/avicia';
 import { computeClockPosition, estimatePinholeMeters } from './DetectorService';
+import { visionWorkerClient } from './VisionWorkerClient';
 
 export interface ArchitecturalStatus {
   ready: boolean;
@@ -35,6 +36,8 @@ export interface ArchitecturalAnalysis {
   openDoorwayDetected: boolean;
   /** Estimated center sector index (1..3) of geometric open doorway, if found */
   openDoorwaySectorIdx: number | null;
+  /** True when SegFormer explicitly segments stairs / stairway / step pixels */
+  hasStairsMask: boolean;
   pathVisuallyClear: boolean;
   detectedLabelsEs: string[];
   inferenceMs: number;
@@ -522,6 +525,11 @@ export function parseArchitecturalSegments(
     openDoorwayDetected ||
     (!corridorBlockedByArch && walkableCorridorPct >= 22 && wallCorridorPct < 48);
 
+  const hasStairsMask = detections.some((d) => {
+    const l = d.labelEs.toLowerCase();
+    return l.includes('escalera') || l.includes('grada');
+  });
+
   return {
     detections,
     walkableCorridorPct,
@@ -530,6 +538,7 @@ export function parseArchitecturalSegments(
     sectorWallPct,
     openDoorwayDetected,
     openDoorwaySectorIdx,
+    hasStairsMask,
     pathVisuallyClear,
     detectedLabelsEs: Array.from(seenLabels),
     inferenceMs,
@@ -539,10 +548,11 @@ export function parseArchitecturalSegments(
 /**
  * Local 100%-free Architectural Semantic Segmenter powered by
  * SegFormer-B0 (37.4% mIoU) or SegFormer-B1 (42.2% mIoU, +4.8 pts on doors/curtains/floor)
- * at crisp 320x240 input resolution.
+ * running off-main-thread in the Vision Web Worker with exact portrait/landscape aspect preservation.
  */
 export class ArchitecturalSegmenterService {
   private segmenter: SegmentPipelineFn | null = null;
+  private usingWorker = false;
   private captureCanvas: HTMLCanvasElement | null = null;
   private activeVariant: ArchModelVariant = 'segformer_b0';
   private status: ArchitecturalStatus = {
@@ -564,11 +574,12 @@ export class ArchitecturalSegmenterService {
   }
 
   async setVariant(variant: ArchModelVariant): Promise<ArchitecturalStatus> {
-    if (variant === this.activeVariant && this.status.ready && this.segmenter) {
+    if (variant === this.activeVariant && this.status.ready && (this.usingWorker || this.segmenter)) {
       return this.getStatus();
     }
     this.activeVariant = variant;
     this.segmenter = null;
+    this.usingWorker = false;
     this.status = {
       ready: false,
       loading: false,
@@ -597,7 +608,9 @@ export class ArchitecturalSegmenterService {
   }
 
   async initialize(variant: ArchModelVariant = this.activeVariant): Promise<ArchitecturalStatus> {
-    if (this.segmenter && this.activeVariant === variant) return this.getStatus();
+    if ((this.usingWorker || this.segmenter) && this.activeVariant === variant && this.status.ready) {
+      return this.getStatus();
+    }
     if (this.status.loading) return this.getStatus();
 
     this.activeVariant = variant;
@@ -609,10 +622,34 @@ export class ArchitecturalSegmenterService {
       error: null,
     };
 
-    const preferredBackend = await this.detectBackend();
     const variantChain: ArchModelVariant[] =
       variant === 'segformer_b1' ? ['segformer_b1', 'segformer_b0'] : ['segformer_b0'];
 
+    // 1. Primary: Dedicated Web Worker (zero UI/TTS blocking)
+    if (visionWorkerClient.isAvailable()) {
+      for (const candidate of variantChain) {
+        try {
+          const res = await visionWorkerClient.initSegmenter(ARCH_MODEL_IDS[candidate]);
+          this.usingWorker = true;
+          this.activeVariant = candidate;
+          this.status = {
+            ready: true,
+            loading: false,
+            variant: candidate,
+            modelName: `${ARCH_MODEL_NAMES[candidate]} · ${res.backend.toUpperCase()} Worker`,
+            backend: res.backend,
+            error: null,
+            inferenceMs: null,
+          };
+          return this.getStatus();
+        } catch {
+          this.usingWorker = false;
+        }
+      }
+    }
+
+    // 2. Fallback: Main-thread pipeline
+    const preferredBackend = await this.detectBackend();
     for (const candidate of variantChain) {
       const backends: Array<'webgpu' | 'wasm'> =
         preferredBackend === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
@@ -630,6 +667,7 @@ export class ArchitecturalSegmenterService {
             dtype: 'q8',
           });
 
+          this.usingWorker = false;
           this.activeVariant = candidate;
           this.status = {
             ready: true,
@@ -665,32 +703,56 @@ export class ArchitecturalSegmenterService {
   ): Promise<ArchitecturalAnalysis | null> {
     if (source instanceof HTMLVideoElement && source.readyState < 2) return null;
 
-    if (!this.segmenter) {
+    if (!this.status.ready) {
       const st = await this.initialize(this.activeVariant);
-      if (!st.ready || !this.segmenter) return null;
+      if (!st.ready) return null;
     }
 
-    // Crisp 320x240 input preserves narrow door frames & curtain edges much better than 256x192
+    // Preserve exact portrait (9:16) or landscape (16:9) aspect ratio (fixes vertical squashing on Android!)
+    const srcW =
+      source instanceof HTMLVideoElement
+        ? source.videoWidth || 640
+        : source.naturalWidth || source.width || 640;
+    const srcH =
+      source instanceof HTMLVideoElement
+        ? source.videoHeight || 480
+        : source.naturalHeight || source.height || 480;
+    if (!srcW || !srcH) return null;
+
+    const maxDim = 320;
+    const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
+    const w = Math.max(96, Math.round(srcW * scale));
+    const h = Math.max(96, Math.round(srcH * scale));
+
     if (!this.captureCanvas) {
       this.captureCanvas = document.createElement('canvas');
-      this.captureCanvas.width = 320;
-      this.captureCanvas.height = 240;
     }
-
-    const w = this.captureCanvas.width;
-    const h = this.captureCanvas.height;
-    const ctx = this.captureCanvas.getContext('2d');
+    this.captureCanvas.width = w;
+    this.captureCanvas.height = h;
+    const ctx = this.captureCanvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return null;
 
     ctx.drawImage(source, 0, 0, w, h);
 
-    const start = performance.now();
-    const { RawImage } = await import('@huggingface/transformers');
-    const rawImg = RawImage.fromCanvas(this.captureCanvas);
-    const segments = await this.segmenter(rawImg);
-    const elapsed = Math.round(performance.now() - start);
-    this.status.inferenceMs = elapsed;
+    let segments: RawSegmentItem[] = [];
+    let elapsed = 0;
 
+    if (this.usingWorker && visionWorkerClient.isAvailable()) {
+      const rgba = ctx.getImageData(0, 0, w, h).data;
+      const out = await visionWorkerClient.runSegment(ARCH_MODEL_IDS[this.activeVariant], rgba, w, h);
+      segments = out.segments;
+      elapsed = out.elapsedMs;
+    } else if (this.segmenter) {
+      const start = performance.now();
+      const { RawImage } = await import('@huggingface/transformers');
+      const rawImg = RawImage.fromCanvas(this.captureCanvas);
+      segments = await this.segmenter(rawImg);
+      elapsed = Math.round(performance.now() - start);
+    } else {
+      return null;
+    }
+
+    this.status.inferenceMs = elapsed;
     return parseArchitecturalSegments(segments, elapsed, Date.now());
   }
 }

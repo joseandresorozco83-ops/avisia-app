@@ -1,6 +1,11 @@
 export type OperationMode = 'simulation' | 'vision_lab' | 'video_lab' | 'live_camera';
 
-export type DetectorEngineId = 'efficientdet_lite2' | 'yolov10n' | 'efficientdet_lite0';
+export type DetectorEngineId =
+  | 'dfine_n'
+  | 'dfine_s'
+  | 'efficientdet_lite2'
+  | 'yolov10n'
+  | 'efficientdet_lite0';
 
 export type ArchModelVariant = 'segformer_b0' | 'segformer_b1';
 
@@ -196,5 +201,7 @@ export interface StreetAssistFeatures {
   activePreset?: AppPresetId;
   detectorEngine: DetectorEngineId;
   clockFaceDirections: boolean;
+  offlineVlmEnabled?: boolean;
+  autoEscalateLowConfVlm?: boolean;
 }
 

@@ -10,23 +10,23 @@ export interface AppPresetDefinition {
 }
 
 /**
- * 4 high-level, jargon-free general modes designed for the Android mobile app.
- * Each mode automatically configures the underlying vision engines, segmentation,
- * depth fusion, and audio ergonomics in a single tap.
+ * 5 high-level, jargon-free general modes designed for the Android mobile app (v5.0).
+ * Each mode automatically configures D-FINE / EfficientDet, SegFormer, 3D Depth Ground-Plane
+ * anti-false-stair verification, and low-cognitive-load Delta Narration in a single tap.
  */
 export const APP_PRESETS: AppPresetDefinition[] = [
   {
     id: 'indoor',
     title: 'Interiores',
     shortTitle: 'Interiores',
-    description: 'Puertas, cortinas, muebles y camino libre con avisos tranquilos.',
-    spokenConfirm: 'Modo Interiores activado. Avisos tranquilos para puertas y muebles.',
+    description: 'D-FINE + puertas, plano 3D sin falsas gradas por piso y avisos tranquilos.',
+    spokenConfirm: 'Modo Interiores activado. Detección precisa de puertas, muebles y piso plano.',
     features: {
       activePreset: 'indoor',
-      detectorEngine: 'efficientdet_lite2',
+      detectorEngine: 'dfine_n',
       architecturalVisionEnabled: true,
       archModelVariant: 'segformer_b1',
-      depthAnythingEnabled: false,
+      depthAnythingEnabled: true,
       audioVerbosity: 'essential',
       streetMode: false,
       stereoSonar: false,
@@ -34,20 +34,21 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       handsFreeWakeWord: false,
       clockFaceDirections: true,
       showStixelOverlay: true,
+      autoEscalateLowConfVlm: true,
     },
   },
   {
     id: 'street',
     title: 'Calle / Exterior',
     shortTitle: 'Calle',
-    description: 'Alertas rápidas, sonar direccional y control manos libres.',
-    spokenConfirm: 'Modo Calle activado. Alertas rápidas y guía por sonido.',
+    description: 'D-FINE rápido, desniveles 3D reales, sonar direccional y manos libres.',
+    spokenConfirm: 'Modo Calle activado. Alertas rápidas y detector de desniveles 3D.',
     features: {
       activePreset: 'street',
-      detectorEngine: 'efficientdet_lite2',
+      detectorEngine: 'dfine_n',
       architecturalVisionEnabled: true,
       archModelVariant: 'segformer_b0',
-      depthAnythingEnabled: false,
+      depthAnythingEnabled: true,
       audioVerbosity: 'essential',
       streetMode: true,
       stereoSonar: true,
@@ -56,6 +57,7 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       headsetButton: true,
       clockFaceDirections: true,
       showStixelOverlay: true,
+      autoEscalateLowConfVlm: true,
     },
   },
   {
@@ -63,7 +65,8 @@ export const APP_PRESETS: AppPresetDefinition[] = [
     title: 'Billetes (Automático)',
     shortTitle: 'Billetes',
     description: 'Detecta automáticamente córdobas (10–1000) y dólares ($1–$100) solo al mostrarlos.',
-    spokenConfirm: 'Modo Billetes automático activado. Muestra cualquier billete en córdobas o dólares frente a la cámara.',
+    spokenConfirm:
+      'Modo Billetes automático activado. Muestra cualquier billete en córdobas o dólares frente a la cámara.',
     features: {
       activePreset: 'currency',
       detectorEngine: 'efficientdet_lite2',
@@ -82,11 +85,11 @@ export const APP_PRESETS: AppPresetDefinition[] = [
     id: 'precision',
     title: 'Máxima Precisión',
     shortTitle: 'Precisión',
-    description: 'Puertas abiertas o cerradas con profundidad IA y narración detallada.',
-    spokenConfirm: 'Modo Máxima Precisión activado. Profundidad e identificación detallada.',
+    description: 'D-FINE Small (48.5% mAP), profundidad 3D, puertas abiertas/cerradas y narración detallada.',
+    spokenConfirm: 'Modo Máxima Precisión activado. Reconocimiento avanzado e identificación detallada.',
     features: {
       activePreset: 'precision',
-      detectorEngine: 'efficientdet_lite2',
+      detectorEngine: 'dfine_s',
       architecturalVisionEnabled: true,
       archModelVariant: 'segformer_b1',
       depthAnythingEnabled: true,
@@ -97,13 +100,14 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       handsFreeWakeWord: false,
       clockFaceDirections: true,
       showStixelOverlay: true,
+      autoEscalateLowConfVlm: true,
     },
   },
   {
     id: 'silent',
     title: 'Solo Tonos y Vibración',
     shortTitle: 'Tonos',
-    description: 'Guía discreta con tonos y vibración, sin voz automática.',
+    description: 'Guía discreta de bajo consumo con tonos y vibración, sin voz automática.',
     spokenConfirm: 'Modo discreto activado. Solo tonos y vibración.',
     features: {
       activePreset: 'silent',

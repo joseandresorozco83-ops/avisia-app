@@ -131,7 +131,7 @@ export class TelemetryService {
       participantCode: this.participantCode,
       platform: this.platform,
       startedAt: this.startedAt,
-      appVersion: '4.0.0',
+      appVersion: '5.0.0',
     };
   }
 

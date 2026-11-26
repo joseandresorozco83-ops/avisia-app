@@ -11,12 +11,45 @@ interface MessageHistoryEntry {
   timestamp: number;
 }
 
+export interface DeltaNarrationState {
+  meters: number | null;
+  zone: 'front_close' | 'front_mid' | 'side';
+  clock: string;
+  spokenAt: number;
+}
+
 export function formatDistanceSteps(meters?: number | null): string {
   if (typeof meters !== 'number' || !Number.isFinite(meters)) return '';
   if (meters <= 0.9) return 'muy cerca, a un paso';
   if (meters <= 1.7) return 'a dos pasos';
   if (meters <= 2.6) return 'a tres pasos';
   return `a unos ${Math.round(meters)} metros`;
+}
+
+/**
+ * Parsimonious Delta Narration gate (NavGraph / LAZAR 2025):
+ * Authorizes a verbal notification ONLY when:
+ * 1) A new hazard enters the corridor,
+ * 2) The hazard moved noticeably closer (>= 0.6m) or escalated to front_close,
+ * 3) Or the calm repeat cooldown elapsed while still blocking the user.
+ */
+export function shouldSpeakDeltaHazard(
+  prev: DeltaNarrationState | undefined,
+  next: { meters: number | null; zone: 'front_close' | 'front_mid' | 'side'; clock: string },
+  now: number,
+  cooldownMs: number
+): boolean {
+  if (!prev) return true;
+  if (prev.zone !== 'front_close' && next.zone === 'front_close') return true;
+  if (
+    prev.meters !== null &&
+    next.meters !== null &&
+    prev.meters - next.meters >= 0.6 &&
+    now - prev.spokenAt >= 2600
+  ) {
+    return true;
+  }
+  return now - prev.spokenAt >= cooldownMs;
 }
 
 /**
@@ -205,6 +238,8 @@ export class MessagePolicy {
       ((typeof frontObstacle.estimatedMeters === 'number' &&
         frontObstacle.estimatedMeters <= 0.75) ||
         labelLower.includes('grada') ||
+        labelLower.includes('bajada') ||
+        labelLower.includes('desnivel') ||
         labelLower.includes('escalera') ||
         labelLower.includes('pared'));
 

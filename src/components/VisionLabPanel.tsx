@@ -15,6 +15,8 @@ import { formatDistanceSteps } from '../services/MessagePolicy';
 
 interface VisionLabPanelProps {
   threshold: number;
+  autoEscalateLowConfVlm?: boolean;
+  offlineVlmEnabled?: boolean;
   onThresholdChange: (value: number) => void;
   onDetectionsReady: (detections: Detection[], inferenceMs: number) => void;
   onSpeakDescription: (text: string) => void;
@@ -22,6 +24,8 @@ interface VisionLabPanelProps {
 
 export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
   threshold,
+  autoEscalateLowConfVlm = true,
+  offlineVlmEnabled = false,
   onThresholdChange,
   onDetectionsReady,
   onSpeakDescription,
@@ -32,6 +36,7 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
   const [running, setRunning] = useState(false);
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistText, setAssistText] = useState<string | null>(null);
+  const [assistBadge, setAssistBadge] = useState<string | null>(null);
   const [stixelPlan, setStixelPlan] = useState<StixelNavigationPlan | null>(null);
 
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -155,6 +160,33 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
       setDetections(merged);
       drawBoxes(merged, plan);
       onDetectionsReady(merged, result.inferenceTimeMs);
+
+      // v5.0 Auto-escalation to Structured VLM when local detector has 0 hits or low confidence (< 0.55)
+      const maxConf = merged.reduce((m, d) => Math.max(m, d.confidence ?? 0), 0);
+      if (autoEscalateLowConfVlm && (merged.length === 0 || maxConf < 0.55) && imgRef.current) {
+        setAssistBusy(true);
+        try {
+          const vlm = await assistiveVisionService.describeScene(
+            imgRef.current,
+            merged,
+            null,
+            depthResult,
+            archResult,
+            plan,
+            { allowOfflineVlm: offlineVlmEnabled }
+          );
+          setAssistText(vlm.text);
+          setAssistBadge(
+            vlm.engine === 'gemini'
+              ? `Verificación Semántica IA · ${vlm.elapsedMs}ms${vlm.structured?.confidence ? ` (${vlm.structured.confidence})` : ''}`
+              : vlm.engine === 'offline_vlm'
+                ? `${vlm.modelLabel ?? 'VLM Offline'} · ${vlm.elapsedMs}ms`
+                : `Síntesis local · ${vlm.elapsedMs}ms`
+          );
+        } finally {
+          setAssistBusy(false);
+        }
+      }
     } catch {
       setStatus(detectorService.getStatus());
       setDetections([]);
@@ -195,9 +227,19 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
         imgRef.current,
         detections,
         null,
-        null
+        null,
+        null,
+        stixelPlan,
+        { allowOfflineVlm: offlineVlmEnabled }
       );
       setAssistText(res.text);
+      setAssistBadge(
+        res.engine === 'gemini'
+          ? `VLM Estructurado · ${res.elapsedMs}ms`
+          : res.engine === 'offline_vlm'
+            ? `${res.modelLabel ?? 'VLM Offline'} · ${res.elapsedMs}ms`
+            : `Síntesis local · ${res.elapsedMs}ms`
+      );
       onSpeakDescription(res.text);
     } finally {
       setAssistBusy(false);
@@ -374,9 +416,12 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
             </p>
           )}
           {assistText && (
-            <p className="p-2 rounded-lg bg-slate-950/80 border border-slate-700/60 text-slate-200 leading-relaxed">
-              {assistText}
-            </p>
+            <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-700/60 text-slate-200 leading-relaxed space-y-1">
+              {assistBadge && (
+                <div className="text-[10px] font-mono text-cyan-300">{assistBadge}</div>
+              )}
+              <p>{assistText}</p>
+            </div>
           )}
         </div>
       )}

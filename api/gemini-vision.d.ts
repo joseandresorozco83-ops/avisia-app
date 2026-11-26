@@ -2,6 +2,17 @@ export function resetRateLimitStore(): void;
 export function isOriginAllowed(origin: string): boolean;
 export function sanitizeVisualQuestion(rawQuestion: unknown): string;
 export function buildServerPrompt(task: unknown, question?: unknown): string | null;
+export function parseStructuredSceneResponse(rawText: unknown): {
+  spokenText: string;
+  structured: {
+    immediateHazard: string | null;
+    hazardClock: string | null;
+    freeSteps: number | null;
+    clearDirection: 'frente' | 'izquierda' | 'derecha' | 'detenerse';
+    summary: string;
+    confidence: 'high' | 'medium' | 'low';
+  };
+} | null;
 export function checkRateLimit(
   clientKey: string,
   now?: number

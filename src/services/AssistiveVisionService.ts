@@ -5,13 +5,25 @@ import type { DepthMapSummary } from './DepthModelService';
 import type { ProximityAssessment } from './DepthProximityService';
 import type { StixelNavigationPlan } from './DoorAndStixelService';
 import { formatDistanceSteps } from './MessagePolicy';
+import { visionWorkerClient } from './VisionWorkerClient';
 
 const PRODUCTION_PROXY_URL = 'https://avisia-app.vercel.app/api/gemini-vision';
 
+export interface StructuredSceneData {
+  immediateHazard: string | null;
+  hazardClock: string | null;
+  freeSteps: number | null;
+  clearDirection: 'frente' | 'izquierda' | 'derecha' | 'detenerse';
+  summary: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
 export interface AssistiveResult {
   text: string;
-  engine: 'gemini' | 'local' | 'tesseract';
+  engine: 'gemini' | 'offline_vlm' | 'local' | 'tesseract';
   elapsedMs: number;
+  structured?: StructuredSceneData | null;
+  modelLabel?: string;
   error?: string;
 }
 
@@ -144,9 +156,9 @@ export class AssistiveVisionService {
 
   private async callCloudVisionProxy(
     canvas: HTMLCanvasElement,
-    task: 'describe_scene' | 'read_text' | 'visual_qa',
+    task: 'scene_structured' | 'describe_scene' | 'read_text' | 'visual_qa',
     question?: string
-  ): Promise<string> {
+  ): Promise<{ text: string; structured?: StructuredSceneData | null; model?: string }> {
     const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
     const imageBase64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
 
@@ -174,22 +186,27 @@ export class AssistiveVisionService {
         throw new Error(`Proxy HTTP ${response.status}`);
       }
 
-      const payload = (await response.json()) as { text?: string };
+      const payload = (await response.json()) as {
+        text?: string;
+        structured?: StructuredSceneData | null;
+        model?: string;
+      };
       const text = (payload.text ?? '').trim();
       if (!text) {
         throw new Error('Respuesta vacía del servidor de visión.');
       }
       this.cloudAvailable = true;
-      return text;
+      return { text, structured: payload.structured ?? null, model: payload.model };
     } finally {
       window.clearTimeout(timeout);
     }
   }
 
   /**
-   * Holistic scene description:
-   * Uses the hardened server-side Gemini Vision proxy seamlessly when available;
-   * otherwise synthesizes an honest, clock-face + Stixel local spatial report offline.
+   * Holistic scene description (v5.0):
+   * 1) Primary (online): Hardened server-side Gemini Vision structured JSON (`scene_structured`)
+   * 2) Optional Offline VLM (only when explicitly enabled by user): SmolVLM-256M / ViT-GPT2 in Web Worker
+   * 3) Instant Zero-Dependency Fallback: honest clock-face + Stixel + 3D ground-plane local report
    */
   async describeScene(
     source: HTMLVideoElement | HTMLImageElement | null,
@@ -197,7 +214,8 @@ export class AssistiveVisionService {
     proximity: ProximityAssessment | null,
     depthSummary: DepthMapSummary | null,
     archSummary: ArchitecturalAnalysis | null = null,
-    stixelPlan: StixelNavigationPlan | null = null
+    stixelPlan: StixelNavigationPlan | null = null,
+    options?: { allowOfflineVlm?: boolean }
   ): Promise<AssistiveResult> {
     const start = performance.now();
 
@@ -205,14 +223,47 @@ export class AssistiveVisionService {
       const canvas = this.captureFrameToCanvas(source, 768, false);
       if (canvas) {
         try {
-          const text = await this.callCloudVisionProxy(canvas, 'describe_scene');
+          const cloudRes = await this.callCloudVisionProxy(canvas, 'scene_structured');
           return {
-            text,
+            text: cloudRes.text,
+            structured: cloudRes.structured ?? null,
+            modelLabel: cloudRes.model,
             engine: 'gemini',
             elapsedMs: Math.round(performance.now() - start),
           };
         } catch {
-          // Graceful transparent fallback to local spatial synthesis
+          // Graceful transparent fallback to optional offline VLM or local spatial synthesis
+        }
+      }
+    }
+
+    // Optional on-demand Offline VLM inside dedicated Web Worker (never auto-loaded unless user opted in)
+    if (source && options?.allowOfflineVlm && visionWorkerClient.isAvailable()) {
+      const canvas = this.captureFrameToCanvas(source, 384, false);
+      if (canvas) {
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (ctx) {
+          try {
+            const rgba = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            const vlm = await visionWorkerClient.runOfflineVlm(rgba, canvas.width, canvas.height);
+            if (vlm.text) {
+              const localSpatial = this.buildLocalSceneSummary(
+                detections,
+                proximity,
+                depthSummary,
+                archSummary,
+                stixelPlan
+              );
+              return {
+                text: `${localSpatial} Escena offline: ${vlm.text}`,
+                engine: 'offline_vlm',
+                modelLabel: vlm.model,
+                elapsedMs: Math.round(performance.now() - start),
+              };
+            }
+          } catch {
+            // Fall through cleanly to local spatial synthesis
+          }
         }
       }
     }
@@ -247,8 +298,12 @@ export class AssistiveVisionService {
     }
     if (proximity?.flatWallAhead || depthSummary?.wallAhead) {
       parts.push('¡Cuidado! Hay una pared o superficie plana muy cerca a las 12.');
-    } else if (proximity?.floorVariationDetected || depthSummary?.stepDetectedInDepth) {
-      parts.push('¡Cuidado! Se detecta posible grada o desnivel adelante.');
+    } else if (depthSummary?.stepDetectedInDepth) {
+      parts.push(
+        depthSummary.groundHazardType === 'descending_dropoff'
+          ? '¡Cuidado! Se detecta posible bajada o desnivel 3D adelante.'
+          : '¡Cuidado! Se detectan escaleras o gradas confirmadas en 3D adelante.'
+      );
     }
 
     const confirmed = detections.filter(
@@ -328,9 +383,9 @@ export class AssistiveVisionService {
       const canvas = this.captureFrameToCanvas(source, 960, false);
       if (canvas) {
         try {
-          const text = await this.callCloudVisionProxy(canvas, 'read_text');
+          const cloudRes = await this.callCloudVisionProxy(canvas, 'read_text');
           return {
-            text,
+            text: cloudRes.text,
             engine: 'gemini',
             elapsedMs: Math.round(performance.now() - start),
           };
@@ -403,7 +458,8 @@ export class AssistiveVisionService {
     if (!canvas) return null;
 
     try {
-      return await this.callCloudVisionProxy(canvas, 'visual_qa', question);
+      const cloudRes = await this.callCloudVisionProxy(canvas, 'visual_qa', question);
+      return cloudRes.text;
     } catch {
       return null;
     }

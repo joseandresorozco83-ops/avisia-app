@@ -43,14 +43,19 @@ const DEVELOPMENT_MATRIX: TechnicalStatusItem[] = [
     detail: '5 modos simplificados en Android, TalkBack-safe, targets ≥ 48dp, ErrorBoundary y Wake Lock.',
   },
   {
-    component: 'Detección en tiempo real (EfficientDet-Lite2 / YOLOv10n ONNX + Tracker IoU/EMA)',
+    component: 'Detección neuronal en Web Worker (D-FINE-Nano 42.8% / D-FINE-Small 48.5% mAP)',
     status: 'Implementado y probado',
-    detail: '80 clases COCO en español, distancia pinhole calibrada, reloj (9h–3h) y filtro anti-falsos positivos.',
+    detail: 'Inferencia fuera del hilo principal (Apache 2.0), tracker unificado + fusión Depth/Pinhole e histéresis de reloj.',
   },
   {
-    component: 'Segmentación arquitectónica + Stixel 5 sectores (SegFormer B0/B1 + Depth V2)',
+    component: 'Geometría 3D de piso y puertas (Depth V2 plano 1/Z + SegFormer 9:16 + Stixels)',
     status: 'Implementado y probado',
-    detail: 'Puertas abiertas/cerradas/entreabiertas, cortinas, gradas, piso caminable y guía de rodeo.',
+    detail: 'Ajuste lineal 1/Z(v) + veto semántico que elimina falsas gradas por texturas/colores en pisos planos.',
+  },
+  {
+    component: 'VLM Estructurado JSON + Respaldo Offline (Gemini 3.5 / SmolVLM-256M WebGPU)',
+    status: 'Implementado y probado',
+    detail: 'Escalado automático ante baja confianza (<55%) en imágenes y Narración por Delta para menor carga cognitiva.',
   },
   {
     component: 'Reconocimiento de billetes (Córdobas 10–1000 y Dólares $1–$100)',
@@ -169,7 +174,7 @@ export const TechnicalDetailsSection: React.FC<TechnicalDetailsSectionProps> = (
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
             <Cpu className="w-4 h-4" />
-            Arquitectura, Seguridad y Piloto Académico (v4.0.0)
+            Arquitectura, Seguridad y Piloto Académico (v5.0.0)
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
             Telemetría empírica, matriz de madurez e instrumentos SUS / NASA-TLX — UAM Managua
@@ -389,7 +394,7 @@ export const TechnicalDetailsSection: React.FC<TechnicalDetailsSectionProps> = (
       <div>
         <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2 flex items-center gap-1.5">
           <Layers className="w-3.5 h-3.5 text-cyan-400" />
-          Matriz de madurez v4.0.0 (Producción y Piloto)
+          Matriz de madurez v5.0.0 (Producción y Piloto)
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {DEVELOPMENT_MATRIX.map((item) => (

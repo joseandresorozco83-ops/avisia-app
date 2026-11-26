@@ -3,6 +3,7 @@ import handler, {
   buildServerPrompt,
   checkRateLimit,
   isOriginAllowed,
+  parseStructuredSceneResponse,
   resetRateLimitStore,
   sanitizeVisualQuestion,
 } from '../../../api/gemini-vision.js';
@@ -16,6 +17,13 @@ import {
 } from '../TelemetryService';
 import { escapeHtml } from '../../utils/sanitize';
 import { DepthProximityService } from '../DepthProximityService';
+import { analyzeGroundPlaneFromDepth, type DepthGrid } from '../DepthModelService';
+import {
+  fuseDepthAndPinholeMeters,
+  stabilizeClockPosition,
+  TemporalTrackerService,
+} from '../TemporalTrackerService';
+import { shouldSpeakDeltaHazard } from '../MessagePolicy';
 import { conversationService } from '../ConversationService';
 import { scenarioManager } from '../ScenarioManager';
 import type { Detection } from '../../types/avicia';
@@ -373,5 +381,142 @@ describe('Safety & Proximity Regression — Real Mode Guards and Distance Estima
 
     const sideDet: Detection = { ...closeDet, id: 'd2', bbox: { x: 2, y: 20, width: 10, height: 60 } };
     expect(prox.estimateFromDetections([sideDet]).level).toBe('clear');
+  });
+});
+
+describe('AVISIA v5.0 Regression — 3D Ground-Plane Anti-False-Stair, Hysteresis, Delta Narration & Structured VLM', () => {
+  const makeDepthGrid = (rowProfile: (yIdx: number, height: number) => number): DepthGrid => {
+    const width = 24;
+    const height = 18;
+    const values = new Float32Array(width * height);
+    for (let y = 0; y < height; y++) {
+      const v = rowProfile(y, height);
+      for (let x = 0; x < width; x++) {
+        values[y * width + x] = v;
+      }
+    }
+    return { width, height, values };
+  };
+
+  it('classifies flat tiled/colored floor (linear 1/Z ramp) as flat with ZERO false stair alarms', () => {
+    // Projective geometry: flat floor => d(v) = 0.25 + 0.65 * (y / (H-1)) + tiny sensor jitter
+    const flatFloor = makeDepthGrid((y, h) => {
+      const frac = y / (h - 1);
+      const tinyNoise = (y % 2 === 0 ? 0.004 : -0.004);
+      return Math.max(0, Math.min(1, 0.22 + 0.68 * frac + tinyNoise));
+    });
+
+    const analysis = analyzeGroundPlaneFromDepth(flatFloor);
+    expect(analysis.isFlatFloor).toBe(true);
+    expect(analysis.planarityR2).toBeGreaterThanOrEqual(0.95);
+    expect(analysis.stepDetected).toBe(false);
+    expect(analysis.hazardType).toBe('none');
+  });
+
+  it('detects genuine 3D ascending stairs via periodic riser/tread depth plateaus', () => {
+    // Staircase rows: flat vertical risers alternating with sudden disparity jumps
+    const stairRows = [
+      0.1, 0.12, 0.14, 0.16, 0.18, 0.2, 0.22, 0.24, 0.26,
+      // Lower corridor (rows 9..17): sharp stair tread/riser steps
+      0.30, 0.30, 0.50, 0.50, 0.72, 0.72, 0.90, 0.90, 0.91,
+    ];
+    const stairGrid = makeDepthGrid((y) => stairRows[y] ?? 0.5);
+    const analysis = analyzeGroundPlaneFromDepth(stairGrid);
+    expect(analysis.isFlatFloor).toBe(false);
+    expect(analysis.stepDetected).toBe(true);
+    expect(analysis.hazardType).toBe('ascending_stairs');
+  });
+
+  it('detects genuine 3D descending drop-off / curb below projected floor plane', () => {
+    // Near user feet (rows 15..17) floor is close, then sudden drop-off in mid-lower rows (11..13)
+    const dropRows = [
+      0.15, 0.18, 0.21, 0.24, 0.27, 0.30, 0.33, 0.36, 0.39,
+      // Lower corridor (rows 9..17): drops sharply below expected floor ramp at rows 12..14
+      0.52, 0.56, 0.58, 0.36, 0.38, 0.74, 0.84, 0.92, 0.98,
+    ];
+    const dropGrid = makeDepthGrid((y) => dropRows[y] ?? 0.5);
+    const analysis = analyzeGroundPlaneFromDepth(dropGrid);
+    expect(analysis.stepDetected).toBe(true);
+    expect(analysis.hazardType).toBe('descending_dropoff');
+  });
+
+  it('stabilizes clock-face directions with ±4% hysteresis and fuses depth for border-clipped boxes', () => {
+    // Boundary between 10h and 12h is 38%: at 39.5% it should stay "a las 10" (within +4% hysteresis)
+    expect(stabilizeClockPosition('a las 10', 39.5)).toBe('a las 10');
+    // Past 42% it transitions cleanly to "a las 12"
+    expect(stabilizeClockPosition('a las 10', 44)).toBe('a las 12');
+
+    // Border-clipped table (y=60, height=40 -> touches bottom edge y+h=100) where pinhole overestimates 3.0m
+    // while depth grid clearly measures high closeness (0.88 -> ~1.0m)
+    const closeGrid = makeDepthGrid(() => 0.88);
+    const clippedDet: Detection = {
+      id: 'tbl-1',
+      category: 'obstacle',
+      labelEs: 'Mesa',
+      source: 'real_video',
+      confidence: 0.88,
+      bbox: { x: 25, y: 60, width: 50, height: 40 },
+      confirmationStatus: 'confirmed',
+      priority: 90,
+      firstSeenAt: 1000,
+      lastSeenAt: 1000,
+      estimatedMeters: 3.0,
+    };
+    const fused = fuseDepthAndPinholeMeters(clippedDet, closeGrid);
+    expect(fused).not.toBeNull();
+    expect(fused!).toBeLessThan(1.8);
+
+    // TemporalTracker rejects moderate single-frame noise (0.75 < 0.84 instant confirm threshold)
+    const tracker = new TemporalTrackerService();
+    const out1 = tracker.update([{ ...clippedDet, confidence: 0.75 }], 1000, closeGrid);
+    expect(out1.length).toBe(0);
+    const out2 = tracker.update([{ ...clippedDet, confidence: 0.76 }], 1400, closeGrid);
+    expect(out2.length).toBe(1);
+  });
+
+  it('gates verbal alerts via Parsimonious Delta Narration (speaks on approach >= 0.6m or escalation)', () => {
+    const prev = { meters: 2.2, zone: 'front_mid' as const, clock: 'a las 12', spokenAt: 10_000 };
+    // Stationary 3s later -> stay silent
+    expect(
+      shouldSpeakDeltaHazard(prev, { meters: 2.1, zone: 'front_mid', clock: 'a las 12' }, 13_000, 10_500)
+    ).toBe(false);
+    // Approached by 0.7m (2.2 -> 1.5m) 3s later -> speak immediately!
+    expect(
+      shouldSpeakDeltaHazard(prev, { meters: 1.5, zone: 'front_mid', clock: 'a las 12' }, 13_000, 10_500)
+    ).toBe(true);
+    // Escalated to front_close -> speak immediately!
+    expect(
+      shouldSpeakDeltaHazard(prev, { meters: 1.8, zone: 'front_close', clock: 'a las 12' }, 11_000, 10_500)
+    ).toBe(true);
+    // Cooldown elapsed -> allowed to remind calmly
+    expect(
+      shouldSpeakDeltaHazard(prev, { meters: 2.2, zone: 'front_mid', clock: 'a las 12' }, 21_000, 10_500)
+    ).toBe(true);
+  });
+
+  it('parses structured JSON scene responses and handles low-confidence honesty & API task routing', async () => {
+    const good = parseStructuredSceneResponse(
+      '```json\n{"immediateHazard":"Silla","hazardClock":"a las 12","freeSteps":2,"clearDirection":"derecha","summary":"Silla a las 12 a dos pasos; espacio libre a la derecha.","confidence":"high"}\n```'
+    );
+    expect(good).not.toBeNull();
+    expect(good?.spokenText).toBe('Silla a las 12 a dos pasos; espacio libre a la derecha.');
+    expect(good?.structured.confidence).toBe('high');
+
+    const blurry = parseStructuredSceneResponse(
+      JSON.stringify({
+        immediateHazard: null,
+        hazardClock: null,
+        freeSteps: 0,
+        clearDirection: 'detenerse',
+        summary: 'La imagen está borrosa y oscura.',
+        confidence: 'low',
+      })
+    );
+    expect(blurry?.spokenText).toContain('Imagen con poca claridad');
+
+    expect(parseStructuredSceneResponse('not valid json')).toBeNull();
+
+    // Verify scene_structured task is accepted by hardened proxy
+    expect(buildServerPrompt('scene_structured')).toContain('JSON');
   });
 });

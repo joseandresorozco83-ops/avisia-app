@@ -1,4 +1,6 @@
 import type { BoundingBox, Detection } from '../types/avicia';
+import type { DepthGrid } from './DepthModelService';
+import { computeClockPosition } from './DetectorService';
 
 interface ActiveTrack {
   trackId: string;
@@ -31,24 +33,106 @@ function centerDistance(a: BoundingBox, b: BoundingBox): number {
 }
 
 /**
- * Multi-frame temporal tracker & anti-flicker hysteresis filter.
- * Eliminates single-frame hallucinations ("boy who cried wolf") by requiring
- * multi-frame consistency (or high confidence >= 0.72) before confirming an object,
- * and smooths bounding boxes via Exponential Moving Average (EMA).
+ * Stabilizes clock-face direction with ±4% boundary hysteresis so an object near a
+ * sector border (e.g., 37%–39% between 10h and 12h) never flaps verbal announcements.
+ */
+export function stabilizeClockPosition(
+  prevClock: string | undefined,
+  centerX: number
+): string {
+  const fresh = computeClockPosition(centerX);
+  if (!prevClock || prevClock === fresh) return fresh;
+
+  const H = 4; // 4% deadband hysteresis
+  if (prevClock === 'a las 9' && centerX < 20 + H) return prevClock;
+  if (prevClock === 'a las 10' && centerX >= 20 - H && centerX < 38 + H) return prevClock;
+  if (prevClock === 'a las 12' && centerX >= 38 - H && centerX <= 62 + H) return prevClock;
+  if (prevClock === 'a las 2' && centerX > 62 - H && centerX <= 80 + H) return prevClock;
+  if (prevClock === 'a las 3' && centerX > 80 - H) return prevClock;
+  return fresh;
+}
+
+/**
+ * Fuses pinhole vertical distance with Depth Anything V2 inverse-depth inside the
+ * detection's center region, correcting pinhole overestimation when objects are clipped
+ * by the top/bottom camera border.
+ */
+export function fuseDepthAndPinholeMeters(
+  det: Detection,
+  depthGrid?: DepthGrid
+): number | null {
+  const pinhole = det.estimatedMeters ?? null;
+  if (!depthGrid) return pinhole;
+
+  const padX = det.bbox.width * 0.25;
+  const padY = det.bbox.height * 0.25;
+  const gx1 = Math.max(
+    0,
+    Math.min(depthGrid.width - 1, Math.floor(((det.bbox.x + padX) / 100) * depthGrid.width))
+  );
+  const gx2 = Math.max(
+    gx1 + 1,
+    Math.min(
+      depthGrid.width,
+      Math.ceil(((det.bbox.x + det.bbox.width - padX) / 100) * depthGrid.width)
+    )
+  );
+  const gy1 = Math.max(
+    0,
+    Math.min(depthGrid.height - 1, Math.floor(((det.bbox.y + padY) / 100) * depthGrid.height))
+  );
+  const gy2 = Math.max(
+    gy1 + 1,
+    Math.min(
+      depthGrid.height,
+      Math.ceil(((det.bbox.y + det.bbox.height - padY) / 100) * depthGrid.height)
+    )
+  );
+
+  let sum = 0;
+  let cnt = 0;
+  for (let y = gy1; y < gy2; y++) {
+    for (let x = gx1; x < gx2; x++) {
+      sum += depthGrid.values[y * depthGrid.width + x];
+      cnt++;
+    }
+  }
+  if (cnt === 0) return pinhole;
+
+  const meanDisparity = sum / cnt; // 1.0 = closest (~0.5m), 0.0 = far (~4.2m)
+  const depthMeters = Math.max(0.4, 4.1 - meanDisparity * 3.5);
+  if (pinhole === null) return Number(depthMeters.toFixed(1));
+
+  const isClippedByBorder = det.bbox.y <= 2 || det.bbox.y + det.bbox.height >= 98;
+  // Trust neural depth more heavily when the object's bounding box is clipped by frame edges
+  const depthWeight = isClippedByBorder ? 0.72 : 0.4;
+  const blended = depthWeight * depthMeters + (1 - depthWeight) * pinhole;
+  return Number(Math.max(0.4, Math.min(12, blended)).toFixed(1));
+}
+
+/**
+ * Multi-frame temporal tracker & anti-flicker hysteresis filter (v5.0):
+ * - Eliminates single-frame misclassifications (requires 2+ frames or very high confidence >= 0.84).
+ * - Stabilizes BOTH object detections (D-FINE/EfficientDet) AND architectural detections (SegFormer).
+ * - Smooths bounding boxes via EMA, applies clock-face hysteresis, and fuses Depth + Pinhole distances.
  */
 export class TemporalTrackerService {
   private tracks: ActiveTrack[] = [];
   private nextId = 1;
   private readonly emaAlpha = 0.58;
   private readonly minHitsToConfirm = 2;
-  private readonly highConfidenceInstantConfirm = 0.72;
+  private readonly highConfidenceInstantConfirm = 0.84;
   private readonly maxMissedFrames = 1;
 
   reset(): void {
     this.tracks = [];
   }
 
-  update(rawDetections: Detection[], now: number = Date.now()): Detection[] {
+  update(
+    rawDetections: Detection[],
+    now: number = Date.now(),
+    depthGrid?: DepthGrid
+  ): Detection[] {
     const matchedTrackIds = new Set<string>();
     const nextTracks: ActiveTrack[] = [];
 
@@ -63,7 +147,6 @@ export class TemporalTrackerService {
         const iou = computeIoU(track.detection.bbox, det.bbox);
         const dist = centerDistance(track.detection.bbox, det.bbox);
 
-        // Match if overlapping (IoU >= 0.18) or nearby center (< 22% of frame)
         if (iou >= 0.18 || dist <= 22) {
           const score = iou * 2 - dist / 100;
           if (score > bestScore) {
@@ -95,12 +178,21 @@ export class TemporalTrackerService {
           hits >= this.minHitsToConfirm ||
           (typeof smoothedConf === 'number' && smoothedConf >= this.highConfidenceInstantConfirm);
 
+        const cx = smoothedBbox.x + smoothedBbox.width / 2;
+        const stableClock = stabilizeClockPosition(prev.clockPosition, cx);
+        const fusedMeters = fuseDepthAndPinholeMeters(
+          { ...det, bbox: smoothedBbox },
+          depthGrid
+        );
+
         const updatedDet: Detection = {
           ...det,
-          id: bestTrack.trackId,
+          id: det.id.startsWith('arch-') ? `arch-${bestTrack.trackId}` : bestTrack.trackId,
           trackId: bestTrack.trackId,
           bbox: smoothedBbox,
           confidence: smoothedConf,
+          clockPosition: stableClock,
+          estimatedMeters: fusedMeters,
           confirmationStatus: confirmed ? 'confirmed' : 'pending',
           firstSeenAt: prev.firstSeenAt,
           lastSeenAt: now,
@@ -121,10 +213,12 @@ export class TemporalTrackerService {
           typeof det.confidence === 'number' &&
           det.confidence >= this.highConfidenceInstantConfirm;
 
+        const fusedMeters = fuseDepthAndPinholeMeters(det, depthGrid);
         const newDet: Detection = {
           ...det,
-          id: trackId,
+          id: det.id.startsWith('arch-') ? `arch-${trackId}` : trackId,
           trackId,
+          estimatedMeters: fusedMeters,
           confirmationStatus: instantConfirm ? 'confirmed' : 'pending',
           firstSeenAt: now,
           lastSeenAt: now,
@@ -164,7 +258,6 @@ export class TemporalTrackerService {
 
     this.tracks = nextTracks;
 
-    // Return confirmed detections first; keep pending only for subtle visual HUD if needed
     return this.tracks
       .filter((t) => t.detection.confirmationStatus === 'confirmed')
       .map((t) => t.detection);
@@ -172,3 +265,4 @@ export class TemporalTrackerService {
 }
 
 export const temporalTrackerService = new TemporalTrackerService();
+export const archTemporalTrackerService = new TemporalTrackerService();

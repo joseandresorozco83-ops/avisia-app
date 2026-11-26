@@ -16,7 +16,10 @@ import {
 } from 'lucide-react';
 import { cameraService, type CameraDeviceInfo } from '../services/CameraService';
 import { detectorService } from '../services/DetectorService';
-import { temporalTrackerService } from '../services/TemporalTrackerService';
+import {
+  archTemporalTrackerService,
+  temporalTrackerService,
+} from '../services/TemporalTrackerService';
 import {
   depthProximityService,
   type ProximityAssessment,
@@ -60,6 +63,7 @@ interface LiveCameraPanelProps {
   showStixelOverlay?: boolean;
   simplifiedControls?: boolean;
   detectorEngine?: DetectorEngineId;
+  offlineVlmEnabled?: boolean;
   preferredChannel?: AssistiveChannel | null;
   presetSyncKey?: number;
   banknoteTriggerCount?: number;
@@ -96,7 +100,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   archModelVariant = 'segformer_b0',
   showStixelOverlay = true,
   simplifiedControls = false,
-  detectorEngine = 'efficientdet_lite2',
+  detectorEngine = 'dfine_n',
+  offlineVlmEnabled = false,
   preferredChannel = null,
   presetSyncKey = 0,
   banknoteTriggerCount = 0,
@@ -325,7 +330,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         .finally(() => {
           busy = false;
         });
-    }, 520);
+    }, 750);
 
     return () => {
       cancelled = true;
@@ -567,6 +572,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       }
       void currencyRecognitionService.disposeOfflineWorker();
       temporalTrackerService.reset();
+      archTemporalTrackerService.reset();
+      depthModelService.reset();
       depthProximityService.reset();
       cameraService.stopCamera(videoRef.current);
       onVideoElementChange?.(null);
@@ -627,13 +634,16 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         latestProximityRef.current,
         depthSummaryRef.current,
         archSummaryRef.current,
-        stixelPlanRef.current
+        stixelPlanRef.current,
+        { allowOfflineVlm: offlineVlmEnabled }
       );
       setAssistiveResultText(res.text);
       setAssistiveEngineLabel(
         res.engine === 'gemini'
-          ? `IA Visión · ${res.elapsedMs}ms`
-          : `Síntesis local · ${res.elapsedMs}ms`
+          ? `VLM Estructurado · ${res.elapsedMs}ms`
+          : res.engine === 'offline_vlm'
+            ? `${res.modelLabel ?? 'VLM Offline'} · ${res.elapsedMs}ms`
+            : `Síntesis local · ${res.elapsedMs}ms`
       );
       telemetryService.recordEvent({
         type: 'scene_ai',
@@ -869,6 +879,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     setDetectorPendingNote(null);
     speechService.unlockAudio();
     temporalTrackerService.reset();
+    archTemporalTrackerService.reset();
+    depthModelService.reset();
     depthProximityService.reset();
 
     try {
@@ -916,14 +928,18 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           const res = await detectorService.detectOnVideoFrame(videoRef.current, threshold);
           if (!runningRef.current) return;
 
-          // Multi-frame temporal stabilization: rejects 1-frame noisy hallucinations
-          const stabilizedCoco = temporalTrackerService.update(res.detections, Date.now());
+          // Unified multi-frame temporal stabilization + Depth/Pinhole distance fusion + clock hysteresis
+          const nowTs = Date.now();
+          const depthGrid = depthSummaryRef.current?.grid;
+          const stabilizedCoco = temporalTrackerService.update(res.detections, nowTs, depthGrid);
 
-          // Fuse SegFormer ADE20K architectural detections + Depth open/closed/semi-open door classification & open doorways
-          const archDets = archSummaryRef.current?.detections ?? [];
+          // Stabilize SegFormer ADE20K detections temporally too (eliminates 1-frame architectural flicker!)
+          const rawArchDets = archSummaryRef.current?.detections ?? [];
+          const stabilizedArch = archTemporalTrackerService.update(rawArchDets, nowTs, depthGrid);
+
           const existingLabels = new Set(stabilizedCoco.map((d) => d.labelEs.toLowerCase()));
           const rawMerged: Detection[] = [...stabilizedCoco];
-          for (const ad of archDets) {
+          for (const ad of stabilizedArch) {
             if (!existingLabels.has(ad.labelEs.toLowerCase())) {
               rawMerged.push(ad);
               existingLabels.add(ad.labelEs.toLowerCase());
@@ -994,19 +1010,29 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
           const depthWallOrObstacle =
             depthSummaryRef.current?.wallAhead || depthSummaryRef.current?.closeObstacleAhead;
-          const depthStep = depthSummaryRef.current?.stepDetectedInDepth;
+
+          // v5.0 Semantic + 3D Geometric Consensus for Stairs/Drop-offs:
+          // Never trigger from flat 2D RGB floor texture/color changes!
+          const archSeesFlatFloorOnly =
+            archSummaryRef.current !== null &&
+            !archSummaryRef.current.hasStairsMask &&
+            archSummaryRef.current.walkableCorridorPct >= 35;
+          const depthStepConfirmed =
+            Boolean(depthSummaryRef.current?.stepDetectedInDepth) &&
+            (depthSummaryRef.current?.groundHazardType === 'descending_dropoff' ||
+              !archSeesFlatFloorOnly);
 
           if (
             corridorSensorOn &&
             channelRef.current === 'explore' &&
             prox &&
             (prox.flatWallAhead ||
-              prox.floorVariationDetected ||
-              depthStep ||
+              depthStepConfirmed ||
               (!hasFrontObstacle && (prox.verticalObstacleDetected || depthWallOrObstacle)))
           ) {
             const depthDist = depthSummaryRef.current?.estimatedMeters;
-            const isStep = prox.floorVariationDetected || Boolean(depthStep);
+            const isStep = depthStepConfirmed;
+            const isDropOff = depthSummaryRef.current?.groundHazardType === 'descending_dropoff';
             const isWall = prox.flatWallAhead || Boolean(depthSummaryRef.current?.wallAhead);
             const clearHint =
               depthSummaryRef.current?.clearSide === 'left'
@@ -1021,7 +1047,9 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               labelEs: isWall
                 ? `Pared muy cerca${clearHint}`
                 : isStep
-                  ? 'Grada o desnivel'
+                  ? isDropOff
+                    ? 'Bajada o desnivel 3D'
+                    : 'Escaleras confirmadas'
                   : depthWallOrObstacle && depthDist
                     ? `Obstáculo a ${depthDist} m${clearHint}`
                     : 'Obstáculo inmóvil',
@@ -1037,7 +1065,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               estimatedMeters: isWall ? 0.6 : depthDist ?? 1.2,
               clockPosition: 'a las 12',
               proximityZone:
-                isWall || prox.level === 'danger' || depthWallOrObstacle
+                isWall || isStep || prox.level === 'danger' || depthWallOrObstacle
                   ? 'front_close'
                   : 'front_mid',
             });
@@ -1073,10 +1101,9 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             prox.cameraQuality === 'ok' &&
             prox.level === 'clear' &&
             !prox.flatWallAhead &&
-            !prox.floorVariationDetected &&
             !prox.verticalObstacleDetected &&
             !depthWallOrObstacle &&
-            !depthStep &&
+            !depthStepConfirmed &&
             !hasFrontObstacle &&
             !hasClosePersonOrVehicle &&
             !archBlocked;
@@ -1092,7 +1119,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
           // Differentiated haptic signaling (Explore mode only)
           if (channelRef.current === 'explore' && prox) {
-            if (prox.floorVariationDetected || depthStep) {
+            if (depthStepConfirmed) {
               speechService.vibratePattern('step');
             } else if (prox.flatWallAhead || prox.level === 'danger') {
               speechService.vibratePattern('danger');
@@ -1127,7 +1154,13 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
       void runFrame();
       const intervalMs =
-        detectorEngine === 'yolov10n' ? 420 : fastMode ? 240 : 480;
+        detectorEngine === 'dfine_s'
+          ? 460
+          : detectorEngine === 'dfine_n' || detectorEngine === 'yolov10n'
+            ? 380
+            : fastMode
+              ? 240
+              : 460;
       loopRef.current = window.setInterval(() => {
         void runFrame();
       }, intervalMs);
@@ -1156,6 +1189,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       loopRef.current = null;
     }
     temporalTrackerService.reset();
+    archTemporalTrackerService.reset();
+    depthModelService.reset();
     depthProximityService.reset();
     speechService.cancel();
     clearCanvas();
@@ -1350,7 +1385,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v4.0.0 · Cámara Asistiva
+              AVISIA v5.0.0 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.

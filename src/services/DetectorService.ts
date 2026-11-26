@@ -1,5 +1,6 @@
 import { FilesetResolver, ObjectDetector, type Detection as MpDetection } from '@mediapipe/tasks-vision';
 import type { Detection, DetectorEngineId, DetectorStatus, ObjectCategory } from '../types/avicia';
+import { visionWorkerClient, type WorkerDetectionItem } from './VisionWorkerClient';
 
 export interface ClassMeta {
   category: ObjectCategory;
@@ -119,21 +120,37 @@ const MODEL_URLS: Record<'efficientdet_lite2' | 'efficientdet_lite0', string> = 
 };
 
 const MODEL_DISPLAY_NAMES: Record<DetectorEngineId, string> = {
+  dfine_n: 'D-FINE-Nano ONNX (42.8% mAP · Apache 2.0)',
+  dfine_s: 'D-FINE-Small ONNX (48.5% mAP · Apache 2.0)',
+  yolov10n: 'YOLOv10n ONNX (38.5% mAP)',
   efficientdet_lite2: 'EfficientDet-Lite2 448px (34% mAP · MediaPipe)',
-  yolov10n: 'YOLOv10n ONNX (38.5% mAP · Transformers.js)',
   efficientdet_lite0: 'EfficientDet-Lite0 320px (Rápido · MediaPipe)',
 };
 
-type YoloDetectionResult = {
-  label: string;
-  score: number;
-  box: { xmin: number; ymin: number; xmax: number; ymax: number };
+const ONNX_DETECTOR_MODELS: Partial<
+  Record<DetectorEngineId, { repoId: string; shortLabel: string; mAp: string }>
+> = {
+  dfine_n: {
+    repoId: 'onnx-community/dfine_n_coco-ONNX',
+    shortLabel: 'D-FINE-N',
+    mAp: '42.8% mAP',
+  },
+  dfine_s: {
+    repoId: 'onnx-community/dfine_s_coco-ONNX',
+    shortLabel: 'D-FINE-S',
+    mAp: '48.5% mAP',
+  },
+  yolov10n: {
+    repoId: 'onnx-community/yolov10n',
+    shortLabel: 'YOLOv10n',
+    mAp: '38.5% mAP',
+  },
 };
 
-type YoloPipelineFn = (
+type OnnxPipelineFn = (
   input: unknown,
   options?: { threshold?: number; percentage?: boolean }
-) => Promise<YoloDetectionResult[]>;
+) => Promise<WorkerDetectionItem[]>;
 
 export function computeClockPosition(centerX: number): string {
   if (centerX < 20) return 'a las 9';
@@ -155,17 +172,19 @@ export function estimatePinholeMeters(
 
 export class DetectorService {
   private detector: ObjectDetector | null = null;
-  private yoloPipeline: YoloPipelineFn | null = null;
-  private yoloCanvas: HTMLCanvasElement | null = null;
-  private activeEngine: DetectorEngineId = 'efficientdet_lite2';
+  private onnxPipeline: OnnxPipelineFn | null = null;
+  private onnxEngineLoaded: DetectorEngineId | null = null;
+  private usingWorker = false;
+  private onnxCanvas: HTMLCanvasElement | null = null;
+  private activeEngine: DetectorEngineId = 'dfine_n';
   private currentRunningMode: 'IMAGE' | 'VIDEO' = 'IMAGE';
   private lastScoreThreshold = 0.36;
   private status: DetectorStatus = {
     ready: false,
     loading: false,
     error: null,
-    modelName: MODEL_DISPLAY_NAMES.efficientdet_lite2,
-    engineId: 'efficientdet_lite2',
+    modelName: MODEL_DISPLAY_NAMES.dfine_n,
+    engineId: 'dfine_n',
     inferenceTimeMs: null,
   };
 
@@ -190,6 +209,11 @@ export class DetectorService {
       }
       this.detector = null;
     }
+    if (this.onnxEngineLoaded !== engine) {
+      this.onnxPipeline = null;
+      this.onnxEngineLoaded = null;
+      this.usingWorker = false;
+    }
     this.status = {
       ready: false,
       loading: false,
@@ -201,7 +225,7 @@ export class DetectorService {
     return this.initialize(scoreThreshold);
   }
 
-  private async detectYoloBackend(): Promise<'webgpu' | 'wasm'> {
+  private async detectOnnxBackend(): Promise<'webgpu' | 'wasm'> {
     try {
       const nav = navigator as unknown as {
         gpu?: { requestAdapter?: () => Promise<unknown | null> };
@@ -214,6 +238,64 @@ export class DetectorService {
       // Fallback to WASM
     }
     return 'wasm';
+  }
+
+  private async initOnnxEngine(engine: DetectorEngineId): Promise<boolean> {
+    const spec = ONNX_DETECTOR_MODELS[engine];
+    if (!spec) return false;
+
+    // 1. Primary: Dedicated off-main-thread Web Worker
+    if (visionWorkerClient.isAvailable()) {
+      try {
+        const res = await visionWorkerClient.initDetector(spec.repoId);
+        this.usingWorker = true;
+        this.onnxEngineLoaded = engine;
+        this.activeEngine = engine;
+        this.status = {
+          ready: true,
+          loading: false,
+          error: null,
+          modelName: `${spec.shortLabel} (${res.backend.toUpperCase()} Worker · ${spec.mAp})`,
+          engineId: engine,
+          inferenceTimeMs: null,
+        };
+        return true;
+      } catch {
+        this.usingWorker = false;
+      }
+    }
+
+    // 2. Fallback: Main-thread Transformers.js ONNX pipeline
+    try {
+      const backend = await this.detectOnnxBackend();
+      const transformers = await import('@huggingface/transformers');
+      const createPipeline = transformers.pipeline as unknown as (
+        task: string,
+        model: string,
+        opts?: Record<string, unknown>
+      ) => Promise<OnnxPipelineFn>;
+
+      this.onnxPipeline = await createPipeline('object-detection', spec.repoId, {
+        device: backend,
+        dtype: backend === 'webgpu' ? 'fp16' : 'q8',
+      });
+      this.usingWorker = false;
+      this.onnxEngineLoaded = engine;
+      this.activeEngine = engine;
+      this.status = {
+        ready: true,
+        loading: false,
+        error: null,
+        modelName: `${spec.shortLabel} (${backend.toUpperCase()} · ${spec.mAp})`,
+        engineId: engine,
+        inferenceTimeMs: null,
+      };
+      return true;
+    } catch {
+      this.onnxPipeline = null;
+      this.onnxEngineLoaded = null;
+      return false;
+    }
   }
 
   private async initMediaPipeModel(
@@ -255,10 +337,15 @@ export class DetectorService {
   async initialize(scoreThreshold = 0.36): Promise<DetectorStatus> {
     this.lastScoreThreshold = scoreThreshold;
 
-    if (this.activeEngine === 'yolov10n' && this.yoloPipeline) {
+    const isOnnxEngine = Boolean(ONNX_DETECTOR_MODELS[this.activeEngine]);
+    if (
+      isOnnxEngine &&
+      this.onnxEngineLoaded === this.activeEngine &&
+      (this.usingWorker || this.onnxPipeline)
+    ) {
       return this.getStatus();
     }
-    if (this.activeEngine !== 'yolov10n' && this.detector) {
+    if (!isOnnxEngine && this.detector) {
       await this.detector.setOptions({ scoreThreshold });
       return this.getStatus();
     }
@@ -271,52 +358,36 @@ export class DetectorService {
       engineId: this.activeEngine,
     };
 
-    if (this.activeEngine === 'yolov10n') {
-      try {
-        const backend = await this.detectYoloBackend();
-        const transformers = await import('@huggingface/transformers');
-        const createPipeline = transformers.pipeline as unknown as (
-          task: string,
-          model: string,
-          opts?: Record<string, unknown>
-        ) => Promise<YoloPipelineFn>;
+    // Smart graceful fallback chain: dfine_s -> dfine_n -> efficientdet_lite2 -> efficientdet_lite0
+    const fallbackChain: DetectorEngineId[] =
+      this.activeEngine === 'dfine_s'
+        ? ['dfine_s', 'dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
+        : this.activeEngine === 'dfine_n'
+          ? ['dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
+          : this.activeEngine === 'yolov10n'
+            ? ['yolov10n', 'dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
+            : this.activeEngine === 'efficientdet_lite2'
+              ? ['efficientdet_lite2', 'efficientdet_lite0']
+              : ['efficientdet_lite0'];
 
-        this.yoloPipeline = await createPipeline('object-detection', 'onnx-community/yolov10n', {
-          device: backend,
-          dtype: backend === 'webgpu' ? 'fp16' : 'q8',
-        });
-        this.status = {
-          ready: true,
-          loading: false,
-          error: null,
-          modelName: `YOLOv10n (${backend.toUpperCase()} · 38.5% mAP)`,
-          engineId: 'yolov10n',
-          inferenceTimeMs: null,
-        };
-        return this.getStatus();
-      } catch {
-        // Gracefully fall back to EfficientDet-Lite2 if YOLOv10n fails to load
-        this.yoloPipeline = null;
-        this.activeEngine = 'efficientdet_lite2';
+    for (const candidate of fallbackChain) {
+      if (ONNX_DETECTOR_MODELS[candidate]) {
+        const ok = await this.initOnnxEngine(candidate);
+        if (ok) return this.getStatus();
+      } else {
+        const ok = await this.initMediaPipeModel(
+          candidate as 'efficientdet_lite2' | 'efficientdet_lite0',
+          scoreThreshold
+        );
+        if (ok) return this.getStatus();
       }
-    }
-
-    if (this.activeEngine === 'efficientdet_lite2') {
-      const okLite2 = await this.initMediaPipeModel('efficientdet_lite2', scoreThreshold);
-      if (okLite2) return this.getStatus();
-      // Fallback to Lite0 if Lite2 download or memory fails
-      const okLite0 = await this.initMediaPipeModel('efficientdet_lite0', scoreThreshold);
-      if (okLite0) return this.getStatus();
-    } else {
-      const okLite0 = await this.initMediaPipeModel('efficientdet_lite0', scoreThreshold);
-      if (okLite0) return this.getStatus();
     }
 
     this.status = {
       ready: false,
       loading: false,
       error:
-        'Sin conectividad para descargar pesos del modelo visual (EfficientDet-Lite2 / WASM).',
+        'Sin conectividad para descargar pesos del modelo visual (D-FINE / EfficientDet WASM).',
       modelName: MODEL_DISPLAY_NAMES[this.activeEngine],
       engineId: this.activeEngine,
       inferenceTimeMs: null,
@@ -324,17 +395,18 @@ export class DetectorService {
     return this.getStatus();
   }
 
-  private async runYoloOnSource(
+  private async runOnnxOnSource(
     sourceEl: HTMLImageElement | HTMLVideoElement,
     scoreThreshold: number,
     sourceType: 'real_image' | 'real_video'
   ): Promise<{ detections: Detection[]; inferenceTimeMs: number }> {
-    if (!this.yoloPipeline) {
-      throw new Error('YOLOv10n no está inicializado.');
+    const spec = ONNX_DETECTOR_MODELS[this.activeEngine];
+    if (!spec) {
+      throw new Error('Modelo ONNX no seleccionado.');
     }
 
-    if (!this.yoloCanvas) {
-      this.yoloCanvas = document.createElement('canvas');
+    if (!this.onnxCanvas) {
+      this.onnxCanvas = document.createElement('canvas');
     }
     const srcW =
       sourceEl instanceof HTMLVideoElement
@@ -345,30 +417,52 @@ export class DetectorService {
         ? sourceEl.videoHeight || 480
         : sourceEl.naturalHeight || sourceEl.height || 480;
 
-    const maxDim = 512;
+    // Aspect-ratio-preserving downscale (never squashes portrait 9:16 mobile frames!)
+    const maxDim = this.activeEngine === 'dfine_s' ? 640 : 512;
     const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
-    this.yoloCanvas.width = Math.max(64, Math.round(srcW * scale));
-    this.yoloCanvas.height = Math.max(64, Math.round(srcH * scale));
-    const ctx = this.yoloCanvas.getContext('2d');
+    this.onnxCanvas.width = Math.max(64, Math.round(srcW * scale));
+    this.onnxCanvas.height = Math.max(64, Math.round(srcH * scale));
+    const ctx = this.onnxCanvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return { detections: [], inferenceTimeMs: 0 };
-    ctx.drawImage(sourceEl, 0, 0, this.yoloCanvas.width, this.yoloCanvas.height);
+    ctx.drawImage(sourceEl, 0, 0, this.onnxCanvas.width, this.onnxCanvas.height);
 
-    const start = performance.now();
-    const { RawImage } = await import('@huggingface/transformers');
-    const rawImg = RawImage.fromCanvas(this.yoloCanvas);
-    const results = await this.yoloPipeline(rawImg, {
-      threshold: scoreThreshold,
-      percentage: true,
-    });
-    const elapsed = Math.round(performance.now() - start);
+    let results: WorkerDetectionItem[] = [];
+    let elapsed = 0;
+
+    if (this.usingWorker && visionWorkerClient.isAvailable()) {
+      const rgba = ctx.getImageData(0, 0, this.onnxCanvas.width, this.onnxCanvas.height).data;
+      const out = await visionWorkerClient.runDetect(
+        spec.repoId,
+        rgba,
+        this.onnxCanvas.width,
+        this.onnxCanvas.height,
+        scoreThreshold
+      );
+      results = out.results ?? [];
+      elapsed = out.elapsedMs;
+    } else if (this.onnxPipeline) {
+      const start = performance.now();
+      const { RawImage } = await import('@huggingface/transformers');
+      const rawImg = RawImage.fromCanvas(this.onnxCanvas);
+      results = await this.onnxPipeline(rawImg, {
+        threshold: scoreThreshold,
+        percentage: true,
+      });
+      elapsed = Math.round(performance.now() - start);
+    }
+
     this.status.inferenceTimeMs = elapsed;
 
     const now = Date.now();
     const mapped: Detection[] = results.slice(0, 12).map((item, idx) => {
-      const x = Math.max(0, Math.min(100, item.box.xmin * 100));
-      const y = Math.max(0, Math.min(100, item.box.ymin * 100));
-      const width = Math.max(1, Math.min(100 - x, (item.box.xmax - item.box.xmin) * 100));
-      const height = Math.max(1, Math.min(100 - y, (item.box.ymax - item.box.ymin) * 100));
+      // Handle both normalized [0..1] percentage boxes and pixel-space boxes defensively
+      const needsNorm = item.box.xmax > 1.5 || item.box.ymax > 1.5;
+      const wScale = needsNorm ? 100 / Math.max(1, this.onnxCanvas!.width) : 100;
+      const hScale = needsNorm ? 100 / Math.max(1, this.onnxCanvas!.height) : 100;
+      const x = Math.max(0, Math.min(100, item.box.xmin * wScale));
+      const y = Math.max(0, Math.min(100, item.box.ymin * hScale));
+      const width = Math.max(1, Math.min(100 - x, (item.box.xmax - item.box.xmin) * wScale));
+      const height = Math.max(1, Math.min(100 - y, (item.box.ymax - item.box.ymin) * hScale));
       return this.buildDetection(item.label, item.score, { x, y, width, height }, idx, now, sourceType);
     });
 
@@ -386,8 +480,8 @@ export class DetectorService {
       }
     }
 
-    if (this.activeEngine === 'yolov10n' && this.yoloPipeline) {
-      return this.runYoloOnSource(imageElement, scoreThreshold, 'real_image');
+    if (ONNX_DETECTOR_MODELS[this.activeEngine] && (this.usingWorker || this.onnxPipeline)) {
+      return this.runOnnxOnSource(imageElement, scoreThreshold, 'real_image');
     }
 
     if (!this.detector) {
@@ -420,8 +514,8 @@ export class DetectorService {
       throw new Error('El modelo visual no está inicializado.');
     }
 
-    if (this.activeEngine === 'yolov10n' && this.yoloPipeline) {
-      return this.runYoloOnSource(videoElement, scoreThreshold, 'real_video');
+    if (ONNX_DETECTOR_MODELS[this.activeEngine] && (this.usingWorker || this.onnxPipeline)) {
+      return this.runOnnxOnSource(videoElement, scoreThreshold, 'real_video');
     }
 
     if (!this.detector) {

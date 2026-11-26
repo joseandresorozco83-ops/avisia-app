@@ -51,7 +51,11 @@ import type {
 import type { StixelNavigationPlan } from './services/DoorAndStixelService';
 import { scenarioManager } from './services/ScenarioManager';
 import { simulationEngine } from './services/SimulationEngine';
-import { messagePolicy } from './services/MessagePolicy';
+import {
+  messagePolicy,
+  shouldSpeakDeltaHazard,
+  type DeltaNarrationState,
+} from './services/MessagePolicy';
 import { speechService } from './services/SpeechService';
 import { conversationService } from './services/ConversationService';
 import { detectorService } from './services/DetectorService';
@@ -99,14 +103,16 @@ const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
   soundOnlyMode: false,
   handsFreeWakeWord: false,
   headsetButton: false,
-  depthAnythingEnabled: false,
+  depthAnythingEnabled: true,
   architecturalVisionEnabled: true,
-  archModelVariant: 'segformer_b0',
+  archModelVariant: 'segformer_b1',
   showStixelOverlay: true,
   audioVerbosity: 'essential',
   activePreset: 'indoor',
-  detectorEngine: 'efficientdet_lite2',
+  detectorEngine: 'dfine_n',
   clockFaceDirections: true,
+  offlineVlmEnabled: false,
+  autoEscalateLowConfVlm: true,
 };
 
 type MobileTab = 'vision' | 'assistant' | 'analysis' | 'map';
@@ -425,6 +431,7 @@ export function App() {
   const lastAutoSpokenAtRef = useRef<number>(0);
   const lastSpokenLiveMsgRef = useRef<{ text: string; at: number } | null>(null);
   const lastSpokenLabelMapRef = useRef<Map<string, number>>(new Map());
+  const deltaNarrationMapRef = useRef<Map<string, DeltaNarrationState>>(new Map());
   const obstacleSpeakTimerRef = useRef<number | null>(null);
   const wasPathClearRef = useRef<boolean>(false);
   const lastClearSpokenAtRef = useRef<number>(0);
@@ -437,6 +444,7 @@ export function App() {
       }
       lastChimedObstacleRef.current = null;
       lastSpokenLabelMapRef.current.clear();
+      deltaNarrationMapRef.current.clear();
       wasPathClearRef.current = false;
       setPathClearConfirmed(false);
       speechService.cancel();
@@ -463,6 +471,8 @@ export function App() {
       alert.zone === 'front_close' ||
       normLabel.includes('pared') ||
       normLabel.includes('grada') ||
+      normLabel.includes('bajada') ||
+      normLabel.includes('desnivel') ||
       normLabel.includes('escalera');
 
     // In calm "essential" mode, ignore distant front_mid objects in live camera (user can tap screen anytime)
@@ -471,12 +481,24 @@ export function App() {
     }
 
     const now = Date.now();
-    const lastForSameLabel = lastSpokenLabelMapRef.current.get(normLabel) ?? 0;
     const perLabelCooldownMs = streetFeatures.audioVerbosity === 'essential' ? 10500 : 7500;
     const globalMinGapMs = isCriticalHazard ? 2600 : 4500;
 
+    // Resolve live distance & clock for Parsimonious Delta Narration
+    const matchedDet = realDetections.find(
+      (d) =>
+        d.isInanimateObstacle &&
+        d.labelEs.toLowerCase().includes(normLabel.slice(0, 8))
+    );
+    const nextDelta = {
+      meters: matchedDet?.estimatedMeters ?? null,
+      zone: alert.zone,
+      clock: matchedDet?.clockPosition ?? 'a las 12',
+    };
+
     if (isLiveCamera) {
-      if (now - lastForSameLabel < perLabelCooldownMs) return;
+      const prevDelta = deltaNarrationMapRef.current.get(normLabel);
+      if (!shouldSpeakDeltaHazard(prevDelta, nextDelta, now, perLabelCooldownMs)) return;
       if (now - lastAutoSpokenAtRef.current < globalMinGapMs) return;
       if (isSpeakingRef.current && !isCriticalHazard) return;
     }
@@ -486,6 +508,7 @@ export function App() {
 
     lastChimedObstacleRef.current = alertKey;
     lastSpokenLabelMapRef.current.set(normLabel, now);
+    deltaNarrationMapRef.current.set(normLabel, { ...nextDelta, spokenAt: now });
     lastAutoSpokenAtRef.current = now;
 
     // Play proximity chime ONLY for truly close hazards (or simulated demo steps)
@@ -1119,6 +1142,8 @@ export function App() {
         <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando laboratorio de imagen...</div>}>
           <VisionLabPanel
             threshold={threshold}
+            autoEscalateLowConfVlm={streetFeatures.autoEscalateLowConfVlm !== false}
+            offlineVlmEnabled={Boolean(streetFeatures.offlineVlmEnabled)}
             onThresholdChange={setThreshold}
             onDetectionsReady={(dets) => setRealDetections(dets)}
             onSpeakDescription={(text) => {
@@ -1169,6 +1194,7 @@ export function App() {
           showStixelOverlay={streetFeatures.showStixelOverlay}
           simplifiedControls={isNativeApp}
           detectorEngine={streetFeatures.detectorEngine}
+          offlineVlmEnabled={Boolean(streetFeatures.offlineVlmEnabled)}
           preferredChannel={streetFeatures.activePreset === 'currency' ? 'currency' : 'explore'}
           presetSyncKey={presetSyncKey}
           banknoteTriggerCount={banknoteTriggerCount}
@@ -1232,7 +1258,7 @@ export function App() {
                     AVISIA
                   </h1>
                   <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                    v4.0.0 Piloto
+                    v5.0.0 Neuronal
                   </span>
                 </div>
                 <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
@@ -1397,7 +1423,7 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-bold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[9px] font-bold text-[#8aebff]">
-                          v4.0.0
+                          v5.0.0
                         </span>
                         {!isOnline && (
                           <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 font-mono text-[9px] font-bold text-amber-300">
@@ -1679,14 +1705,14 @@ export function App() {
                   )
                 )}
 
-                {/* v3.0 · Motor de Visión e IA Multimodal (Be My AI / Seeing AI) */}
+                {/* v5.0 · Motor Neuronal en Web Worker (D-FINE + Plano 3D + VLM) */}
                 <div className="p-3 rounded-2xl border border-[#22d3ee]/40 bg-[#1c2028] space-y-2.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#8aebff]">
-                      v3.2 · Puertas, Stixels e IA
+                      v5.0 · D-FINE, Plano 3D y VLM
                     </span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#22d3ee]/15 text-[#8aebff]">
-                      IA Activa
+                      Worker ON
                     </span>
                   </div>
 
@@ -1697,8 +1723,10 @@ export function App() {
                     <div className="grid grid-cols-3 gap-1">
                       {(
                         [
-                          { id: 'efficientdet_lite2', label: 'Lite2 · 34%' },
+                          { id: 'dfine_n', label: 'D-FINE-N · 43%' },
+                          { id: 'dfine_s', label: 'D-FINE-S · 49%' },
                           { id: 'yolov10n', label: 'YOLOv10n' },
+                          { id: 'efficientdet_lite2', label: 'Lite2 · 34%' },
                           { id: 'efficientdet_lite0', label: 'Lite0 Ráp.' },
                         ] as Array<{ id: DetectorEngineId; label: string }>
                       ).map((eng) => {
@@ -1725,6 +1753,58 @@ export function App() {
                       })}
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={streetFeatures.autoEscalateLowConfVlm !== false}
+                    onClick={() =>
+                      setStreetFeatures((prev) => ({
+                        ...prev,
+                        autoEscalateLowConfVlm: prev.autoEscalateLowConfVlm === false,
+                      }))
+                    }
+                    className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
+                  >
+                    <span className="text-[11px] font-medium text-[#dfe2ee]">
+                      Auto-VLM en imágenes ambiguas (&lt;55%)
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                        streetFeatures.autoEscalateLowConfVlm !== false
+                          ? 'bg-[#4edea3]/20 text-[#4edea3]'
+                          : 'bg-[#262a33] text-[#859397]'
+                      }`}
+                    >
+                      {streetFeatures.autoEscalateLowConfVlm !== false ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={Boolean(streetFeatures.offlineVlmEnabled)}
+                    onClick={() =>
+                      setStreetFeatures((prev) => ({
+                        ...prev,
+                        offlineVlmEnabled: !prev.offlineVlmEnabled,
+                      }))
+                    }
+                    className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
+                  >
+                    <span className="text-[11px] font-medium text-[#dfe2ee]">
+                      Respaldo VLM Offline (SmolVLM WebGPU)
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                        streetFeatures.offlineVlmEnabled
+                          ? 'bg-[#c084fc]/25 text-[#d8b4fe]'
+                          : 'bg-[#262a33] text-[#859397]'
+                      }`}
+                    >
+                      {streetFeatures.offlineVlmEnabled ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
 
                   <button
                     type="button"

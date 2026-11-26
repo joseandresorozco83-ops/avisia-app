@@ -43,9 +43,16 @@ const SERVER_TASK_PROMPTS = {
   describe_scene: [
     'Eres AVISIA, un asistente visual para una persona ciega en Latinoamérica. Responde en español claro, directo y sin adornos (máximo 3 frases cortas).',
     '1) Primero indica claramente si el camino inmediato al frente (a las 12) está despejado y cuántos pasos libres hay, o hacia qué dirección (a las 10 izquierda o a las 2 derecha) hay espacio libre para rodear.',
-    '2) Si hay puertas, especifica si están ABIERTAS (paso libre), CERRADAS (obstáculo) o ENTREABIERTAS (riesgo de golpe con el canto); menciona también cortinas, paredes muy cerca, gradas, muebles o personas con posición de reloj y pasos.',
+    '2) Si hay puertas, especifica si están ABIERTAS (paso libre), CERRADAS (obstáculo) o ENTREABIERTAS (riesgo de golpe con el canto); menciona también cortinas, paredes muy cerca, gradas reales (NO confundas baldosas, sombras ni cambios de color en el piso con gradas), muebles o personas con posición de reloj y pasos.',
     '3) Menciona cualquier texto o número de bus claramente legible y el nivel de luz.',
     'Reglas estrictas: nunca inventes objetos si la imagen está borrosa u oscura (dilo honestamente); nunca digas que es seguro cruzar una calle.',
+  ].join(' '),
+  scene_structured: [
+    'Eres AVISIA, asistente visual para una persona ciega en Latinoamérica.',
+    'Analiza la imagen con rigor 3D: NO confundas juntas de cerámica, alfombras, sombras ni cambios de color en un piso plano con gradas.',
+    'Nunca inventes objetos si está borroso u oscuro, y nunca afirmes que es seguro cruzar una calle.',
+    'Devuelve EXCLUSIVAMENTE un objeto JSON válido con exactamente estas claves:',
+    '{"immediateHazard": string|null, "hazardClock": "a las 9"|"a las 10"|"a las 12"|"a las 2"|"a las 3"|null, "freeSteps": number (0 a 5), "clearDirection": "frente"|"izquierda"|"derecha"|"detenerse", "summary": string (español conciso, máximo 22 palabras, mencionando objetos principales, puertas abiertas/cerradas y texto visible), "confidence": "high"|"medium"|"low"}.',
   ].join(' '),
   read_text:
     'Lee en voz alta y con exactitud todo texto legible en esta imagen (letreros, números de ruta de autobús, etiquetas, documentos, precios). Responde solo con el texto leído en orden natural en español, sin explicaciones extra. Si no hay texto legible, responde exactamente: No se detecta texto legible frente a la cámara.',
@@ -89,6 +96,63 @@ export function buildServerPrompt(task, question) {
     ].join(' ');
   }
   return null;
+}
+
+export function parseStructuredSceneResponse(rawText) {
+  if (typeof rawText !== 'string' || !rawText.trim()) return null;
+  const cleaned = rawText
+    .trim()
+    .replace(/^```(?:json)?/i, '')
+    .replace(/```$/i, '')
+    .trim();
+  try {
+    const obj = JSON.parse(cleaned);
+    if (!obj || typeof obj !== 'object') return null;
+    const summary = typeof obj.summary === 'string' ? obj.summary.trim() : '';
+    if (!summary) return null;
+    const confidence =
+      obj.confidence === 'high' || obj.confidence === 'medium' || obj.confidence === 'low'
+        ? obj.confidence
+        : 'medium';
+    const clearDirection =
+      obj.clearDirection === 'frente' ||
+      obj.clearDirection === 'izquierda' ||
+      obj.clearDirection === 'derecha' ||
+      obj.clearDirection === 'detenerse'
+        ? obj.clearDirection
+        : 'frente';
+    const immediateHazard =
+      typeof obj.immediateHazard === 'string' && obj.immediateHazard.trim()
+        ? obj.immediateHazard.trim()
+        : null;
+    const hazardClock =
+      typeof obj.hazardClock === 'string' && obj.hazardClock.trim()
+        ? obj.hazardClock.trim()
+        : null;
+    const freeSteps =
+      typeof obj.freeSteps === 'number' && Number.isFinite(obj.freeSteps)
+        ? Math.max(0, Math.min(5, Math.round(obj.freeSteps)))
+        : null;
+
+    const spokenText =
+      confidence === 'low'
+        ? `Imagen con poca claridad: ${summary}`
+        : summary;
+
+    return {
+      spokenText,
+      structured: {
+        immediateHazard,
+        hazardClock,
+        freeSteps,
+        clearDirection,
+        summary,
+        confidence,
+      },
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function checkRateLimit(clientKey, now = Date.now()) {
@@ -275,6 +339,9 @@ export default async function handler(req, res) {
             generationConfig: {
               temperature: 0.2,
               maxOutputTokens: 240,
+              ...(parsedTask === 'scene_structured'
+                ? { responseMimeType: 'application/json' }
+                : {}),
             },
           }),
           signal: controller.signal,
@@ -316,6 +383,16 @@ export default async function handler(req, res) {
           task: parsedTask,
           outcome: 'success',
         });
+        if (parsedTask === 'scene_structured') {
+          const parsedStruct = parseStructuredSceneResponse(text);
+          if (parsedStruct) {
+            return res.status(200).json({
+              text: parsedStruct.spokenText,
+              structured: parsedStruct.structured,
+              model,
+            });
+          }
+        }
         return res.status(200).json({ text, model });
       }
     }
