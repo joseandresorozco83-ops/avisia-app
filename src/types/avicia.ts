@@ -1,6 +1,7 @@
 export type OperationMode = 'simulation' | 'vision_lab' | 'video_lab' | 'live_camera';
 
 export type DetectorEngineId =
+  | 'dfine_s_obj365'
   | 'dfine_n'
   | 'dfine_s'
   | 'efficientdet_lite2'

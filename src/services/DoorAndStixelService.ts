@@ -300,25 +300,52 @@ export function computeStixelCorridor(
           ? 64
           : 30;
 
+    // If SegFormer sees strong overall walkable corridor floor and low wall blockage, prevent bottom-edge shadows from zeroing center reach
+    if (
+      !cameraBad &&
+      archAnalysis &&
+      s >= 1 &&
+      s <= 3 &&
+      reachPct < 42 &&
+      archAnalysis.walkableCorridorPct >= 34 &&
+      archAnalysis.wallCorridorPct < 36
+    ) {
+      reachPct = Math.max(reachPct, Math.min(72, archAnalysis.walkableCorridorPct + 18));
+    }
+
     // 2. Clip reach against blocking detections overlapping this sector
     for (const det of detections) {
       if (det.confirmationStatus !== 'confirmed') continue;
-      // Open passable doorways and windows do NOT block walking space
+      // Open passable doorways, windows, and non-blocking tabletop items do NOT block walking space
       if (det.doorState === 'open' || det.labelEs.toLowerCase() === 'ventana') continue;
-      const overlaps = det.bbox.x < x2 - 2 && det.bbox.x + det.bbox.width > x1 + 2;
+      const isBlockingEntity =
+        det.isInanimateObstacle ||
+        det.category === 'person' ||
+        det.category === 'car' ||
+        det.category === 'bus' ||
+        det.category === 'motorcycle';
+      if (!isBlockingEntity) continue;
+      if ((det.estimatedMeters ?? 5) > 3.2) continue;
+
+      const overlaps = det.bbox.x < x2 - 3 && det.bbox.x + det.bbox.width > x1 + 3;
       if (!overlaps) continue;
 
       const bottomY = det.bbox.y + det.bbox.height;
       // Only objects that reach down into the walking zone (bottomY >= 48%) or are close clip the floor
-      if (bottomY < 45 && (det.estimatedMeters ?? 5) > 2.8) continue;
+      if (bottomY < 45 && (det.estimatedMeters ?? 5) > 2.4) continue;
 
       // Higher bottomY (closer to bottom of frame = closer to user's feet) => shorter free reach
       const clearanceFromBottom = Math.max(0, Math.min(100, Math.round(((96 - bottomY) / 56) * 100)));
       const metersCap =
         typeof det.estimatedMeters === 'number'
-          ? Math.max(0, Math.min(100, Math.round((det.estimatedMeters / 3.5) * 100)))
-          : 100;
-      reachPct = Math.min(reachPct, Math.min(clearanceFromBottom, metersCap));
+          ? Math.max(0, Math.min(100, Math.round((det.estimatedMeters / 3.2) * 100)))
+          : clearanceFromBottom;
+      // Trust physical distance estimate when object is beyond 1.8m so perspective bottomY doesn't falsely zero out a 3m room
+      const effectiveCap =
+        typeof det.estimatedMeters === 'number' && det.estimatedMeters > 1.8
+          ? metersCap
+          : Math.min(clearanceFromBottom, metersCap);
+      reachPct = Math.min(reachPct, effectiveCap);
     }
 
     // 3. Clip reach against Depth Anything V2 column wall / close surface check

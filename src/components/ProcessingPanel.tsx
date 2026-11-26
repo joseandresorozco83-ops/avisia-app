@@ -48,15 +48,17 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
   const shortModelLabel =
     mode === 'simulation'
       ? 'Simulado'
-      : detectorModelName?.includes('D-FINE-S')
-        ? 'D-FINE-S'
-        : detectorModelName?.includes('D-FINE-N')
-          ? 'D-FINE-N'
-          : detectorModelName?.includes('YOLOv10')
-            ? 'YOLOv10n'
-            : detectorModelName?.includes('Lite2')
-              ? 'Lite2'
-              : 'Lite0';
+      : detectorModelName?.includes('Obj365')
+        ? 'D-FINE-365'
+        : detectorModelName?.includes('D-FINE-S')
+          ? 'D-FINE-S'
+          : detectorModelName?.includes('D-FINE-N')
+            ? 'D-FINE-N'
+            : detectorModelName?.includes('YOLOv10')
+              ? 'YOLOv10n'
+              : detectorModelName?.includes('Lite2')
+                ? 'Lite2'
+                : 'Lite0';
 
   const handleExportCsv = () => {
     const csv = telemetryService.exportCsv();

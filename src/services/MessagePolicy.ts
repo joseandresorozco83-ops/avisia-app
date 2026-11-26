@@ -140,10 +140,15 @@ export class MessagePolicy {
 
     const urgencyScore = (d: Detection): number => {
       let score = d.priority;
-      if (d.proximityZone === 'front_close') score += 45;
-      else if (d.proximityZone === 'front_mid') score += 20;
-      if (d.isInanimateObstacle) score += 12;
-      if (typeof d.estimatedMeters === 'number' && d.estimatedMeters <= 1.5) score += 25;
+      if (d.proximityZone === 'front_close') score += 50;
+      else if (d.proximityZone === 'front_mid') score += 22;
+      else score -= 18;
+      if (d.isInanimateObstacle) score += 14;
+      if (typeof d.estimatedMeters === 'number' && Number.isFinite(d.estimatedMeters)) {
+        if (d.estimatedMeters <= 1.2) score += 45;
+        else if (d.estimatedMeters <= 2.0) score += 25;
+        else if (d.estimatedMeters > 3.2) score -= 28;
+      }
       return score;
     };
 
@@ -209,19 +214,21 @@ export class MessagePolicy {
     streetMode = false,
     useClockFace = false
   ): ObstacleAlert | null {
-    // Prefer front_close inanimate hazards first
+    // Prefer front_close inanimate hazards first; only alert on front_mid if within 3 steps (<= 2.6m)
     const frontObstacle =
       detections.find(
         (d) =>
           d.isInanimateObstacle &&
           d.confirmationStatus === 'confirmed' &&
-          d.proximityZone === 'front_close'
+          d.proximityZone === 'front_close' &&
+          (d.estimatedMeters === undefined || d.estimatedMeters === null || d.estimatedMeters <= 2.6)
       ) ??
       detections.find(
         (d) =>
           d.isInanimateObstacle &&
           d.confirmationStatus === 'confirmed' &&
-          d.proximityZone === 'front_mid'
+          d.proximityZone === 'front_mid' &&
+          (d.estimatedMeters === undefined || d.estimatedMeters === null || d.estimatedMeters <= 2.4)
       );
 
     if (!frontObstacle) return null;

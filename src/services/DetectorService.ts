@@ -106,8 +106,108 @@ export const CATEGORY_MAP: Record<string, ClassMeta> = {
   scissors: { category: 'unknown', labelEs: 'Tijeras', priority: 66, typicalHeightMeters: 0.18 },
   'teddy bear': { category: 'unknown', labelEs: 'Peluche', priority: 55, typicalHeightMeters: 0.35 },
   'hair drier': { category: 'unknown', labelEs: 'Secadora', priority: 55, typicalHeightMeters: 0.24 },
+  'hair dryer': { category: 'unknown', labelEs: 'Secadora', priority: 55, typicalHeightMeters: 0.24 },
   toothbrush: { category: 'unknown', labelEs: 'Cepillo', priority: 48, typicalHeightMeters: 0.18 },
+
+  // Objects365 indoor, office & urban mobility classes (D-FINE-S Objects365 366-class ontology)
+  desk: { category: 'obstacle', labelEs: 'Escritorio', priority: 91, isInanimateObstacle: true, typicalHeightMeters: 0.78 },
+  'cabinet/shelf': { category: 'obstacle', labelEs: 'Mueble o estante', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 1.40 },
+  'monitor/tv': { category: 'obstacle', labelEs: 'Monitor', priority: 82, isInanimateObstacle: true, typicalHeightMeters: 0.46 },
+  telephone: { category: 'unknown', labelEs: 'Teléfono fijo', priority: 72, typicalHeightMeters: 0.16 },
+  'blackboard/whiteboard': { category: 'unknown', labelEs: 'Pizarra', priority: 70, typicalHeightMeters: 1.10 },
+  'fire extinguisher': { category: 'obstacle', labelEs: 'Extintor', priority: 89, isInanimateObstacle: true, typicalHeightMeters: 0.62 },
+  'storage box': { category: 'obstacle', labelEs: 'Caja', priority: 86, isInanimateObstacle: true, typicalHeightMeters: 0.48 },
+  'trash bin can': { category: 'obstacle', labelEs: 'Basurero', priority: 87, isInanimateObstacle: true, typicalHeightMeters: 0.62 },
+  'table tennis': { category: 'obstacle', labelEs: 'Mesa', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 0.76 },
+  'dinning table': { category: 'obstacle', labelEs: 'Mesa', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 0.78 },
+  'coffee table': { category: 'obstacle', labelEs: 'Mesa baja', priority: 89, isInanimateObstacle: true, typicalHeightMeters: 0.48 },
+  'side table': { category: 'obstacle', labelEs: 'Mesa lateral', priority: 88, isInanimateObstacle: true, typicalHeightMeters: 0.65 },
+  stool: { category: 'chair', labelEs: 'Taburete', priority: 88, isInanimateObstacle: true, typicalHeightMeters: 0.65 },
+  wheelchair: { category: 'obstacle', labelEs: 'Silla de ruedas', priority: 93, isInanimateObstacle: true, typicalHeightMeters: 0.95 },
+  'traffic cone': { category: 'obstacle', labelEs: 'Cono', priority: 91, isInanimateObstacle: true, typicalHeightMeters: 0.70 },
+  'traffic sign': { category: 'stop_sign', labelEs: 'Señal', priority: 85, isInanimateObstacle: true, typicalHeightMeters: 0.80 },
+  'crosswalk sign': { category: 'traffic_light', labelEs: 'Señal peatonal', priority: 88, isInanimateObstacle: true, typicalHeightMeters: 0.80 },
+  'street lights': { category: 'pole', labelEs: 'Poste de luz', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 2.50 },
+  'handbag/satchel': { category: 'obstacle', labelEs: 'Bolso', priority: 78, isInanimateObstacle: true, typicalHeightMeters: 0.35 },
+  luggage: { category: 'obstacle', labelEs: 'Maleta', priority: 89, isInanimateObstacle: true, typicalHeightMeters: 0.65 },
+  trolley: { category: 'obstacle', labelEs: 'Carrito', priority: 89, isInanimateObstacle: true, typicalHeightMeters: 0.90 },
+  stroller: { category: 'obstacle', labelEs: 'Cochecito', priority: 91, isInanimateObstacle: true, typicalHeightMeters: 0.95 },
+  ladder: { category: 'obstacle', labelEs: 'Escalera de mano', priority: 91, isInanimateObstacle: true, typicalHeightMeters: 1.60 },
+  printer: { category: 'unknown', labelEs: 'Impresora', priority: 72, typicalHeightMeters: 0.35 },
+  'computer box': { category: 'unknown', labelEs: 'Computadora', priority: 72, typicalHeightMeters: 0.42 },
+  fan: { category: 'obstacle', labelEs: 'Ventilador', priority: 84, isInanimateObstacle: true, typicalHeightMeters: 1.10 },
+  mirror: { category: 'obstacle', labelEs: 'Espejo', priority: 85, isInanimateObstacle: true, typicalHeightMeters: 1.25 },
+  lamp: { category: 'obstacle', labelEs: 'Lámpara', priority: 80, isInanimateObstacle: true, typicalHeightMeters: 1.30 },
+  radiator: { category: 'obstacle', labelEs: 'Radiador', priority: 85, isInanimateObstacle: true, typicalHeightMeters: 0.70 },
 };
+
+const RARE_OUTDOOR_ONLY_CLASSES = new Set([
+  'airplane',
+  'boat',
+  'train',
+  'surfboard',
+  'skis',
+  'snowboard',
+  'kite',
+  'giraffe',
+  'zebra',
+  'elephant',
+  'bear',
+  'cow',
+  'sheep',
+  'horse',
+  'hot-air balloon',
+  'ship',
+  'saxophone',
+  'skiboard',
+]);
+
+/**
+ * Context & geometric sanity gate to suppress classic COCO/Objects365 false positives
+ * in indoor navigation (e.g., wooden door + carpet misclassified as "bed" at 40–49%,
+ * or user's own shoes/shadow at bottom frame border misclassified as "person").
+ */
+export function isPlausibleDetection(
+  rawCategoryName: string,
+  score: number,
+  bbox: { x: number; y: number; width: number; height: number }
+): boolean {
+  const rawName = (rawCategoryName || '').toLowerCase().trim();
+  if (!rawName) return false;
+
+  if (RARE_OUTDOOR_ONLY_CLASSES.has(rawName) && score < 0.78) {
+    return false;
+  }
+
+  // Suppress "bed" hallucinations on wooden doors / carpet floors
+  if (rawName === 'bed') {
+    if (score < 0.64) return false;
+    // A wide box spanning the lower frame or vertical door with <0.78 confidence is a false door/floor match
+    if (bbox.width >= 55 && bbox.height >= 40 && score < 0.78) return false;
+  }
+
+  // Suppress low-confidence "bench" hallucinations on indoor tables / floor borders
+  if (rawName === 'bench' && score < 0.56) {
+    return false;
+  }
+
+  // Suppress noisy tabletop clutter labels ("book", "laptop") when confidence is weak
+  if ((rawName === 'book' || rawName === 'tie' || rawName === 'toothbrush') && score < 0.54) {
+    return false;
+  }
+
+  // Suppress phantom "person" detections at the extreme bottom border (user's own feet / floor shadow)
+  if (rawName === 'person') {
+    if (bbox.y >= 72 && bbox.height <= 30 && score < 0.76) {
+      return false;
+    }
+    if (bbox.y + bbox.height >= 97 && bbox.height <= 24 && score < 0.78) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 const MEDIAPIPE_WASM_URL =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm';
@@ -120,6 +220,7 @@ const MODEL_URLS: Record<'efficientdet_lite2' | 'efficientdet_lite0', string> = 
 };
 
 const MODEL_DISPLAY_NAMES: Record<DetectorEngineId, string> = {
+  dfine_s_obj365: 'D-FINE-Obj365 ONNX (366 clases interiores · Apache 2.0)',
   dfine_n: 'D-FINE-Nano ONNX (42.8% mAP · Apache 2.0)',
   dfine_s: 'D-FINE-Small ONNX (48.5% mAP · Apache 2.0)',
   yolov10n: 'YOLOv10n ONNX (38.5% mAP)',
@@ -130,6 +231,11 @@ const MODEL_DISPLAY_NAMES: Record<DetectorEngineId, string> = {
 const ONNX_DETECTOR_MODELS: Partial<
   Record<DetectorEngineId, { repoId: string; shortLabel: string; mAp: string }>
 > = {
+  dfine_s_obj365: {
+    repoId: 'onnx-community/dfine_s_obj365-ONNX',
+    shortLabel: 'D-FINE-Obj365',
+    mAp: '366 clases',
+  },
   dfine_n: {
     repoId: 'onnx-community/dfine_n_coco-ONNX',
     shortLabel: 'D-FINE-N',
@@ -358,17 +464,19 @@ export class DetectorService {
       engineId: this.activeEngine,
     };
 
-    // Smart graceful fallback chain: dfine_s -> dfine_n -> efficientdet_lite2 -> efficientdet_lite0
+    // Smart graceful fallback chain: dfine_s_obj365 -> dfine_n -> efficientdet_lite2 -> efficientdet_lite0
     const fallbackChain: DetectorEngineId[] =
-      this.activeEngine === 'dfine_s'
-        ? ['dfine_s', 'dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
-        : this.activeEngine === 'dfine_n'
-          ? ['dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
-          : this.activeEngine === 'yolov10n'
-            ? ['yolov10n', 'dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
-            : this.activeEngine === 'efficientdet_lite2'
-              ? ['efficientdet_lite2', 'efficientdet_lite0']
-              : ['efficientdet_lite0'];
+      this.activeEngine === 'dfine_s_obj365'
+        ? ['dfine_s_obj365', 'dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
+        : this.activeEngine === 'dfine_s'
+          ? ['dfine_s', 'dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
+          : this.activeEngine === 'dfine_n'
+            ? ['dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
+            : this.activeEngine === 'yolov10n'
+              ? ['yolov10n', 'dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
+              : this.activeEngine === 'efficientdet_lite2'
+                ? ['efficientdet_lite2', 'efficientdet_lite0']
+                : ['efficientdet_lite0'];
 
     for (const candidate of fallbackChain) {
       if (ONNX_DETECTOR_MODELS[candidate]) {
@@ -454,7 +562,9 @@ export class DetectorService {
     this.status.inferenceTimeMs = elapsed;
 
     const now = Date.now();
-    const mapped: Detection[] = results.slice(0, 12).map((item, idx) => {
+    const mapped: Detection[] = [];
+    for (let idx = 0; idx < results.length && mapped.length < 12; idx++) {
+      const item = results[idx];
       // Handle both normalized [0..1] percentage boxes and pixel-space boxes defensively
       const needsNorm = item.box.xmax > 1.5 || item.box.ymax > 1.5;
       const wScale = needsNorm ? 100 / Math.max(1, this.onnxCanvas!.width) : 100;
@@ -463,8 +573,10 @@ export class DetectorService {
       const y = Math.max(0, Math.min(100, item.box.ymin * hScale));
       const width = Math.max(1, Math.min(100 - x, (item.box.xmax - item.box.xmin) * wScale));
       const height = Math.max(1, Math.min(100 - y, (item.box.ymax - item.box.ymin) * hScale));
-      return this.buildDetection(item.label, item.score, { x, y, width, height }, idx, now, sourceType);
-    });
+      const bbox = { x, y, width, height };
+      if (!isPlausibleDetection(item.label, item.score, bbox)) continue;
+      mapped.push(this.buildDetection(item.label, item.score, bbox, idx, now, sourceType));
+    }
 
     return { detections: mapped, inferenceTimeMs: elapsed };
   }
@@ -557,14 +669,19 @@ export class DetectorService {
 
     const centerX = bbox.x + bbox.width / 2;
     const bottomY = bbox.y + bbox.height;
-    const overlapsCenterCorridor = bbox.x + bbox.width >= 26 && bbox.x <= 74;
-    const isCentered = (centerX >= 22 && centerX <= 78) || overlapsCenterCorridor;
+    // Strict central walking corridor [34%..66%]: prevents side objects ("a las 3") from triggering frontal alerts
+    const centerOverlapWidth = Math.max(
+      0,
+      Math.min(bbox.x + bbox.width, 66) - Math.max(bbox.x, 34)
+    );
+    const coversCenterPath = centerOverlapWidth >= 14;
+    const isCentered = (centerX >= 30 && centerX <= 70) || coversCenterPath;
 
     const estimatedMeters = estimatePinholeMeters(bbox.height, typicalHeight);
     const clockPosition = computeClockPosition(centerX);
 
     const proximityZone: Detection['proximityZone'] = isCentered
-      ? estimatedMeters <= 1.8 || bbox.height >= 34 || (bottomY >= 78 && bbox.width >= 26)
+      ? estimatedMeters <= 1.8 || bbox.height >= 36 || (bottomY >= 80 && bbox.width >= 28)
         ? 'front_close'
         : 'front_mid'
       : 'side';
@@ -605,12 +722,14 @@ export class DetectorService {
       const y = Math.max(0, (det.boundingBox.originY / imgHeight) * 100);
       const width = Math.min(100 - x, (det.boundingBox.width / imgWidth) * 100);
       const height = Math.min(100 - y, (det.boundingBox.height / imgHeight) * 100);
+      const bbox = { x, y, width, height };
+      if (!isPlausibleDetection(topCat.categoryName || '', topCat.score, bbox)) return;
 
       mapped.push(
         this.buildDetection(
           topCat.categoryName || '',
           topCat.score,
-          { x, y, width, height },
+          bbox,
           idx,
           now,
           source

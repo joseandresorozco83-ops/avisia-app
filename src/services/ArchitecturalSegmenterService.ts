@@ -114,9 +114,9 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
   escalator: {
     labelEs: 'Escalera eléctrica',
     category: 'obstacle',
-    priority: 96,
+    priority: 92,
     isInanimateObstacle: true,
-    minAreaPct: 3.5,
+    minAreaPct: 14.0,
     typicalHeightMeters: 1.4,
   },
   windowpane: {
@@ -132,7 +132,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'pole',
     priority: 93,
     isInanimateObstacle: true,
-    minAreaPct: 3.0,
+    minAreaPct: 2.8,
     typicalHeightMeters: 2.4,
   },
   pillar: {
@@ -140,7 +140,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'pole',
     priority: 93,
     isInanimateObstacle: true,
-    minAreaPct: 3.0,
+    minAreaPct: 2.8,
     typicalHeightMeters: 2.4,
   },
   pole: {
@@ -175,6 +175,14 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     minAreaPct: 3.8,
     typicalHeightMeters: 1.0,
   },
+  bannister: {
+    labelEs: 'Baranda',
+    category: 'obstacle',
+    priority: 90,
+    isInanimateObstacle: true,
+    minAreaPct: 3.8,
+    typicalHeightMeters: 1.0,
+  },
   fence: {
     labelEs: 'Reja o cerca',
     category: 'obstacle',
@@ -186,25 +194,25 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
   cabinet: {
     labelEs: 'Armario o mueble',
     category: 'obstacle',
-    priority: 88,
+    priority: 89,
     isInanimateObstacle: true,
-    minAreaPct: 5.5,
+    minAreaPct: 4.5,
     typicalHeightMeters: 1.35,
   },
   wardrobe: {
     labelEs: 'Clóset o armario',
     category: 'obstacle',
-    priority: 88,
+    priority: 89,
     isInanimateObstacle: true,
-    minAreaPct: 6.0,
+    minAreaPct: 5.0,
     typicalHeightMeters: 1.9,
   },
   'chest of drawers': {
     labelEs: 'Mueble',
     category: 'obstacle',
-    priority: 87,
+    priority: 88,
     isInanimateObstacle: true,
-    minAreaPct: 5.5,
+    minAreaPct: 4.5,
     typicalHeightMeters: 1.0,
   },
   bookcase: {
@@ -212,7 +220,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'obstacle',
     priority: 87,
     isInanimateObstacle: true,
-    minAreaPct: 5.5,
+    minAreaPct: 5.0,
     typicalHeightMeters: 1.7,
   },
   shelf: {
@@ -220,39 +228,199 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'obstacle',
     priority: 86,
     isInanimateObstacle: true,
-    minAreaPct: 5.0,
+    minAreaPct: 4.5,
     typicalHeightMeters: 1.3,
   },
   counter: {
     labelEs: 'Mostrador',
     category: 'obstacle',
-    priority: 89,
+    priority: 91,
     isInanimateObstacle: true,
-    minAreaPct: 5.5,
+    minAreaPct: 4.0,
     typicalHeightMeters: 0.95,
+  },
+  countertop: {
+    labelEs: 'Mostrador',
+    category: 'obstacle',
+    priority: 91,
+    isInanimateObstacle: true,
+    minAreaPct: 4.0,
+    typicalHeightMeters: 0.95,
+  },
+  booth: {
+    labelEs: 'Mostrador o módulo',
+    category: 'obstacle',
+    priority: 91,
+    isInanimateObstacle: true,
+    minAreaPct: 4.5,
+    typicalHeightMeters: 1.25,
   },
   desk: {
     labelEs: 'Escritorio',
     category: 'obstacle',
+    priority: 90,
+    isInanimateObstacle: true,
+    minAreaPct: 4.0,
+    typicalHeightMeters: 0.78,
+  },
+  table: {
+    labelEs: 'Mesa',
+    category: 'obstacle',
+    priority: 90,
+    isInanimateObstacle: true,
+    minAreaPct: 4.0,
+    typicalHeightMeters: 0.78,
+  },
+  'coffee table': {
+    labelEs: 'Mesa baja',
+    category: 'obstacle',
     priority: 89,
     isInanimateObstacle: true,
-    minAreaPct: 5.5,
-    typicalHeightMeters: 0.78,
+    minAreaPct: 3.8,
+    typicalHeightMeters: 0.48,
+  },
+  chair: {
+    labelEs: 'Silla',
+    category: 'chair',
+    priority: 90,
+    isInanimateObstacle: true,
+    minAreaPct: 3.2,
+    typicalHeightMeters: 0.85,
+  },
+  'swivel chair': {
+    labelEs: 'Silla',
+    category: 'chair',
+    priority: 91,
+    isInanimateObstacle: true,
+    minAreaPct: 3.0,
+    typicalHeightMeters: 0.90,
+  },
+  armchair: {
+    labelEs: 'Sillón',
+    category: 'obstacle',
+    priority: 89,
+    isInanimateObstacle: true,
+    minAreaPct: 3.8,
+    typicalHeightMeters: 0.88,
+  },
+  sofa: {
+    labelEs: 'Sillón',
+    category: 'obstacle',
+    priority: 89,
+    isInanimateObstacle: true,
+    minAreaPct: 4.2,
+    typicalHeightMeters: 0.88,
+  },
+  seat: {
+    labelEs: 'Asiento',
+    category: 'chair',
+    priority: 88,
+    isInanimateObstacle: true,
+    minAreaPct: 3.5,
+    typicalHeightMeters: 0.82,
+  },
+  stool: {
+    labelEs: 'Taburete',
+    category: 'chair',
+    priority: 88,
+    isInanimateObstacle: true,
+    minAreaPct: 3.0,
+    typicalHeightMeters: 0.65,
+  },
+  box: {
+    labelEs: 'Caja',
+    category: 'obstacle',
+    priority: 86,
+    isInanimateObstacle: true,
+    minAreaPct: 3.2,
+    typicalHeightMeters: 0.50,
+  },
+  case: {
+    labelEs: 'Gabinete o caja',
+    category: 'obstacle',
+    priority: 86,
+    isInanimateObstacle: true,
+    minAreaPct: 3.2,
+    typicalHeightMeters: 0.60,
+  },
+  ashcan: {
+    labelEs: 'Basurero',
+    category: 'obstacle',
+    priority: 87,
+    isInanimateObstacle: true,
+    minAreaPct: 2.5,
+    typicalHeightMeters: 0.60,
+  },
+  monitor: {
+    labelEs: 'Monitor',
+    category: 'unknown',
+    priority: 76,
+    isInanimateObstacle: false,
+    minAreaPct: 2.8,
+    typicalHeightMeters: 0.45,
+  },
+  computer: {
+    labelEs: 'Computadora',
+    category: 'unknown',
+    priority: 76,
+    isInanimateObstacle: false,
+    minAreaPct: 2.8,
+    typicalHeightMeters: 0.42,
+  },
+  'crt screen': {
+    labelEs: 'Pantalla',
+    category: 'unknown',
+    priority: 75,
+    isInanimateObstacle: false,
+    minAreaPct: 3.0,
+    typicalHeightMeters: 0.48,
+  },
+  screen: {
+    labelEs: 'Pantalla',
+    category: 'unknown',
+    priority: 75,
+    isInanimateObstacle: false,
+    minAreaPct: 3.5,
+    typicalHeightMeters: 0.55,
+  },
+  'bulletin board': {
+    labelEs: 'Pizarra',
+    category: 'unknown',
+    priority: 68,
+    isInanimateObstacle: false,
+    minAreaPct: 4.5,
+    typicalHeightMeters: 1.05,
+  },
+  signboard: {
+    labelEs: 'Rótulo',
+    category: 'unknown',
+    priority: 68,
+    isInanimateObstacle: false,
+    minAreaPct: 3.5,
+    typicalHeightMeters: 0.65,
+  },
+  radiator: {
+    labelEs: 'Radiador',
+    category: 'obstacle',
+    priority: 85,
+    isInanimateObstacle: true,
+    minAreaPct: 3.5,
+    typicalHeightMeters: 0.70,
   },
   mirror: {
     labelEs: 'Espejo',
     category: 'obstacle',
     priority: 86,
     isInanimateObstacle: true,
-    minAreaPct: 5.5,
+    minAreaPct: 5.0,
     typicalHeightMeters: 1.4,
   },
   glass: {
     labelEs: 'Vidrio',
     category: 'obstacle',
-    priority: 89,
+    priority: 90,
     isInanimateObstacle: true,
-    minAreaPct: 5.5,
+    minAreaPct: 4.5,
     typicalHeightMeters: 1.8,
   },
 };
@@ -300,13 +468,16 @@ export function parseArchitecturalSegments(
   let wallBbox: { x: number; y: number; width: number; height: number } | null = null;
   let corridorBlockedByArch = false;
 
-  // Compact 5-sector x 20-row occupancy grids for Stixel floor reach & flanking wall detection
+  // Compact 5-sector x 20-row occupancy grids for Stixel floor reach & flanking wall/doorway detection
+  // NOTE: cellTotalSamples is counted ONCE per pixel so multiple walkable classes (e.g. floor + rug)
+  // never divide the walkable ratio!
   const NUM_SECTORS = 5;
   const NUM_ROWS = 20; // row 0 = top (0%), row 19 = bottom (100%)
   const walkableGrid = new Float32Array(NUM_SECTORS * NUM_ROWS);
-  const walkableCount = new Float32Array(NUM_SECTORS * NUM_ROWS);
   const wallGrid = new Float32Array(NUM_SECTORS * NUM_ROWS);
-  const wallCount = new Float32Array(NUM_SECTORS * NUM_ROWS);
+  const doorFlankGrid = new Float32Array(NUM_SECTORS * NUM_ROWS);
+  const cellSampleCount = new Float32Array(NUM_SECTORS * NUM_ROWS);
+  let gridSamplesInitialized = false;
 
   for (let sIdx = 0; sIdx < segments.length; sIdx++) {
     const seg = segments[sIdx];
@@ -326,6 +497,13 @@ export function parseArchitecturalSegments(
 
     const isWalkable = WALKABLE_LABELS.has(labelRaw);
     const isWall = labelRaw === 'wall';
+    const isDoorLeafOrFrame =
+      isWall ||
+      labelRaw === 'door' ||
+      labelRaw === 'screen door' ||
+      labelRaw === 'cabinet' ||
+      labelRaw === 'wardrobe' ||
+      labelRaw === 'booth';
 
     let totalSampled = 0;
     let activePixels = 0;
@@ -339,6 +517,8 @@ export function parseArchitecturalSegments(
     let minY = h;
     let maxY = 0;
 
+    const countCellSamplesThisPass = !gridSamplesInitialized;
+
     for (let y = 0; y < h; y += stride) {
       const rBin = Math.min(NUM_ROWS - 1, Math.floor((y / h) * NUM_ROWS));
       for (let x = 0; x < w; x += stride) {
@@ -350,8 +530,9 @@ export function parseArchitecturalSegments(
 
         const sBin = Math.min(NUM_SECTORS - 1, Math.floor((x / w) * NUM_SECTORS));
         const cellIdx = sBin * NUM_ROWS + rBin;
-        if (isWalkable) walkableCount[cellIdx]++;
-        if (isWall) wallCount[cellIdx]++;
+        if (countCellSamplesThisPass) {
+          cellSampleCount[cellIdx]++;
+        }
 
         const val = mask.data[y * w + x];
         if (val > 127) {
@@ -360,12 +541,16 @@ export function parseArchitecturalSegments(
           if (inFloorCorr) floorActive++;
           if (isWalkable) walkableGrid[cellIdx]++;
           if (isWall) wallGrid[cellIdx]++;
+          if (isDoorLeafOrFrame) doorFlankGrid[cellIdx]++;
           if (x < minX) minX = x;
           if (x > maxX) maxX = x;
           if (y < minY) minY = y;
           if (y > maxY) maxY = y;
         }
       }
+    }
+    if (countCellSamplesThisPass && totalSampled > 0) {
+      gridSamplesInitialized = true;
     }
 
     if (activePixels === 0 || totalSampled === 0) continue;
@@ -398,8 +583,8 @@ export function parseArchitecturalSegments(
     const centerX = bx + bw / 2;
     const clockPosition = computeClockPosition(centerX);
     const estimatedMeters = estimatePinholeMeters(bh, cfg.typicalHeightMeters);
-    const overlapsCenter = bx + bw >= 26 && bx <= 74;
-    const isCentered = (centerX >= 22 && centerX <= 78) || overlapsCenter;
+    const centerOverlapWidth = Math.max(0, Math.min(bx + bw, 66) - Math.max(bx, 34));
+    const isCentered = (centerX >= 30 && centerX <= 70) || centerOverlapWidth >= 14;
 
     let proximityZone: Detection['proximityZone'] = 'side';
     if (isCentered) {
@@ -415,7 +600,7 @@ export function parseArchitecturalSegments(
       cfg.isInanimateObstacle &&
       (!BACKGROUND_LANDMARK_LABELS.has(labelRaw) || proximityZone === 'front_close');
 
-    if (effectiveObstacle && corrPct >= 20) {
+    if (effectiveObstacle && corrPct >= 22 && isCentered) {
       corridorBlockedByArch = true;
     }
 
@@ -439,58 +624,70 @@ export function parseArchitecturalSegments(
     });
   }
 
-  // Compute bottom-to-top continuous floor reach & mid-band wall occupancy per sector (0..4)
+  // Compute bottom-to-top continuous floor reach & mid-band wall/door-flank occupancy per sector (0..4)
   const sectorFloorReachPct: [number, number, number, number, number] = [0, 0, 0, 0, 0];
   const sectorWallPct: [number, number, number, number, number] = [0, 0, 0, 0, 0];
+  const sectorFlankPct: [number, number, number, number, number] = [0, 0, 0, 0, 0];
 
   for (let s = 0; s < NUM_SECTORS; s++) {
-    // Walk bottom-up from row 19 (bottom) to row 7 (35% from top) allowing at most 1 brief noise gap
+    // Walk bottom-up from row 19 (bottom) to row 7 (35% from top) allowing up to 2 brief noise/shadow gaps
     let consecutiveWalkableRows = 0;
     let gaps = 0;
     for (let r = NUM_ROWS - 1; r >= 7; r--) {
       const idx = s * NUM_ROWS + r;
-      const ratio = walkableCount[idx] > 0 ? walkableGrid[idx] / walkableCount[idx] : 0;
-      if (ratio >= 0.32) {
+      const denom = cellSampleCount[idx];
+      const ratio = denom > 0 ? Math.min(1, walkableGrid[idx] / denom) : 0;
+      if (ratio >= 0.25) {
         consecutiveWalkableRows++;
         gaps = 0;
-      } else if (consecutiveWalkableRows > 0 && gaps < 1) {
+      } else if (r >= NUM_ROWS - 2 && consecutiveWalkableRows === 0) {
+        // Allow bottom-most row (r=19 or 18) to have a shadow without aborting floor scan
+        continue;
+      } else if (consecutiveWalkableRows > 0 && gaps < 2) {
         gaps++;
       } else if (consecutiveWalkableRows > 0) {
         break;
       }
     }
     // Max possible rows from 19 down to 7 = 13 rows -> map to 0..100%
-    sectorFloorReachPct[s] = Math.min(100, Math.round((consecutiveWalkableRows / 12) * 100));
+    sectorFloorReachPct[s] = Math.min(100, Math.round((consecutiveWalkableRows / 11) * 100));
 
-    // Mid-band wall percentage (rows 5..16 = y 25%..85%)
+    // Mid-band wall & door-flank percentage (rows 5..16 = y 25%..85%)
     let wSum = 0;
+    let fSum = 0;
     let wTot = 0;
     for (let r = 5; r <= 16; r++) {
       const idx = s * NUM_ROWS + r;
       wSum += wallGrid[idx];
-      wTot += wallCount[idx];
+      fSum += doorFlankGrid[idx];
+      wTot += cellSampleCount[idx];
     }
     sectorWallPct[s] = wTot > 0 ? Math.min(100, Math.round((wSum / wTot) * 100)) : 0;
+    sectorFlankPct[s] = wTot > 0 ? Math.min(100, Math.round((fSum / wTot) * 100)) : 0;
   }
 
   const walkableCorridorPct = Math.min(100, Math.round(walkableCorridorSum));
 
   // Geometric Open Doorway Detection:
-  // A central sector (1, 2, or 3) has strong floor penetration (>= 45%) and low wall (<= 35%)
-  // while BOTH left and right flanking sectors have strong wall occupancy (>= 36%) and shorter floor reach!
+  // A central sector (1, 2, or 3) has strong floor penetration (>= 42%) and low wall (<= 38%)
+  // while BOTH left and right flanking sectors have wall OR open door-leaf structure (>= 30%)!
   let openDoorwayDetected = false;
   let openDoorwaySectorIdx: number | null = null;
   for (const s of [2, 1, 3]) {
-    const leftWall = Math.max(sectorWallPct[s - 1], s >= 2 ? sectorWallPct[0] : 0);
-    const rightWall = Math.max(sectorWallPct[s + 1], s <= 2 ? sectorWallPct[4] : 0);
+    const leftFlank = Math.max(sectorFlankPct[s - 1], s >= 2 ? sectorFlankPct[0] : 0);
+    const rightFlank = Math.max(sectorFlankPct[s + 1], s <= 2 ? sectorFlankPct[4] : 0);
+    const hasAtLeastOneWall =
+      Math.max(sectorWallPct[s - 1], s >= 2 ? sectorWallPct[0] : 0) >= 24 ||
+      Math.max(sectorWallPct[s + 1], s <= 2 ? sectorWallPct[4] : 0) >= 24;
     const centerFloor = sectorFloorReachPct[s];
     const sideFloorAvg = (sectorFloorReachPct[s - 1] + sectorFloorReachPct[s + 1]) / 2;
     if (
-      centerFloor >= 45 &&
+      centerFloor >= 42 &&
       sectorWallPct[s] <= 38 &&
-      leftWall >= 34 &&
-      rightWall >= 34 &&
-      centerFloor >= sideFloorAvg + 12
+      hasAtLeastOneWall &&
+      leftFlank >= 30 &&
+      rightFlank >= 30 &&
+      centerFloor >= sideFloorAvg + 10
     ) {
       openDoorwayDetected = true;
       openDoorwaySectorIdx = s;
@@ -498,16 +695,21 @@ export function parseArchitecturalSegments(
     }
   }
 
-  // Emit "Pared" only when a wall truly blocks the immediate forward corridor (and no open doorway)
-  if (!openDoorwayDetected && wallCorridorPct >= 52 && walkableCorridorPct < 14 && wallBbox) {
+  // Emit "Pared" when a wall blocks the forward corridor (even if some floor is still visible at bottom of 9:16 frame)
+  const wallBlocksCenter =
+    (wallCorridorPct >= 44 && wallCorridorPct >= walkableCorridorPct) ||
+    (wallCorridorPct >= 36 && sectorFloorReachPct[2] <= 38);
+  if (!openDoorwayDetected && wallBlocksCenter && wallBbox) {
     corridorBlockedByArch = true;
     seenLabels.add('Pared');
+    const veryCloseWall = wallCorridorPct >= 62 || (wallCorridorPct >= 48 && walkableCorridorPct < 24);
+    const closeWall = wallCorridorPct >= 44 || sectorFloorReachPct[2] <= 34;
     detections.push({
       id: `arch-wall-${now}`,
       category: 'obstacle',
       labelEs: 'Pared',
       source: 'real_video',
-      confidence: 0.86,
+      confidence: 0.88,
       bbox: wallBbox,
       confirmationStatus: 'confirmed',
       priority: 96,
@@ -515,8 +717,8 @@ export function parseArchitecturalSegments(
       lastSeenAt: now,
       isNew: true,
       isInanimateObstacle: true,
-      proximityZone: wallCorridorPct >= 68 ? 'front_close' : 'front_mid',
-      estimatedMeters: wallCorridorPct >= 70 ? 0.9 : 1.7,
+      proximityZone: veryCloseWall || closeWall ? 'front_close' : 'front_mid',
+      estimatedMeters: veryCloseWall ? 0.7 : closeWall ? 1.2 : 1.8,
       clockPosition: 'a las 12',
     });
   }

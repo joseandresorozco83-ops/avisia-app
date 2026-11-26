@@ -934,11 +934,43 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           const stabilizedCoco = temporalTrackerService.update(res.detections, nowTs, depthGrid);
 
           // Stabilize SegFormer ADE20K detections temporally too (eliminates 1-frame architectural flicker!)
-          const rawArchDets = archSummaryRef.current?.detections ?? [];
+          // Bidirectional 3D Ground-Plane Veto: when 3D depth confirms a flat floor, suppress SegFormer escalator/stair false alarms!
+          const depthConfirmsFlatFloor =
+            depthSummaryRef.current !== null &&
+            !depthSummaryRef.current.stepDetectedInDepth &&
+            (depthSummaryRef.current.groundPlanarityR2 ?? 1) >= 0.82;
+          const depthConfirmsRealStep = Boolean(depthSummaryRef.current?.stepDetectedInDepth);
+
+          const rawArchDets = (archSummaryRef.current?.detections ?? []).filter((ad) => {
+            const lower = ad.labelEs.toLowerCase();
+            if (lower.includes('escalera eléctrica') && !depthConfirmsRealStep) {
+              return false;
+            }
+            if ((lower.includes('escalera') || lower.includes('grada')) && depthConfirmsFlatFloor) {
+              return false;
+            }
+            return true;
+          });
           const stabilizedArch = archTemporalTrackerService.update(rawArchDets, nowTs, depthGrid);
 
-          const existingLabels = new Set(stabilizedCoco.map((d) => d.labelEs.toLowerCase()));
-          const rawMerged: Detection[] = [...stabilizedCoco];
+          // If SegFormer detects a door, wall, or counter, suppress low-confidence COCO "Cama" / "Banca" hallucinations
+          const archHasDoorOrWall =
+            (archSummaryRef.current?.wallCorridorPct ?? 0) >= 34 ||
+            rawArchDets.some((ad) => {
+              const l = ad.labelEs.toLowerCase();
+              return l.startsWith('puerta') || l.startsWith('pared') || l.startsWith('mostrador');
+            });
+
+          const filteredCoco = stabilizedCoco.filter((cd) => {
+            const l = cd.labelEs.toLowerCase();
+            if (archHasDoorOrWall && (l === 'cama' || l === 'banca') && (cd.confidence ?? 0) < 0.78) {
+              return false;
+            }
+            return true;
+          });
+
+          const existingLabels = new Set(filteredCoco.map((d) => d.labelEs.toLowerCase()));
+          const rawMerged: Detection[] = [...filteredCoco];
           for (const ad of stabilizedArch) {
             if (!existingLabels.has(ad.labelEs.toLowerCase())) {
               rawMerged.push(ad);
@@ -1000,7 +1032,10 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
           const combinedDetections = [...mergedBaseDetections];
           const hasFrontObstacle = combinedDetections.some(
-            (d) => d.isInanimateObstacle && d.proximityZone !== 'side'
+            (d) =>
+              d.isInanimateObstacle &&
+              d.proximityZone === 'front_close' &&
+              (d.clockPosition === 'a las 12' || (d.estimatedMeters ?? 2) <= 1.8)
           );
           const hasClosePersonOrVehicle = combinedDetections.some(
             (d) =>
@@ -1372,11 +1407,11 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           ref={videoRef}
           playsInline
           muted
-          className={`w-full h-full object-cover ${cameraActive ? 'block' : 'hidden'}`}
+          className={`w-full h-full object-contain ${cameraActive ? 'block' : 'hidden'}`}
         />
         <canvas
           ref={canvasRef}
-          className={`absolute inset-0 w-full h-full object-cover pointer-events-none ${
+          className={`absolute inset-0 w-full h-full object-contain pointer-events-none ${
             cameraActive ? 'block' : 'hidden'
           }`}
         />
@@ -1385,7 +1420,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v5.0.0 · Cámara Asistiva
+              AVISIA v5.1.0 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.
@@ -1650,18 +1685,22 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
                     ? simplifiedControls
                       ? 'Activando sensor de profundidad...'
                       : 'Cargando Depth Anything V2...'
-                    : proximity?.alertText
-                      ? proximity.alertText
-                      : stixelPlan
-                        ? stixelPlan.guidanceText
-                        : depthSummary
-                          ? simplifiedControls
-                            ? `Profundidad activa (~${depthSummary.estimatedMeters} m)`
-                            : `Depth V2 (~${depthSummary.estimatedMeters}m)`
-                          : proximity?.estimatedMeters !== null &&
-                              proximity?.estimatedMeters !== undefined
-                            ? `Más cercano: ~${proximity.estimatedMeters} m`
-                            : 'Analizando camino frente a ti...'}
+                    : pathClearConfirmed && stixelPlan
+                      ? stixelPlan.guidanceText
+                      : stixelPlan && !stixelPlan.centerClear
+                        ? proximity?.alertText ?? stixelPlan.guidanceText
+                        : proximity?.alertText
+                          ? proximity.alertText
+                          : stixelPlan
+                            ? stixelPlan.guidanceText
+                            : depthSummary
+                              ? simplifiedControls
+                                ? `Profundidad activa (~${depthSummary.estimatedMeters} m)`
+                                : `Depth V2 (~${depthSummary.estimatedMeters}m)`
+                              : proximity?.estimatedMeters !== null &&
+                                  proximity?.estimatedMeters !== undefined
+                                ? `Más cercano: ~${proximity.estimatedMeters} m`
+                                : 'Analizando camino frente a ti...'}
             </span>
           </div>
           {!simplifiedControls && (

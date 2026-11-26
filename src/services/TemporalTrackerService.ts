@@ -89,23 +89,37 @@ export function fuseDepthAndPinholeMeters(
     )
   );
 
-  let sum = 0;
-  let cnt = 0;
+  const samples: number[] = [];
   for (let y = gy1; y < gy2; y++) {
     for (let x = gx1; x < gx2; x++) {
-      sum += depthGrid.values[y * depthGrid.width + x];
-      cnt++;
+      samples.push(depthGrid.values[y * depthGrid.width + x]);
     }
   }
-  if (cnt === 0) return pinhole;
+  if (samples.length === 0) return pinhole;
 
-  const meanDisparity = sum / cnt; // 1.0 = closest (~0.5m), 0.0 = far (~4.2m)
-  const depthMeters = Math.max(0.4, 4.1 - meanDisparity * 3.5);
-  if (pinhole === null) return Number(depthMeters.toFixed(1));
+  // Use 80th-percentile closest disparity (p80) so background pixels or far edges of a wall/door
+  // never dilute the closest surface facing the blind user (eliminates the "a tres pasos" 2.3m clamp!)
+  samples.sort((a, b) => a - b);
+  const p80Idx = Math.min(samples.length - 1, Math.floor(samples.length * 0.8));
+  const p80Disparity = samples[p80Idx]; // 1.0 = closest (~0.45m), 0.0 = far (~4.8m)
 
-  const isClippedByBorder = det.bbox.y <= 2 || det.bbox.y + det.bbox.height >= 98;
-  // Trust neural depth more heavily when the object's bounding box is clipped by frame edges
-  const depthWeight = isClippedByBorder ? 0.72 : 0.4;
+  // Non-linear reciprocal inverse-depth curve: Z(d) = 0.45 + 4.35 * (1 - d)^1.75
+  const depthMeters = Math.max(
+    0.45,
+    Number((0.45 + 4.35 * Math.pow(Math.max(0, 1 - p80Disparity), 1.75)).toFixed(1))
+  );
+  if (pinhole === null) return depthMeters;
+
+  // Explicit architectural walls never inflate beyond their geometric corridor distance when depth is close
+  if (det.id.startsWith('arch-wall-') || det.labelEs.toLowerCase().startsWith('pared')) {
+    return Number(Math.min(pinhole, depthMeters).toFixed(1));
+  }
+
+  // Only treat large foreground boxes touching the bottom walking border as close border-clipped obstacles
+  // (prevents small distant background boxes near y=0 from being pulled down to 2m!)
+  const isForegroundBottomClipped =
+    det.bbox.height >= 36 && det.bbox.y + det.bbox.height >= 92;
+  const depthWeight = isForegroundBottomClipped ? 0.76 : 0.48;
   const blended = depthWeight * depthMeters + (1 - depthWeight) * pinhole;
   return Number(Math.max(0.4, Math.min(12, blended)).toFixed(1));
 }

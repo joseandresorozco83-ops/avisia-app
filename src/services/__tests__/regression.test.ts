@@ -23,7 +23,10 @@ import {
   stabilizeClockPosition,
   TemporalTrackerService,
 } from '../TemporalTrackerService';
-import { shouldSpeakDeltaHazard } from '../MessagePolicy';
+import { MessagePolicy, shouldSpeakDeltaHazard } from '../MessagePolicy';
+import { CATEGORY_MAP, isPlausibleDetection } from '../DetectorService';
+import { parseArchitecturalSegments } from '../ArchitecturalSegmenterService';
+import { computeStixelCorridor } from '../DoorAndStixelService';
 import { conversationService } from '../ConversationService';
 import { scenarioManager } from '../ScenarioManager';
 import type { Detection } from '../../types/avicia';
@@ -518,5 +521,178 @@ describe('AVISIA v5.0 Regression — 3D Ground-Plane Anti-False-Stair, Hysteresi
 
     // Verify scene_structured task is accepted by hardened proxy
     expect(buildServerPrompt('scene_structured')).toContain('JSON');
+  });
+});
+
+describe('AVISIA v5.1 Field-Test Regressions — Office Screenshots #1 to #10', () => {
+  const makeRectMask = (w: number, h: number, x1: number, y1: number, x2: number, y2: number) => {
+    const data = new Uint8Array(w * h);
+    for (let y = y1; y < y2; y++) {
+      for (let x = x1; x < x2; x++) {
+        data[y * w + x] = 255;
+      }
+    }
+    return { data, width: w, height: h };
+  };
+
+  it('maps Objects365 indoor classes (desk, telephone, monitor/tv, fire extinguisher, table tennis) and blocks "Cama" / phantom bottom-edge "Persona" hallucinations', () => {
+    expect(CATEGORY_MAP.desk.labelEs).toBe('Escritorio');
+    expect(CATEGORY_MAP.telephone.labelEs).toBe('Teléfono fijo');
+    expect(CATEGORY_MAP['monitor/tv'].labelEs).toBe('Monitor');
+    expect(CATEGORY_MAP['fire extinguisher'].labelEs).toBe('Extintor');
+    expect(CATEGORY_MAP['table tennis'].labelEs).toBe('Mesa');
+    expect(CATEGORY_MAP['cabinet/shelf'].labelEs).toBe('Mueble o estante');
+
+    // Screenshot #1, #4, #8: Wooden door + carpet hallucinated as "bed" at 40–49% covering lower frame -> REJECTED
+    expect(isPlausibleDetection('bed', 0.49, { x: 2, y: 45, width: 95, height: 54 })).toBe(false);
+    // Genuine high-confidence bed -> ACCEPTED
+    expect(isPlausibleDetection('bed', 0.82, { x: 15, y: 35, width: 65, height: 50 })).toBe(true);
+
+    // Screenshot #3, #10: Phantom "person" strip at extreme bottom border (user's feet/shadow) -> REJECTED
+    expect(isPlausibleDetection('person', 0.55, { x: 0, y: 80, width: 32, height: 20 })).toBe(false);
+    // Real person standing in corridor -> ACCEPTED
+    expect(isPlausibleDetection('person', 0.72, { x: 35, y: 20, width: 28, height: 68 })).toBe(true);
+  });
+
+  it('computes "Camino despejado" accurately even when SegFormer splits office carpet into "floor" + "rug" (Screenshot #3)', () => {
+    const w = 40;
+    const h = 40;
+    // Alternating carpet tiles segmented half as "floor" and half as "rug" across lower corridor (y: 16..39)
+    const floorData = new Uint8Array(w * h);
+    const rugData = new Uint8Array(w * h);
+    for (let y = 16; y < 40; y++) {
+      for (let x = 0; x < 40; x++) {
+        if ((x + y) % 2 === 0) {
+          floorData[y * w + x] = 255;
+        } else {
+          rugData[y * w + x] = 255;
+        }
+      }
+    }
+
+    const arch = parseArchitecturalSegments([
+      { label: 'floor', mask: { data: floorData, width: w, height: h } },
+      { label: 'rug', mask: { data: rugData, width: w, height: h } },
+    ]);
+
+    expect(arch.pathVisuallyClear).toBe(true);
+    expect(arch.sectorFloorReachPct[2]).toBeGreaterThanOrEqual(75);
+
+    const stixel = computeStixelCorridor([], arch, null, null);
+    expect(stixel.centerClear).toBe(true);
+    expect(stixel.centerFreeSteps).toBeGreaterThanOrEqual(3);
+    expect(stixel.guidanceText).toContain('Camino despejado a las 12');
+  });
+
+  it('detects frontal walls when some carpet is still visible at bottom and reports ~0.6–0.8m ("a un paso") instead of 2.3m ("a tres pasos") (Screenshot #9)', () => {
+    const w = 40;
+    const h = 40;
+    // Wall covering y: 0..31 (77% of frame), with small strip of floor at y: 31..39 (~22% walkableCorridorPct)
+    const arch = parseArchitecturalSegments([
+      { label: 'wall', mask: makeRectMask(w, h, 0, 0, 40, 31) },
+      { label: 'floor', mask: makeRectMask(w, h, 0, 31, 40, 40) },
+    ]);
+
+    const wallDet = arch.detections.find((d) => d.labelEs === 'Pared');
+    expect(wallDet).toBeDefined();
+    expect(wallDet?.proximityZone).toBe('front_close');
+
+    // Close wall depth grid (p80 disparity ~0.84) must stay <= 0.9m ("a un paso"), never inflate to 2.3m
+    const closeWallGrid: DepthGrid = {
+      width: 24,
+      height: 18,
+      values: new Float32Array(24 * 18).fill(0.84),
+    };
+    const fusedMeters = fuseDepthAndPinholeMeters(wallDet!, closeWallGrid);
+    expect(fusedMeters).not.toBeNull();
+    expect(fusedMeters!).toBeLessThanOrEqual(0.9);
+  });
+
+  it('detects open doorway when flanked by a wall on the left and an open wooden door leaf on the right (Screenshot #8)', () => {
+    const w = 40;
+    const h = 40;
+    const arch = parseArchitecturalSegments([
+      { label: 'wall', mask: makeRectMask(w, h, 0, 4, 15, 34) },
+      { label: 'door', mask: makeRectMask(w, h, 25, 4, 40, 34) },
+      { label: 'floor', mask: makeRectMask(w, h, 14, 15, 26, 39) },
+    ]);
+
+    expect(arch.openDoorwayDetected).toBe(true);
+    expect(arch.pathVisuallyClear).toBe(true);
+  });
+
+  it('suppresses small ribbed-carpet "escalator" false alarms in office corridors (Screenshot #2)', () => {
+    const w = 40;
+    const h = 40;
+    // 5% area escalator glitch on carpet + 50% walkable floor
+    const arch = parseArchitecturalSegments([
+      { label: 'escalator', mask: makeRectMask(w, h, 0, 20, 8, 30) },
+      { label: 'floor', mask: makeRectMask(w, h, 8, 18, 36, 39) },
+    ]);
+
+    expect(arch.detectedLabelsEs).not.toContain('Escalera eléctrica');
+    expect(arch.hasStairsMask).toBe(false);
+  });
+
+  it('prioritizes close foreground objects over distant background people and suppresses red alerts for distant (>2.6m) or side objects (Screenshots #5, #6, #7)', () => {
+    const policy = new MessagePolicy();
+
+    // Screenshot #5: Foreground computer/monitor at 1.4m vs background person at 4.2m
+    const fgMonitor: Detection = {
+      id: 'mon-1',
+      category: 'obstacle',
+      labelEs: 'Monitor',
+      source: 'real_video',
+      confidence: 0.78,
+      bbox: { x: 40, y: 38, width: 28, height: 34 },
+      confirmationStatus: 'confirmed',
+      priority: 82,
+      firstSeenAt: 1000,
+      lastSeenAt: 1000,
+      isInanimateObstacle: true,
+      proximityZone: 'front_close',
+      estimatedMeters: 1.4,
+      clockPosition: 'a las 12',
+    };
+    const bgPerson: Detection = {
+      id: 'per-bg',
+      category: 'person',
+      labelEs: 'Persona',
+      source: 'real_video',
+      confidence: 0.65,
+      bbox: { x: 38, y: 4, width: 12, height: 18 },
+      confirmationStatus: 'confirmed',
+      priority: 93,
+      firstSeenAt: 1000,
+      lastSeenAt: 1000,
+      isInanimateObstacle: false,
+      proximityZone: 'front_mid',
+      estimatedMeters: 4.2,
+      clockPosition: 'a las 12',
+    };
+
+    const evalDesk = policy.evaluateRealDetections([bgPerson, fgMonitor], 'C01', 2000, false, true);
+    expect(evalDesk.generatedMessage).toContain('Monitor');
+
+    // Screenshot #6: Distant table at 4.3m should NOT trigger an emergency obstacleAlert banner
+    const distantTable: Detection = {
+      id: 'tbl-far',
+      category: 'obstacle',
+      labelEs: 'Mesa',
+      source: 'real_video',
+      confidence: 0.72,
+      bbox: { x: 32, y: 40, width: 34, height: 22 },
+      confirmationStatus: 'confirmed',
+      priority: 90,
+      firstSeenAt: 1000,
+      lastSeenAt: 1000,
+      isInanimateObstacle: true,
+      proximityZone: 'front_mid',
+      estimatedMeters: 4.3,
+      clockPosition: 'a las 12',
+    };
+    policy.resetHistory();
+    const evalFar = policy.evaluateRealDetections([distantTable], 'C01', 9000, false, true);
+    expect(evalFar.obstacleAlert).toBeNull();
   });
 });

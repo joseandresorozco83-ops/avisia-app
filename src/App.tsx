@@ -94,7 +94,7 @@ const TechnicalDetailsSection = lazy(() =>
 );
 
 const SETTINGS_STORAGE_KEY = 'avicia_simulator_settings_v1';
-const STREET_FEATURES_STORAGE_KEY = 'avicia_street_features_v1';
+const STREET_FEATURES_STORAGE_KEY = 'avicia_street_features_v5_1';
 const CONSENT_STORAGE_KEY = 'avisia_safety_consent_v1';
 
 const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
@@ -109,7 +109,7 @@ const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
   showStixelOverlay: true,
   audioVerbosity: 'essential',
   activePreset: 'indoor',
-  detectorEngine: 'dfine_n',
+  detectorEngine: 'dfine_s_obj365',
   clockFaceDirections: true,
   offlineVlmEnabled: false,
   autoEscalateLowConfVlm: true,
@@ -1258,7 +1258,7 @@ export function App() {
                     AVISIA
                   </h1>
                   <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                    v5.0.0 Neuronal
+                    v5.1.0 Neuronal
                   </span>
                 </div>
                 <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
@@ -1423,7 +1423,7 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-bold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[9px] font-bold text-[#8aebff]">
-                          v5.0.0
+                          v5.1.0
                         </span>
                         {!isOnline && (
                           <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 font-mono text-[9px] font-bold text-amber-300">
@@ -1723,6 +1723,7 @@ export function App() {
                     <div className="grid grid-cols-3 gap-1">
                       {(
                         [
+                          { id: 'dfine_s_obj365', label: 'Obj365 · 366cl' },
                           { id: 'dfine_n', label: 'D-FINE-N · 43%' },
                           { id: 'dfine_s', label: 'D-FINE-S · 49%' },
                           { id: 'yolov10n', label: 'YOLOv10n' },
@@ -2170,9 +2171,19 @@ export function App() {
                   {evaluation.obstacleAlert && (
                     <div
                       role="alert"
-                      className="shrink-0 px-3 py-2 rounded-xl bg-[#93000a]/85 border border-[#ffb4ab]/40 text-xs text-[#ffdad6] flex items-center gap-2"
+                      className={`shrink-0 px-3 py-2 rounded-xl border text-xs flex items-center gap-2 ${
+                        evaluation.obstacleAlert.zone === 'front_close'
+                          ? 'bg-[#93000a]/85 border-[#ffb4ab]/40 text-[#ffdad6]'
+                          : 'bg-amber-500/20 border-amber-400/50 text-amber-100'
+                      }`}
                     >
-                      <ShieldAlert className="w-4 h-4 text-[#ffb4ab] shrink-0" />
+                      <ShieldAlert
+                        className={`w-4 h-4 shrink-0 ${
+                          evaluation.obstacleAlert.zone === 'front_close'
+                            ? 'text-[#ffb4ab]'
+                            : 'text-amber-300'
+                        }`}
+                      />
                       <span className="font-semibold truncate">{evaluation.obstacleAlert.message}</span>
                     </div>
                   )}

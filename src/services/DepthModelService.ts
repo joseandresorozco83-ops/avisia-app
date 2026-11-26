@@ -247,10 +247,10 @@ export function summarizeDepthGrid(
   const rightCloseness = avgRegion(third * 2, mapW, yMidStart, yMidEnd);
   const upperCenterCloseness = avgRegion(third, third * 2, yUpperStart, yUpperEnd);
 
-  const wallAhead = upperCenterCloseness >= 72 && centerCloseness >= 74;
+  const wallAhead = upperCenterCloseness >= 68 && centerCloseness >= 70;
   const closeObstacleAhead =
     wallAhead ||
-    (centerCloseness >= 72 && centerCloseness >= Math.min(leftCloseness, rightCloseness) + 12);
+    (centerCloseness >= 68 && centerCloseness >= Math.min(leftCloseness, rightCloseness) + 10);
 
   let clearSide: 'left' | 'right' | 'center' | null = null;
   if (closeObstacleAhead) {
@@ -263,8 +263,9 @@ export function summarizeDepthGrid(
     clearSide = 'center';
   }
 
+  const dNorm = Math.max(0, Math.min(1, centerCloseness / 100));
   const estimatedMeters = Number(
-    Math.max(0.5, 4.0 - (centerCloseness / 100) * 3.3).toFixed(1)
+    Math.max(0.45, 0.45 + 4.35 * Math.pow(1 - dNorm, 1.75)).toFixed(1)
   );
 
   return {

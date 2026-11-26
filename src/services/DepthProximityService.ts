@@ -50,13 +50,11 @@ export class DepthProximityService {
   private offscreenCanvas: HTMLCanvasElement | null = null;
   private prevTracks: TrackedBox[] = [];
   private prevLuma: Float32Array | null = null;
-  private verticalStreak = 0;
   private flatWallStreak = 0;
 
   reset(): void {
     this.prevTracks = [];
     this.prevLuma = null;
-    this.verticalStreak = 0;
     this.flatWallStreak = 0;
   }
 
@@ -263,19 +261,20 @@ export class DepthProximityService {
     let cameraQuality: CameraQualityIssue = 'ok';
     if (avgLuma < 14 && lumaStdDev < 10) {
       cameraQuality = 'lens_blocked';
-      this.verticalStreak = 0;
       this.flatWallStreak = 0;
     } else if (avgLuma < 24) {
       cameraQuality = 'too_dark';
-      this.verticalStreak = 0;
       this.flatWallStreak = 0;
     } else if (motionScore > 26) {
       cameraQuality = 'fast_motion';
-      this.verticalStreak = 0;
-    } else if (centerStd < 5.2 && centerMean >= 46 && detections.length === 0) {
-      // Strictly uniform bright wall filling center across >= 4 calm frames
+    } else if (
+      centerStd < 11.5 &&
+      centerMean >= 38 &&
+      !detections.some((d) => d.proximityZone === 'front_close')
+    ) {
+      // Uniform wall or partition filling center across >= 3 calm frames
       this.flatWallStreak = Math.min(6, this.flatWallStreak + 1);
-      if (this.flatWallStreak >= 4) {
+      if (this.flatWallStreak >= 3) {
         cameraQuality = 'flat_wall_close';
       }
     } else {
@@ -285,7 +284,6 @@ export class DepthProximityService {
     const flatWallAhead = cameraQuality === 'flat_wall_close';
 
     // Analyze central walking corridor only when camera is calm & illuminated
-    let verticalRatio = 0;
     let horizontalRatio = 0;
 
     if (cameraQuality === 'ok') {
@@ -294,7 +292,6 @@ export class DepthProximityService {
       const yStart = Math.floor(h * 0.48);
       const yEnd = Math.floor(h * 0.92);
 
-      let strongVerticalEdges = 0;
       let strongHorizontalEdges = 0;
       let samples = 0;
 
@@ -302,43 +299,34 @@ export class DepthProximityService {
         for (let x = xStart + 1; x < xEnd - 1; x++) {
           const dx = Math.abs(lumaAt(x + 1, y) - lumaAt(x - 1, y));
           const dy = Math.abs(lumaAt(x, y + 1) - lumaAt(x, y - 1));
-          if (dx > 44 && dx > dy * 1.35) strongVerticalEdges++;
           if (dy > 42 && dy > dx * 1.35) strongHorizontalEdges++;
           samples++;
         }
       }
 
-      verticalRatio = samples > 0 ? strongVerticalEdges / samples : 0;
       horizontalRatio = samples > 0 ? strongHorizontalEdges / samples : 0;
-
-      if (verticalRatio > 0.14) {
-        this.verticalStreak = Math.min(6, this.verticalStreak + 1);
-      } else {
-        this.verticalStreak = Math.max(0, this.verticalStreak - 1);
-      }
     }
 
-    // 2D RGB edge gradients cannot separate tile seams, shadows, or floor color changes from 3D steps.
-    // Real stair / drop-off detection is handled strictly by 3D Depth Anything V2 ground-plane analysis + SegFormer.
+    // 2D RGB edge gradients (both horizontal AND vertical) cannot distinguish striped carpets,
+    // tile seams, or doorframes from 3D obstacles. Real obstacle & stair detection is handled strictly
+    // by D-FINE Objects365, SegFormer ADE20K, and 3D Depth Anything V2.
     const floorVariationDetected = false;
     const floorTextureContrast = Math.min(100, Math.round(horizontalRatio * 300));
-    const verticalObstacleDetected = this.verticalStreak >= 2;
+    const verticalObstacleDetected = false;
 
     const corridorScore = Math.min(
       100,
       Math.round(
         Math.max(
-          verticalRatio * 300,
-          flatWallAhead ? 90 : 0
+          detEstimate.level === 'danger' ? 88 : detEstimate.level === 'caution' ? 52 : 12,
+          flatWallAhead ? 92 : 0
         )
       )
     );
 
     let level: ProximityLevel = ttcInfo.approachingFast ? 'danger' : detEstimate.level;
-    if (flatWallAhead || verticalRatio > 0.2) {
+    if (flatWallAhead) {
       level = 'danger';
-    } else if (verticalObstacleDetected) {
-      level = level === 'danger' ? 'danger' : 'caution';
     }
 
     let alertText: string | null = null;
