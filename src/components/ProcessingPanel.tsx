@@ -20,6 +20,7 @@ interface ProcessingPanelProps {
   policy: PolicyType;
   evaluation: PolicyEvaluation | null;
   highlightedDetectionId: string | null;
+  detectorModelName?: string;
   onChangePolicy: (policy: PolicyType) => void;
   onHighlightDetection: (id: string | null) => void;
 }
@@ -30,6 +31,7 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
   policy,
   evaluation,
   highlightedDetectionId,
+  detectorModelName,
   onChangePolicy,
   onHighlightDetection,
 }) => {
@@ -43,6 +45,14 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
 
   const isAlert = Boolean(evaluation?.obstacleAlert);
   const telemetryStats = telemetryService.getStats();
+  const shortModelLabel =
+    mode === 'simulation'
+      ? 'Simulado'
+      : detectorModelName?.includes('YOLOv10')
+        ? 'YOLOv10n'
+        : detectorModelName?.includes('Lite2')
+          ? 'Lite2'
+          : 'Lite0';
 
   const handleExportCsv = () => {
     const csv = telemetryService.exportCsv();
@@ -51,6 +61,17 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
     const link = document.createElement('a');
     link.href = url;
     link.download = `avisia-telemetria-${Date.now()}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportJson = () => {
+    const json = telemetryService.exportJson();
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `avisia-piloto-${Date.now()}.json`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -264,10 +285,14 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
           </div>
           <div className="my-1">
             <span className="font-mono text-base font-bold text-[#4edea3]">
-              {mode === 'simulation' ? 'Simulado' : 'Lite0'}
+              {shortModelLabel}
             </span>
             <span className="font-mono text-[10px] text-[#bbc9cd] block">
-              {mode === 'simulation' ? 'Escenas POV' : 'MediaPipe WASM'}
+              {mode === 'simulation'
+                ? 'Escenas POV'
+                : telemetryStats.count > 0
+                  ? `p95 ${telemetryStats.p95LatencyMs}ms · ${telemetryStats.alertsPerMinute}/min`
+                  : 'WASM / ONNX Local'}
             </span>
           </div>
           <div className="w-full bg-[#31353e] h-1 rounded-full overflow-hidden">
@@ -353,15 +378,26 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
         </div>
         <div className="flex items-center gap-2">
           {telemetryStats.count > 0 && (
-            <button
-              type="button"
-              onClick={handleExportCsv}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#181c24] hover:bg-[#262a33] border border-[#3c494c]/50 text-[#8aebff] font-mono text-[10px] font-semibold transition-colors"
-              title="Exportar latencias y detecciones de campo en CSV"
-            >
-              <Download className="w-3 h-3" />
-              CSV ({telemetryStats.avgLatencyMs}ms · n={telemetryStats.count})
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#181c24] hover:bg-[#262a33] border border-[#3c494c]/50 text-[#8aebff] font-mono text-[10px] font-semibold transition-colors"
+                title="Exportar latencias y detecciones de campo en CSV"
+              >
+                <Download className="w-3 h-3" />
+                CSV ({telemetryStats.avgLatencyMs}ms · n={telemetryStats.count})
+              </button>
+              <button
+                type="button"
+                onClick={handleExportJson}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#181c24] hover:bg-[#262a33] border border-[#4edea3]/40 text-[#4edea3] font-mono text-[10px] font-semibold transition-colors"
+                title="Exportar paquete anónimo de investigación en JSON"
+              >
+                <Download className="w-3 h-3" />
+                JSON
+              </button>
+            </>
           )}
           <span className="text-[#4edea3] font-mono text-[10px] flex items-center gap-1 font-medium">
             <ShieldCheck className="w-3.5 h-3.5" />

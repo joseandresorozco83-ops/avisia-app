@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { MapPin, AlertTriangle, Volume2, Navigation, CornerUpRight, LocateFixed, Loader2, ExternalLink } from 'lucide-react';
 import type { Scenario } from '../types/avicia';
 import { locationService, type RealGpsPosition } from '../services/LocationService';
+import { escapeHtml } from '../utils/sanitize';
 
 interface ManaguaMapProps {
   scenario: Scenario;
@@ -56,9 +58,9 @@ const useWazeLeafletMap = (
       })
         .addTo(map)
         .bindPopup(
-          `<strong>GPS Real:</strong><br/>${
+          `<strong>GPS Real:</strong><br/>${escapeHtml(
             realGps.placeName ?? `${realGps.lat.toFixed(5)}, ${realGps.lng.toFixed(5)}`
-          }<br/>Precisión: ±${Math.round(realGps.accuracy)} m`
+          )}<br/>Precisión: ±${Math.round(realGps.accuracy)} m`
         );
     } else {
       // Waze-style glowing navigation puck for demo position
@@ -70,7 +72,7 @@ const useWazeLeafletMap = (
         weight: 3,
       })
         .addTo(map)
-        .bindPopup(`<strong>Tu posición (demo):</strong><br/>${location.name}`);
+        .bindPopup(`<strong>Tu posición (demo):</strong><br/>${escapeHtml(location.name)}`);
     }
 
     if (location.simulatedDestination) {
@@ -83,7 +85,7 @@ const useWazeLeafletMap = (
         weight: 2.5,
       })
         .addTo(map)
-        .bindPopup(`<strong>Destino:</strong><br/>${dest.name}`);
+        .bindPopup(`<strong>Destino:</strong><br/>${escapeHtml(dest.name)}`);
 
       // Waze-style bright cyan-blue route line
       L.polyline(
@@ -104,7 +106,7 @@ const useWazeLeafletMap = (
         weight: 1.5,
       })
         .addTo(map)
-        .bindPopup(`<strong>Referencia:</strong><br/>${refLoc.name}`);
+        .bindPopup(`<strong>Referencia:</strong><br/>${escapeHtml(refLoc.name)}`);
     }
 
     const timer = window.setTimeout(() => {

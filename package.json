@@ -1,9 +1,9 @@
 {
-  "name": "avicia-simulador",
+  "name": "avisia-app",
   "private": true,
-  "version": "3.5.2",
+  "version": "4.0.0",
   "type": "module",
-  "description": "AVICIA — Simulador interactivo de asistencia visual inteligente (UAM Managua)",
+  "description": "AVISIA — Asistente visual inteligente accesible para movilidad y reconocimiento de billetes (UAM Managua)",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -19,6 +19,7 @@
     "@capacitor/core": "^8.6.2",
     "@huggingface/transformers": "^4.3.2",
     "@mediapipe/tasks-vision": "^0.10.18",
+    "@vercel/functions": "^3.11.4",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.460.0",
     "react": "^18.3.1",

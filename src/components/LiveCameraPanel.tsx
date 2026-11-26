@@ -61,6 +61,7 @@ interface LiveCameraPanelProps {
   simplifiedControls?: boolean;
   detectorEngine?: DetectorEngineId;
   preferredChannel?: AssistiveChannel | null;
+  presetSyncKey?: number;
   banknoteTriggerCount?: number;
   onCameraStateChange: (active: boolean) => void;
   onDetectionsReady: (detections: Detection[]) => void;
@@ -97,6 +98,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   simplifiedControls = false,
   detectorEngine = 'efficientdet_lite2',
   preferredChannel = null,
+  presetSyncKey = 0,
   banknoteTriggerCount = 0,
   onCameraStateChange,
   onDetectionsReady,
@@ -157,7 +159,50 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   const loopRef = useRef<number | null>(null);
   const runningRef = useRef<boolean>(false);
   const startingRef = useRef<boolean>(false);
+  const banknoteScanBusyRef = useRef<boolean>(false);
+  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
   const lastAnnouncedBillRef = useRef<{ key: string; at: number } | null>(null);
+
+  // Web Screen Wake Lock API: keeps screen awake while camera is actively assisting a blind user
+  useEffect(() => {
+    if (!cameraActive || typeof navigator === 'undefined') {
+      if (wakeLockRef.current) {
+        void wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+      return;
+    }
+
+    let active = true;
+    const requestLock = async () => {
+      try {
+        const nav = navigator as Navigator & {
+          wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> };
+        };
+        if (nav.wakeLock && active) {
+          wakeLockRef.current = await nav.wakeLock.request('screen');
+        }
+      } catch {
+        // Ignore unsupported or low-battery wake lock rejection
+      }
+    };
+
+    void requestLock();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && active) {
+        void requestLock();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      active = false;
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (wakeLockRef.current) {
+        void wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    };
+  }, [cameraActive]);
 
   useEffect(() => {
     channelRef.current = channel;
@@ -173,7 +218,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         onDetectionsReady([]);
       }
     }
-  }, [preferredChannel]);
+  }, [preferredChannel, presetSyncKey]);
 
   useEffect(() => {
     findTargetRef.current = findTarget;
@@ -505,12 +550,24 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange);
     return () => {
       navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange);
+      runningRef.current = false;
+      startingRef.current = false;
+      banknoteScanBusyRef.current = false;
       if (loopRef.current !== null) {
         window.clearInterval(loopRef.current);
+        loopRef.current = null;
       }
       if (singleTapTimerRef.current !== null) {
         window.clearTimeout(singleTapTimerRef.current);
+        singleTapTimerRef.current = null;
       }
+      if (wakeLockRef.current) {
+        void wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+      void currencyRecognitionService.disposeOfflineWorker();
+      temporalTrackerService.reset();
+      depthProximityService.reset();
       cameraService.stopCamera(videoRef.current);
       onVideoElementChange?.(null);
       onCameraStateChange(false);
@@ -578,6 +635,12 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           ? `IA Visión · ${res.elapsedMs}ms`
           : `Síntesis local · ${res.elapsedMs}ms`
       );
+      telemetryService.recordEvent({
+        type: 'scene_ai',
+        engine: res.engine,
+        elapsedMs: res.elapsedMs,
+        success: true,
+      });
       speakFeedback(res.text);
     } finally {
       setAssistiveBusy(false);
@@ -596,6 +659,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       return;
     }
 
+    if (banknoteScanBusyRef.current) return;
+    banknoteScanBusyRef.current = true;
     setAssistiveBusy(true);
     setBanknoteResult(null);
     setAssistiveResultText('Identificando billete (córdobas o dólares)...');
@@ -609,9 +674,17 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           ? `Reconocimiento IA · ${info.elapsedMs}ms`
           : `OCR Offline · ${info.elapsedMs}ms`
       );
+      telemetryService.recordEvent({
+        type: 'banknote_scan',
+        engine: info.engine,
+        elapsedMs: info.elapsedMs,
+        success: info.detected,
+        detail: info.detected ? info.badgeText : 'unconfirmed',
+      });
       speechService.vibratePattern('confirm');
       speakFeedback(info.spokenText);
     } finally {
+      banknoteScanBusyRef.current = false;
       setAssistiveBusy(false);
     }
   };
@@ -640,12 +713,18 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     if (channel !== 'currency' || !cameraActive || !autoBanknoteOn) return;
 
     let cancelled = false;
-    let scanBusy = false;
 
     const scanOnce = async () => {
-      if (cancelled || scanBusy || !videoRef.current || videoRef.current.readyState < 2) return;
+      if (
+        cancelled ||
+        banknoteScanBusyRef.current ||
+        !videoRef.current ||
+        videoRef.current.readyState < 2
+      ) {
+        return;
+      }
 
-      scanBusy = true;
+      banknoteScanBusyRef.current = true;
       try {
         const info = await currencyRecognitionService.identifyBanknote(videoRef.current, true);
         if (cancelled) return;
@@ -663,18 +742,22 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           // Speak immediately when a new denomination is shown (or after 6.5s cooldown)
           if (!prev || prev.key !== billKey || now - prev.at > 6500) {
             lastAnnouncedBillRef.current = { key: billKey, at: now };
+            telemetryService.recordEvent({
+              type: 'banknote_scan',
+              engine: info.engine,
+              elapsedMs: info.elapsedMs,
+              success: true,
+              detail: info.badgeText,
+            });
             speechService.playWakeConfirmTone();
             speechService.vibratePattern('confirm');
             speakFeedback(info.spokenText);
           }
-        } else if (info.badgeText === 'Falta clave en Vercel') {
-          setAssistiveEngineLabel('Falta clave en Vercel');
-          setAssistiveResultText(
-            'Falta activar GEMINI_API_KEY en Vercel (y hacer Redeploy) para reconocer billetes con IA.'
-          );
+        } else if (info.badgeText === 'Servicio no disponible') {
+          setAssistiveEngineLabel('Lector local activo');
         }
       } finally {
-        scanBusy = false;
+        banknoteScanBusyRef.current = false;
       }
     };
 
@@ -725,6 +808,12 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           ? `OCR IA · ${res.elapsedMs}ms`
           : `OCR Offline Español · ${res.elapsedMs}ms`
       );
+      telemetryService.recordEvent({
+        type: 'ocr_text',
+        engine: res.engine,
+        elapsedMs: res.elapsedMs,
+        success: !res.error,
+      });
       speechService.vibratePattern('confirm');
       speakFeedback(res.text);
     } finally {
@@ -1128,7 +1217,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               aria-selected={active}
               aria-label={tab.spoken}
               onClick={() => selectChannel(tab.id, tab.spoken)}
-              className={`min-h-[42px] px-1 py-1 rounded-lg flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold transition-colors ${
+              className={`min-h-[48px] px-1 py-1 rounded-lg flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold transition-colors ${
                 active
                   ? 'bg-[#22d3ee] text-[#00363e] shadow-sm'
                   : 'text-[#bbc9cd] hover:bg-[#262a33]'
@@ -1261,7 +1350,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v3.5.2 · Cámara Asistiva
+              AVISIA v4.0.0 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.
@@ -1279,7 +1368,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               <span className="truncate">{modelBadge.split(' ')[0]}</span>
             </span>
             <span className="px-2 py-0.5 rounded-full bg-slate-950/80 border border-white/15 text-[10px] font-medium text-slate-200 shrink-0">
-              {liveCount} {liveCount === 1 ? 'confirm.' : 'confirm.'}
+              {liveCount} {liveCount === 1 ? 'objeto' : 'objetos'}
             </span>
           </div>
         )}
@@ -1408,7 +1497,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           </p>
           {cloudVisionActive === false && (
             <p className="text-[10px] text-amber-300/90 text-center">
-              Usando lector local offline (para máxima exactitud en billetes, activa GEMINI_API_KEY en Vercel).
+              Sin conexión a la nube: usando lector local de billetes.
             </p>
           )}
           {assistiveResultText && (

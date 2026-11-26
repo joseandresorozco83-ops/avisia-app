@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import {
   Play,
@@ -16,8 +16,10 @@ import {
   MessageSquare,
   Sparkles,
   Wifi,
+  WifiOff,
   BatteryCharging,
   ShieldAlert,
+  ShieldCheck,
   GitBranch,
   Cpu,
   Menu,
@@ -57,20 +59,39 @@ import { assistiveVisionService } from './services/AssistiveVisionService';
 import { isBanknoteQuestion } from './services/CurrencyRecognitionService';
 import { APP_PRESETS, applyAppPreset, getPresetById } from './services/AppPresets';
 import { locationService, type RealGpsPosition } from './services/LocationService';
+import { telemetryService } from './services/TelemetryService';
 import { SimulatedSceneCanvas } from './components/SimulatedSceneCanvas';
-import { VisionLabPanel } from './components/VisionLabPanel';
-import { VideoLabPanel } from './components/VideoLabPanel';
 import { LiveCameraPanel } from './components/LiveCameraPanel';
 import { ProcessingPanel } from './components/ProcessingPanel';
 import { VoiceAssistantPanel } from './components/VoiceAssistantPanel';
-import { PipelineSection } from './components/PipelineModal';
-import { ManaguaMapSection, ManaguaWazeMobile } from './components/ManaguaMapModal';
-import { TechnicalDetailsSection } from './components/TechnicalDetailsModal';
+import { SafetyConsentModal } from './components/SafetyConsentModal';
 import { DEMO_STEPS, GuidedDemoBanner } from './components/GuidedDemoBanner';
 import { AvisiaLogo } from './components/AvisiaLogo';
 
+const VisionLabPanel = lazy(() =>
+  import('./components/VisionLabPanel').then((m) => ({ default: m.VisionLabPanel }))
+);
+const VideoLabPanel = lazy(() =>
+  import('./components/VideoLabPanel').then((m) => ({ default: m.VideoLabPanel }))
+);
+const PipelineSection = lazy(() =>
+  import('./components/PipelineModal').then((m) => ({ default: m.PipelineSection }))
+);
+const ManaguaMapSection = lazy(() =>
+  import('./components/ManaguaMapModal').then((m) => ({ default: m.ManaguaMapSection }))
+);
+const ManaguaWazeMobile = lazy(() =>
+  import('./components/ManaguaMapModal').then((m) => ({ default: m.ManaguaWazeMobile }))
+);
+const TechnicalDetailsSection = lazy(() =>
+  import('./components/TechnicalDetailsModal').then((m) => ({
+    default: m.TechnicalDetailsSection,
+  }))
+);
+
 const SETTINGS_STORAGE_KEY = 'avicia_simulator_settings_v1';
 const STREET_FEATURES_STORAGE_KEY = 'avicia_street_features_v1';
+const CONSENT_STORAGE_KEY = 'avisia_safety_consent_v1';
 
 const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
   streetMode: false,
@@ -117,7 +138,50 @@ export function App() {
   const stixelPlanRef = useRef<StixelNavigationPlan | null>(null);
   const [autoStartCamera, setAutoStartCamera] = useState<boolean>(false);
   const [banknoteTriggerCount, setBanknoteTriggerCount] = useState<number>(0);
+  const [presetSyncKey, setPresetSyncKey] = useState<number>(0);
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine !== false
+  );
+  const [consentAccepted, setConsentAccepted] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(CONSENT_STORAGE_KEY) === 'accepted_v4';
+    } catch {
+      return false;
+    }
+  });
+  const [consentModalOpen, setConsentModalOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(CONSENT_STORAGE_KEY) !== 'accepted_v4';
+    } catch {
+      return true;
+    }
+  });
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    telemetryService.configureSession({
+      platform: isNativeApp ? 'android' : 'web',
+    });
+  }, [isNativeApp]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && androidMenuOpen) {
+        setAndroidMenuOpen(false);
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [androidMenuOpen]);
 
   const [streetFeatures, setStreetFeatures] = useState<StreetAssistFeatures>(() => {
     try {
@@ -451,6 +515,11 @@ export function App() {
           text: msgToSpeak,
           source: 'real_video',
           spoken: true,
+        });
+        telemetryService.recordEvent({
+          type: 'spoken_alert',
+          detail: normLabel,
+          success: true,
         });
         speakText(msgToSpeak);
       }, isCriticalHazard ? 200 : 80);
@@ -823,6 +892,11 @@ export function App() {
   }, []);
 
   const handleSendQuestion = (question: string) => {
+    telemetryService.recordEvent({
+      type: 'voice_query',
+      detail: question.slice(0, 60),
+      success: true,
+    });
     appendHistory({
       sender: 'user',
       text: question,
@@ -1042,37 +1116,41 @@ export function App() {
       )}
 
       {mode === 'vision_lab' && (
-        <VisionLabPanel
-          threshold={threshold}
-          onThresholdChange={setThreshold}
-          onDetectionsReady={(dets) => setRealDetections(dets)}
-          onSpeakDescription={(text) => {
-            appendHistory({
-              sender: 'avicia',
-              text,
-              source: 'real_image',
-              spoken: true,
-            });
-            speakText(text);
-          }}
-        />
+        <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando laboratorio de imagen...</div>}>
+          <VisionLabPanel
+            threshold={threshold}
+            onThresholdChange={setThreshold}
+            onDetectionsReady={(dets) => setRealDetections(dets)}
+            onSpeakDescription={(text) => {
+              appendHistory({
+                sender: 'avicia',
+                text,
+                source: 'real_image',
+                spoken: true,
+              });
+              speakText(text);
+            }}
+          />
+        </Suspense>
       )}
 
       {mode === 'video_lab' && (
-        <VideoLabPanel
-          threshold={threshold}
-          onThresholdChange={setThreshold}
-          onDetectionsReady={(dets) => setRealDetections(dets)}
-          onSpeakDescription={(text) => {
-            appendHistory({
-              sender: 'avicia',
-              text,
-              source: 'real_video',
-              spoken: true,
-            });
-            speakText(text);
-          }}
-        />
+        <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando laboratorio de video...</div>}>
+          <VideoLabPanel
+            threshold={threshold}
+            onThresholdChange={setThreshold}
+            onDetectionsReady={(dets) => setRealDetections(dets)}
+            onSpeakDescription={(text) => {
+              appendHistory({
+                sender: 'avicia',
+                text,
+                source: 'real_video',
+                spoken: true,
+              });
+              speakText(text);
+            }}
+          />
+        </Suspense>
       )}
 
       {mode === 'live_camera' && (
@@ -1091,7 +1169,8 @@ export function App() {
           showStixelOverlay={streetFeatures.showStixelOverlay}
           simplifiedControls={isNativeApp}
           detectorEngine={streetFeatures.detectorEngine}
-          preferredChannel={streetFeatures.activePreset === 'currency' ? 'currency' : null}
+          preferredChannel={streetFeatures.activePreset === 'currency' ? 'currency' : 'explore'}
+          presetSyncKey={presetSyncKey}
           banknoteTriggerCount={banknoteTriggerCount}
           onCameraStateChange={setCameraActive}
           onDetectionsReady={(dets) => setRealDetections(dets)}
@@ -1116,8 +1195,28 @@ export function App() {
     </div>
   );
 
+  const handleAcceptConsent = () => {
+    try {
+      localStorage.setItem(CONSENT_STORAGE_KEY, 'accepted_v4');
+    } catch {
+      // Ignore storage errors
+    }
+    setConsentAccepted(true);
+    setConsentModalOpen(false);
+    speechService.unlockAudio();
+  };
+
   return (
     <div className="h-[100dvh] lg:h-screen overflow-hidden bg-[#0f131c] text-[#dfe2ee] flex flex-col">
+      <SafetyConsentModal
+        open={consentModalOpen}
+        canDismiss={consentAccepted}
+        onAccept={handleAcceptConsent}
+        onSpeakNotice={(text) => {
+          speechService.unlockAudio();
+          speakText(text);
+        }}
+      />
       {/* Desktop Telemetry Header (hidden on native Android app and mobile screens) */}
       {!isNativeApp && (
         <header className="hidden lg:block shrink-0 z-30 border-b border-[#3c494c]/40 bg-[#0a0e16]/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.35)]">
@@ -1133,7 +1232,7 @@ export function App() {
                     AVISIA
                   </h1>
                   <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                    v3.5.2 Asistiva
+                    v4.0.0 Piloto
                   </span>
                 </div>
                 <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
@@ -1155,22 +1254,46 @@ export function App() {
               </span>
             </div>
 
-            <div className="hidden md:flex items-center gap-1.5 ml-2 px-2.5 py-1 rounded-full bg-[#181c24] border border-[#4edea3]/25 shadow-[0_0_12px_rgba(78,222,163,0.12)]">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4edea3] opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#4edea3]" />
-              </span>
-              <span className="font-mono text-[10px] text-[#4edea3] font-semibold tracking-wide uppercase">
-                {demoActive ? 'Demo Autónoma' : cameraActive ? 'Cámara En Vivo' : 'En línea · Web IA'}
+            <div
+              className={`hidden md:flex items-center gap-1.5 ml-2 px-2.5 py-1 rounded-full bg-[#181c24] border ${
+                isOnline
+                  ? 'border-[#4edea3]/25 shadow-[0_0_12px_rgba(78,222,163,0.12)]'
+                  : 'border-amber-400/40'
+              }`}
+            >
+              {isOnline ? (
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4edea3] opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#4edea3]" />
+                </span>
+              ) : (
+                <WifiOff className="w-3 h-3 text-amber-300" aria-hidden="true" />
+              )}
+              <span
+                className={`font-mono text-[10px] font-semibold tracking-wide uppercase ${
+                  isOnline ? 'text-[#4edea3]' : 'text-amber-300'
+                }`}
+              >
+                {!isOnline
+                  ? 'Sin conexión · Modo local'
+                  : demoActive
+                    ? 'Demo Autónoma'
+                    : cameraActive
+                      ? 'Cámara En Vivo'
+                      : 'En línea · Web IA'}
               </span>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#262a33] text-[#bbc9cd] font-mono text-[10px]">
-              <ShieldAlert className="w-3.5 h-3.5 text-[#ffb147] shrink-0" />
-              <span>Prototipo académico · UAM Managua</span>
-            </div>
+            <button
+              type="button"
+              onClick={() => setConsentModalOpen(true)}
+              className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#262a33] hover:bg-[#31353e] text-[#bbc9cd] hover:text-white font-mono text-[10px] border border-[#3c494c]/40 transition-colors"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-[#4edea3] shrink-0" />
+              <span>Seguridad y Privacidad · UAM</span>
+            </button>
 
             <button
               type="button"
@@ -1261,7 +1384,8 @@ export function App() {
                     type="button"
                     onClick={() => setAndroidMenuOpen((o) => !o)}
                     aria-label="Menú principal"
-                    className="w-11 h-11 rounded-full bg-[#1c2028] hover:bg-[#262a33] text-[#dfe2ee] flex items-center justify-center transition-colors active:scale-95 shrink-0"
+                    aria-expanded={androidMenuOpen}
+                    className="w-12 h-12 rounded-full bg-[#1c2028] hover:bg-[#262a33] text-[#dfe2ee] flex items-center justify-center transition-colors active:scale-95 shrink-0"
                   >
                     {androidMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
                   </button>
@@ -1273,14 +1397,19 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-bold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[9px] font-bold text-[#8aebff]">
-                          v3.5.2
+                          v4.0.0
                         </span>
+                        {!isOnline && (
+                          <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 font-mono text-[9px] font-bold text-amber-300">
+                            Offline
+                          </span>
+                        )}
                       </div>
                       {isNativeApp ? (
                         <button
                           type="button"
                           onClick={() => setAndroidMenuOpen((o) => !o)}
-                          className="text-left font-mono text-[10px] text-[#4edea3] font-semibold truncate"
+                          className="text-left font-mono text-[11px] text-[#4edea3] font-semibold truncate py-0.5"
                         >
                           Modo: {getPresetById(streetFeatures.activePreset).shortTitle} ▾
                         </button>
@@ -1295,6 +1424,7 @@ export function App() {
                   {/* Dedicated Visible Bluetooth Button */}
                   <button
                     type="button"
+                    aria-pressed={streetFeatures.headsetButton}
                     onClick={() => {
                       speechService.unlockAudio();
                       const next = !streetFeatures.headsetButton;
@@ -1306,7 +1436,7 @@ export function App() {
                         ? 'Desactivar botón Bluetooth'
                         : 'Activar botón Bluetooth'
                     }
-                    className={`h-10 px-3 rounded-full flex items-center gap-1.5 text-xs font-semibold border transition-colors ${
+                    className={`h-11 px-3 rounded-full flex items-center gap-1.5 text-xs font-semibold border transition-colors ${
                       streetFeatures.headsetButton
                         ? 'bg-[#22d3ee]/20 border-[#22d3ee] text-[#8aebff]'
                         : 'bg-[#262a33] border-[#3c494c]/50 text-[#bbc9cd]'
@@ -1319,6 +1449,7 @@ export function App() {
                   {/* Quick Sound Mute/Unmute */}
                   <button
                     type="button"
+                    aria-pressed={!speechSettings.enabled}
                     onClick={() => {
                       speechService.unlockAudio();
                       if (speechSettings.enabled) {
@@ -1328,7 +1459,7 @@ export function App() {
                       setSpeechSettings((s) => ({ ...s, enabled: !s.enabled }));
                     }}
                     aria-label={speechSettings.enabled ? 'Silenciar voz' : 'Activar voz'}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center border transition-colors ${
+                    className={`w-11 h-11 rounded-full flex items-center justify-center border transition-colors ${
                       speechSettings.enabled
                         ? 'bg-[#262a33] border-[#3c494c]/50 text-[#4edea3]'
                         : 'bg-[#93000a]/60 border-[#ffb4ab]/40 text-[#ffdad6]'
@@ -1382,11 +1513,17 @@ export function App() {
                               setStreetFeatures((prev) =>
                                 applyAppPreset(prev, preset.id as AppPresetId)
                               );
+                              setPresetSyncKey((k) => k + 1);
                               setMode('live_camera');
                               setMobileTab('vision');
                               if (preset.id === 'currency') {
                                 setAutoStartCamera(true);
                               }
+                              telemetryService.recordEvent({
+                                type: 'preset_change',
+                                detail: preset.id,
+                                success: true,
+                              });
                               setAndroidMenuOpen(false);
                               speakText(preset.spokenConfirm);
                             }}
@@ -1426,12 +1563,12 @@ export function App() {
                       })}
                     </div>
 
-                    <div className="pt-2 border-t border-[#3c494c]/40">
+                    <div className="pt-2 border-t border-[#3c494c]/40 space-y-2">
                       {demoActive ? (
                         <button
                           type="button"
                           onClick={stopGuidedDemo}
-                          className="w-full py-3.5 px-4 rounded-2xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-sm flex items-center justify-center gap-2 shadow-md"
+                          className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-sm flex items-center justify-center gap-2 shadow-md"
                         >
                           <Square className="w-4 h-4 fill-current" />
                           Detener Demo Autónoma
@@ -1443,12 +1580,23 @@ export function App() {
                             speechService.unlockAudio();
                             startGuidedDemo();
                           }}
-                          className="w-full py-3.5 px-4 rounded-2xl bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/60 text-[#8aebff] font-bold text-sm flex items-center justify-center gap-2"
+                          className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/60 text-[#8aebff] font-bold text-sm flex items-center justify-center gap-2"
                         >
                           <Play className="w-4 h-4 fill-current" />
                           Ver Demostración Guiada
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAndroidMenuOpen(false);
+                          setConsentModalOpen(true);
+                        }}
+                        className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-[#0f131c] border border-[#3c494c]/60 text-[#bbc9cd] font-semibold text-xs flex items-center justify-center gap-2"
+                      >
+                        <ShieldCheck className="w-4 h-4 text-[#4edea3]" />
+                        Aviso de Seguridad y Privacidad
+                      </button>
                     </div>
                   </>
                 ) : (
@@ -1953,11 +2101,11 @@ export function App() {
                     {renderEnvironmentContent()}
                   </div>
 
-                  {/* Minimalist Accessible Voice Bar (Large Touch Targets, Zero Scroll) */}
+                  {/* Minimalist Accessible Voice Bar (TalkBack-safe: avoids double narration when AVISIA TTS is enabled) */}
                   <div className="shrink-0 p-2.5 rounded-2xl bg-[#1c2028] border border-[#3c494c]/30 space-y-2">
                     <div
-                      aria-live="assertive"
-                      role="alert"
+                      role="status"
+                      aria-live={speechSettings.enabled ? 'off' : 'polite'}
                       className="px-2.5 py-2 rounded-xl bg-[#181c24] border border-[#3c494c]/25"
                     >
                       <p className="text-sm text-[#dfe2ee] font-medium leading-snug line-clamp-2">
@@ -2034,29 +2182,32 @@ export function App() {
                   policy={policy}
                   evaluation={evaluation}
                   highlightedDetectionId={highlightedDetectionId}
+                  detectorModelName={detectorService.getStatus().modelName}
                   onChangePolicy={setPolicy}
                   onHighlightDetection={setHighlightedDetectionId}
                 />
               )}
 
               {mobileTab === 'map' && (
-                <ManaguaWazeMobile
-                  scenario={activeScenario}
-                  realGps={realGps}
-                  gpsActive={gpsActive}
-                  gpsLoading={gpsLoading}
-                  gpsError={gpsError}
-                  onToggleGps={handleToggleGps}
-                  onSpeakText={(text) => {
-                    appendHistory({
-                      sender: 'avicia',
-                      text,
-                      source: 'simulated',
-                      spoken: true,
-                    });
-                    speakText(text);
-                  }}
-                />
+                <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando mapa GPS...</div>}>
+                  <ManaguaWazeMobile
+                    scenario={activeScenario}
+                    realGps={realGps}
+                    gpsActive={gpsActive}
+                    gpsLoading={gpsLoading}
+                    gpsError={gpsError}
+                    onToggleGps={handleToggleGps}
+                    onSpeakText={(text) => {
+                      appendHistory({
+                        sender: 'avicia',
+                        text,
+                        source: 'simulated',
+                        spoken: true,
+                      });
+                      speakText(text);
+                    }}
+                  />
+                </Suspense>
               )}
             </div>
 
@@ -2068,11 +2219,12 @@ export function App() {
               <div className="grid grid-cols-4">
                 <button
                   type="button"
+                  aria-current={mobileTab === 'vision' ? 'page' : undefined}
                   onClick={() => {
                     setMobileTab('vision');
                     setAndroidMenuOpen(false);
                   }}
-                  className="flex flex-col items-center gap-0.5 py-0.5"
+                  className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 py-0.5"
                 >
                   <span
                     className={`px-3.5 py-1 rounded-full transition-colors ${
@@ -2094,11 +2246,12 @@ export function App() {
 
                 <button
                   type="button"
+                  aria-current={mobileTab === 'assistant' ? 'page' : undefined}
                   onClick={() => {
                     setMobileTab('assistant');
                     setAndroidMenuOpen(false);
                   }}
-                  className="flex flex-col items-center gap-0.5 py-0.5"
+                  className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 py-0.5"
                 >
                   <span
                     className={`px-3.5 py-1 rounded-full transition-colors ${
@@ -2120,11 +2273,12 @@ export function App() {
 
                 <button
                   type="button"
+                  aria-current={mobileTab === 'analysis' ? 'page' : undefined}
                   onClick={() => {
                     setMobileTab('analysis');
                     setAndroidMenuOpen(false);
                   }}
-                  className="flex flex-col items-center gap-0.5 py-0.5"
+                  className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 py-0.5"
                 >
                   <span
                     className={`px-3.5 py-1 rounded-full transition-colors ${
@@ -2146,6 +2300,7 @@ export function App() {
 
                 <button
                   type="button"
+                  aria-current={mobileTab === 'map' ? 'page' : undefined}
                   onClick={() => {
                     setMobileTab('map');
                     setEcosystemTab('map');
@@ -2154,7 +2309,7 @@ export function App() {
                       handleToggleGps();
                     }
                   }}
-                  className="flex flex-col items-center gap-0.5 py-0.5"
+                  className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 py-0.5"
                 >
                   <span
                     className={`px-3.5 py-1 rounded-full transition-colors ${
@@ -2344,6 +2499,7 @@ export function App() {
                     policy={policy}
                     evaluation={evaluation}
                     highlightedDetectionId={highlightedDetectionId}
+                    detectorModelName={detectorService.getStatus().modelName}
                     onChangePolicy={setPolicy}
                     onHighlightDetection={setHighlightedDetectionId}
                   />
@@ -2351,36 +2507,44 @@ export function App() {
               </div>
             )}
 
-            {ecosystemTab === 'pipeline' && <PipelineSection mode={mode} />}
+            {ecosystemTab === 'pipeline' && (
+              <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando arquitectura...</div>}>
+                <PipelineSection mode={mode} />
+              </Suspense>
+            )}
 
             {ecosystemTab === 'map' && (
-              <ManaguaMapSection
-                scenario={activeScenario}
-                realGps={realGps}
-                gpsActive={gpsActive}
-                gpsLoading={gpsLoading}
-                gpsError={gpsError}
-                onToggleGps={handleToggleGps}
-                onSpeakText={(text) => {
-                  appendHistory({
-                    sender: 'avicia',
-                    text,
-                    source: 'simulated',
-                    spoken: true,
-                  });
-                  speakText(text);
-                }}
-              />
+              <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando mapa de Managua...</div>}>
+                <ManaguaMapSection
+                  scenario={activeScenario}
+                  realGps={realGps}
+                  gpsActive={gpsActive}
+                  gpsLoading={gpsLoading}
+                  gpsError={gpsError}
+                  onToggleGps={handleToggleGps}
+                  onSpeakText={(text) => {
+                    appendHistory({
+                      sender: 'avicia',
+                      text,
+                      source: 'simulated',
+                      spoken: true,
+                    });
+                    speakText(text);
+                  }}
+                />
+              </Suspense>
             )}
 
             {ecosystemTab === 'tech' && (
-              <TechnicalDetailsSection
-                mode={mode}
-                policy={policy}
-                cameraActive={cameraActive}
-                detectorStatus={detectorService.getStatus()}
-                speechSupported={speechService.isSynthesisSupported()}
-              />
+              <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando consola técnica y piloto...</div>}>
+                <TechnicalDetailsSection
+                  mode={mode}
+                  policy={policy}
+                  cameraActive={cameraActive}
+                  detectorStatus={detectorService.getStatus()}
+                  speechSupported={speechService.isSynthesisSupported()}
+                />
+              </Suspense>
             )}
           </div>
         </main>

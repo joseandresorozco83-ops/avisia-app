@@ -129,11 +129,18 @@ export class LocationService {
       return this.lastGeocoded;
     }
 
+    const controller = new AbortController();
+    const timeout = typeof window !== 'undefined'
+      ? window.setTimeout(() => controller.abort(), 6000)
+      : null;
     try {
       const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(
         lat
       )}&lon=${encodeURIComponent(lng)}&accept-language=es`;
-      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      const res = await fetch(url, {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
       if (!res.ok) throw new Error('Geocoding unavailable');
       const data = (await res.json()) as {
         address?: {
@@ -162,6 +169,10 @@ export class LocationService {
       return {
         placeName: `latitud ${lat.toFixed(4)}, longitud ${lng.toFixed(4)}`,
       };
+    } finally {
+      if (timeout !== null && typeof window !== 'undefined') {
+        window.clearTimeout(timeout);
+      }
     }
   }
 

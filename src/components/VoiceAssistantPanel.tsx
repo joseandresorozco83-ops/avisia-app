@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Volume2,
   VolumeX,
@@ -57,6 +57,11 @@ export const VoiceAssistantPanel: React.FC<VoiceAssistantPanelProps> = ({
   onToggleListening,
 }) => {
   const [questionInput, setQuestionInput] = useState('');
+  const historyEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    historyEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [history.length]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,7 +180,7 @@ export const VoiceAssistantPanel: React.FC<VoiceAssistantPanelProps> = ({
             <input
               type="range"
               min="0.7"
-              max="1.4"
+              max="1.8"
               step="0.1"
               value={speechSettings.rate}
               onChange={(e) => onChangeRate(parseFloat(e.target.value))}
@@ -233,18 +238,19 @@ export const VoiceAssistantPanel: React.FC<VoiceAssistantPanelProps> = ({
             <p>{item.text}</p>
           </div>
         ))}
+        <div ref={historyEndRef} />
       </div>
 
       {/* Quick Questions */}
       <div className="mt-2 pt-2 border-t border-slate-800">
         <div className="text-[11px] text-slate-400 mb-1.5">Preguntas rápidas:</div>
-        <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
+        <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
           {QUICK_QUESTIONS.map((q) => (
             <button
               key={q}
               type="button"
               onClick={() => onSendQuestion(q)}
-              className="px-2 py-1 rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[11px] text-slate-300 transition-colors"
+              className="min-h-[36px] px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs text-slate-200 transition-colors"
             >
               {q}
             </button>

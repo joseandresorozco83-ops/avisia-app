@@ -341,8 +341,8 @@ export class SpeechService {
           if (this.speechEpoch !== myEpoch) return;
           return TextToSpeech.speak({
             text: naturalText,
-            lang: 'es-ES',
-            rate: Math.min(1.4, Math.max(0.75, settings.rate)),
+            lang: 'es-MX',
+            rate: Math.min(1.8, Math.max(0.75, settings.rate)),
             pitch: 1.03,
             volume: 1.0,
             category: 'playback',
@@ -377,7 +377,7 @@ export class SpeechService {
     utterance.lang = 'es-419';
     // Slightly warmer pitch & smooth cadence to reduce robotic feel
     utterance.pitch = 1.03;
-    utterance.rate = Math.min(1.3, Math.max(0.75, settings.rate));
+    utterance.rate = Math.min(1.8, Math.max(0.75, settings.rate));
     utterance.volume = 0.98;
 
     const voices = this.getSpanishVoices();
@@ -468,7 +468,7 @@ export class SpeechService {
     }
 
     const recognition = new RecognitionCtor();
-    recognition.lang = 'es-ES';
+    recognition.lang = 'es-NI';
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
 
@@ -521,7 +521,7 @@ export class SpeechService {
     let stopped = false;
     let awaitingFollowUp = false;
     const recognition = new RecognitionCtor();
-    recognition.lang = 'es-ES';
+    recognition.lang = 'es-NI';
     recognition.continuous = true;
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;

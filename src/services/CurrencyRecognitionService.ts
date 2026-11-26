@@ -496,24 +496,12 @@ export class CurrencyRecognitionService {
       };
     }
 
-    // 1. Primary: Secure server-side Gemini Vision proxy (fast, near-human accuracy on NIO + USD)
+    // 1. Primary: Hardened server-side Gemini Vision proxy (strict task enum — prompts live only on server)
     if (typeof navigator !== 'undefined' && navigator.onLine !== false) {
       try {
         const dataUrl = canvas.toDataURL('image/jpeg', silentWhenAbsent ? 0.78 : 0.84);
         const imageBase64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
-
-        const prompt = silentWhenAbsent
-          ? [
-              'Detector automático de billetes para Nicaragua.',
-              'Revisa si en la imagen aparece claramente un billete de CÓRDOBAS NICARAGÜENSES (10 verde claro, 20 naranja, 50 morado, 100 azul, 200 marrón, 500 rojo, 1000 verde Rubén Darío) o DÓLARES ESTADOUNIDENSES ($1, $2, $5, $10, $20, $50, $100).',
-              'Si NO hay un billete claramente identificable, responde EXACTAMENTE una sola palabra: NONE',
-              'Si SÍ hay un billete claro, responde en máximo 6 palabras el valor exacto en español, por ejemplo: "Billete de 100 córdobas." o "Billete de 20 dólares."',
-            ].join(' ')
-          : [
-              'Eres AVISIA, asistente para una persona ciega en Nicaragua. Identifica con total exactitud si hay un billete de CÓRDOBAS NICARAGÜENSES (Banco Central de Nicaragua: 10 verde claro, 20 naranja, 50 morado, 100 azul, 200 marrón, 500 rojo, 1000 verde Rubén Darío) o DÓLARES ESTADOUNIDENSES ($1 Washington, $2 Jefferson, $5 Lincoln, $10 Hamilton, $20 Jackson, $50 Grant, $100 Franklin).',
-              'Si lo ves claramente, responde en una frase corta empezando por el valor exacto: "Billete de 100 córdobas (azul)." o "Billete de 20 dólares estadounidenses."',
-              'Si no hay billete o está borroso/doblado, NUNCA adivines: responde exactamente "No puedo confirmar con seguridad el billete. Acércalo un poco, sin doblarlo y con buena luz."',
-            ].join(' ');
+        const task = silentWhenAbsent ? 'banknote_auto' : 'banknote_manual';
 
         const controller = new AbortController();
         const timeout = window.setTimeout(() => controller.abort(), 11000);
@@ -522,15 +510,27 @@ export class CurrencyRecognitionService {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              task,
               imageBase64,
               mimeType: 'image/jpeg',
-              prompt,
             }),
             signal: controller.signal,
           });
 
           if (response.status === 503) {
             this.serverNotConfigured = true;
+          } else if (response.status === 429) {
+            return {
+              detected: false,
+              currency: 'unknown',
+              denomination: null,
+              spokenText: silentWhenAbsent
+                ? ''
+                : 'Demasiadas consultas seguidas. Espera unos segundos e intenta de nuevo.',
+              badgeText: 'Límite temporal',
+              engine: 'gemini',
+              elapsedMs: Math.round(performance.now() - start),
+            };
           } else if (response.ok) {
             this.serverNotConfigured = false;
             const payload = (await response.json()) as { text?: string };
@@ -590,7 +590,7 @@ export class CurrencyRecognitionService {
           : silentWhenAbsent
             ? ''
             : this.serverNotConfigured
-              ? 'El servidor aún no tiene activa la clave GEMINI_API_KEY en Vercel y el lector local no distinguió el número. Acércalo con buena luz o activa la clave en Vercel.'
+              ? 'El servicio en la nube no está disponible en este momento y el lector local no distinguió el valor. Acércalo con buena luz.'
               : parsed.spokenText,
         badgeText: parsed.detected ? parsed.badgeText : '',
         engine: 'offline_ocr',
@@ -604,9 +604,9 @@ export class CurrencyRecognitionService {
         spokenText: silentWhenAbsent
           ? ''
           : this.serverNotConfigured
-            ? 'Falta activar la variable GEMINI_API_KEY en Vercel (y hacer Redeploy) para reconocer billetes.'
+            ? 'El servicio de visión en la nube no está disponible temporalmente. Intenta de nuevo en unos momentos.'
             : 'No se pudo procesar la imagen del billete. Intenta de nuevo con buena luz.',
-        badgeText: this.serverNotConfigured ? 'Falta clave en Vercel' : 'No confirmado',
+        badgeText: this.serverNotConfigured ? 'Servicio no disponible' : 'No confirmado',
         engine: 'offline_ocr',
         elapsedMs: Math.round(performance.now() - start),
       };

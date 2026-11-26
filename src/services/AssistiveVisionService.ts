@@ -144,7 +144,8 @@ export class AssistiveVisionService {
 
   private async callCloudVisionProxy(
     canvas: HTMLCanvasElement,
-    prompt: string
+    task: 'describe_scene' | 'read_text' | 'visual_qa',
+    question?: string
   ): Promise<string> {
     const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
     const imageBase64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
@@ -158,9 +159,10 @@ export class AssistiveVisionService {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          task,
           imageBase64,
           mimeType: 'image/jpeg',
-          prompt,
+          ...(question ? { question } : {}),
         }),
         signal: controller.signal,
       });
@@ -186,7 +188,7 @@ export class AssistiveVisionService {
 
   /**
    * Holistic scene description:
-   * Uses the private server-side Gemini 2.5 Flash proxy seamlessly when available;
+   * Uses the hardened server-side Gemini Vision proxy seamlessly when available;
    * otherwise synthesizes an honest, clock-face + Stixel local spatial report offline.
    */
   async describeScene(
@@ -203,14 +205,7 @@ export class AssistiveVisionService {
       const canvas = this.captureFrameToCanvas(source, 768, false);
       if (canvas) {
         try {
-          const prompt = [
-            'Eres AVISIA, un asistente visual para una persona ciega en Latinoamérica. Responde en español claro, directo y sin adornos (máximo 3 frases cortas).',
-            '1) Primero indica claramente si el camino inmediato al frente (a las 12) está despejado y cuántos pasos libres hay, o hacia qué dirección (a las 10 izquierda o a las 2 derecha) hay espacio libre para rodear.',
-            '2) Si hay puertas, especifica si están ABIERTAS (paso libre), CERRADAS (obstáculo) o ENTREABIERTAS (riesgo de golpe con el canto); menciona también cortinas, paredes muy cerca, gradas, muebles o personas con posición de reloj y pasos.',
-            '3) Menciona cualquier texto o número de bus claramente legible y el nivel de luz.',
-            'Reglas estrictas: nunca inventes objetos si la imagen está borrosa u oscura (dilo honestamente); nunca digas que es seguro cruzar una calle.',
-          ].join(' ');
-          const text = await this.callCloudVisionProxy(canvas, prompt);
+          const text = await this.callCloudVisionProxy(canvas, 'describe_scene');
           return {
             text,
             engine: 'gemini',
@@ -333,9 +328,7 @@ export class AssistiveVisionService {
       const canvas = this.captureFrameToCanvas(source, 960, false);
       if (canvas) {
         try {
-          const prompt =
-            'Lee en voz alta y con exactitud todo texto legible en esta imagen (letreros, números de ruta de autobús, etiquetas, documentos, precios). Responde solo con el texto leído en orden natural en español, sin explicaciones extra. Si no hay texto legible, responde exactamente: No se detecta texto legible frente a la cámara.';
-          const text = await this.callCloudVisionProxy(canvas, prompt);
+          const text = await this.callCloudVisionProxy(canvas, 'read_text');
           return {
             text,
             engine: 'gemini',
@@ -410,8 +403,7 @@ export class AssistiveVisionService {
     if (!canvas) return null;
 
     try {
-      const prompt = `Eres AVISIA, asistente visual para una persona ciega. Responde en español en máximo 2 frases claras y honestas a la pregunta del usuario basándote SOLO en la imagen. Nunca inventes información ni confirmes si es seguro cruzar una calle. Pregunta: "${question}"`;
-      return await this.callCloudVisionProxy(canvas, prompt);
+      return await this.callCloudVisionProxy(canvas, 'visual_qa', question);
     } catch {
       return null;
     }
