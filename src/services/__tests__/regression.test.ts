@@ -30,7 +30,14 @@ import {
   isPlausibleDetection,
 } from '../DetectorService';
 import { CameraCalibrationService } from '../CameraCalibrationService';
-import { parseArchitecturalSegments } from '../ArchitecturalSegmenterService';
+import {
+  normalizeAde20kLabel,
+  parseArchitecturalSegments,
+} from '../ArchitecturalSegmenterService';
+import {
+  computeHaversineMeters,
+  PedestrianNavigationService,
+} from '../PedestrianNavigationService';
 import { computeStixelCorridor } from '../DoorAndStixelService';
 import { conversationService } from '../ConversationService';
 import { scenarioManager } from '../ScenarioManager';
@@ -769,5 +776,49 @@ describe('AVISIA v5.1 Field-Test Regressions — Office Screenshots #1 to #10', 
     ]);
     expect(curtainVsDoor.detectedLabelsEs).toContain('Cortina');
     expect(curtainVsDoor.detectedLabelsEs).not.toContain('Puerta');
+  });
+
+  it('normalizes multi-synonym ADE20K labels and invalidates stale queued notifications on GPS/step/turn movement (v5.3)', () => {
+    // 1. Multi-synonym ADE20K labels from HuggingFace SegFormer config.json normalize to canonical keys
+    expect(normalizeAde20kLabel('curtain, drape, drapery, mantle, pall')).toBe('curtain');
+    expect(normalizeAde20kLabel('blind, screen')).toBe('blind');
+    expect(normalizeAde20kLabel('floor, flooring')).toBe('floor');
+    expect(normalizeAde20kLabel('bulletin board, notice board')).toBe('bulletin board');
+    expect(normalizeAde20kLabel('door, double door')).toBe('door');
+
+    const w = 40;
+    const h = 40;
+    const synsetParse = parseArchitecturalSegments([
+      { label: 'curtain, drape, drapery, mantle, pall', mask: makeRectMask(w, h, 8, 4, 32, 34) },
+      { label: 'door, double door', mask: makeRectMask(w, h, 10, 6, 30, 32) },
+      { label: 'bulletin board, notice board', mask: makeRectMask(w, h, 4, 4, 18, 16) },
+      { label: 'floor, flooring', mask: makeRectMask(w, h, 2, 28, 38, 39) },
+    ]);
+    expect(synsetParse.detectedLabelsEs).toContain('Cortina');
+    expect(synsetParse.detectedLabelsEs).toContain('Pizarra');
+    expect(synsetParse.detectedLabelsEs).not.toContain('Puerta');
+    expect(synsetParse.walkableCorridorPct).toBeGreaterThan(20);
+
+    // 2. PedestrianNavigationService fuses GPS displacement + inertial steps + heading turns to invalidate stale notifications
+    const nav = new PedestrianNavigationService();
+    const epoch0 = nav.getMovementEpoch();
+    expect(nav.isNotificationStillUseful(epoch0, 1000, 1300, 700)).toBe(true);
+
+    // Simulate physical step via accelerometer peak
+    nav.updateFromAccelerometer(0, 9.81, 0, true, 1000);
+    const afterStep = nav.updateFromAccelerometer(0, 11.45, 0, true, 1450);
+    expect(afterStep.totalSteps).toBe(1);
+    expect(afterStep.movementEpoch).toBeGreaterThan(epoch0);
+    // Notification queued at epoch0 (previous position) is now invalidated!
+    expect(nav.isNotificationStillUseful(epoch0, 1000, 1500, 700)).toBe(false);
+
+    // Simulate real-time GPS coordinate movement (~1.6m north in Managua)
+    const epoch1 = nav.getMovementEpoch();
+    nav.updateFromGpsPosition(12.115, -86.236, 4, 0.9, 2000);
+    const afterGps = nav.updateFromGpsPosition(12.115015, -86.236, 4, 1.1, 3000);
+    expect(computeHaversineMeters(12.115, -86.236, 12.115015, -86.236)).toBeGreaterThan(1.4);
+    expect(afterGps.movementEpoch).toBeGreaterThan(epoch1);
+    expect(afterGps.lastTrigger).toBe('gps');
+    expect(nav.isNotificationStillUseful(epoch1, 2000, 3050, 1500)).toBe(false);
   });
 });

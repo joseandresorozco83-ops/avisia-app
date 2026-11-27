@@ -1,6 +1,7 @@
 import { FilesetResolver, ObjectDetector, type Detection as MpDetection } from '@mediapipe/tasks-vision';
 import type { Detection, DetectorEngineId, DetectorStatus, ObjectCategory } from '../types/avicia';
 import { cameraCalibrationService } from './CameraCalibrationService';
+import { pedestrianNavigationService } from './PedestrianNavigationService';
 import { visionWorkerClient, type WorkerDetectionItem } from './VisionWorkerClient';
 
 export interface ClassMeta {
@@ -115,14 +116,19 @@ export const CATEGORY_MAP: Record<string, ClassMeta> = {
   'cabinet/shelf': { category: 'obstacle', labelEs: 'Mueble o estante', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 1.40 },
   'monitor/tv': { category: 'obstacle', labelEs: 'Monitor', priority: 82, isInanimateObstacle: true, typicalHeightMeters: 0.46 },
   telephone: { category: 'unknown', labelEs: 'Teléfono fijo', priority: 72, typicalHeightMeters: 0.16 },
-  'blackboard/whiteboard': { category: 'unknown', labelEs: 'Pizarra', priority: 70, typicalHeightMeters: 1.10 },
+  'blackboard/whiteboard': { category: 'obstacle', labelEs: 'Pizarra', priority: 89, isInanimateObstacle: true, typicalHeightMeters: 1.15 },
   'fire extinguisher': { category: 'obstacle', labelEs: 'Extintor', priority: 89, isInanimateObstacle: true, typicalHeightMeters: 0.62 },
   'storage box': { category: 'obstacle', labelEs: 'Caja', priority: 86, isInanimateObstacle: true, typicalHeightMeters: 0.48 },
   'trash bin can': { category: 'obstacle', labelEs: 'Basurero', priority: 87, isInanimateObstacle: true, typicalHeightMeters: 0.62 },
+  table: { category: 'obstacle', labelEs: 'Mesa', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 0.78 },
   'table tennis': { category: 'obstacle', labelEs: 'Mesa', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 0.76 },
   'dinning table': { category: 'obstacle', labelEs: 'Mesa', priority: 90, isInanimateObstacle: true, typicalHeightMeters: 0.78 },
   'coffee table': { category: 'obstacle', labelEs: 'Mesa baja', priority: 89, isInanimateObstacle: true, typicalHeightMeters: 0.48 },
   'side table': { category: 'obstacle', labelEs: 'Mesa lateral', priority: 88, isInanimateObstacle: true, typicalHeightMeters: 0.65 },
+  nightstand: { category: 'obstacle', labelEs: 'Mesa lateral', priority: 88, isInanimateObstacle: true, typicalHeightMeters: 0.65 },
+  curtain: { category: 'obstacle', labelEs: 'Cortina', priority: 92, isInanimateObstacle: true, typicalHeightMeters: 2.0 },
+  blinds: { category: 'obstacle', labelEs: 'Cortina', priority: 92, isInanimateObstacle: true, typicalHeightMeters: 1.85 },
+  door: { category: 'obstacle', labelEs: 'Puerta', priority: 94, isInanimateObstacle: true, typicalHeightMeters: 2.05 },
   stool: { category: 'chair', labelEs: 'Taburete', priority: 88, isInanimateObstacle: true, typicalHeightMeters: 0.65 },
   wheelchair: { category: 'obstacle', labelEs: 'Silla de ruedas', priority: 93, isInanimateObstacle: true, typicalHeightMeters: 0.95 },
   'traffic cone': { category: 'obstacle', labelEs: 'Cono', priority: 91, isInanimateObstacle: true, typicalHeightMeters: 0.70 },
@@ -234,18 +240,22 @@ export function isPlausibleDetection(
     }
   }
 
+  if (disambiguateIndoorClass(rawCategoryName, score, bbox) === null) {
+    return false;
+  }
+
   return true;
 }
 
 /**
  * Resolves systematic indoor class confusions using 3D camera calibration (horizon & floor contact)
- * and aspect ratio geometry:
+ * and portrait/landscape aspect ratio geometry:
  * 1) "Pizarra" vs "Refrigerador": COCO has no whiteboard class and misclassifies wall-mounted
  *    whiteboards as "refrigerator". Any "refrigerator" mounted above the floor contact zone
- *    (bottomY < floorZone) or with wide horizontal/square aspect ratio (width >= height * 0.82)
- *    is reclassified as "blackboard/whiteboard" ("Pizarra").
- * 2) "Mesa / Escritorio" vs "Mueble": horizontal waist-level surfaces classified as "cabinet/shelf"
- *    (width >= height * 0.95 and y >= 32%) are reclassified as "desk" ("Escritorio").
+ *    (bottomY < 86%), starting in the upper/mid frame (y <= 52%), with portrait-adjusted horizontal
+ *    aspect ratio (width >= height * 0.52), or score < 0.84 is reclassified as "blackboard/whiteboard" ("Pizarra").
+ * 2) "Mesa / Escritorio" vs "Mueble": waist-level surfaces classified as "cabinet/shelf"
+ *    (y >= 20% and (width >= height * 0.55 or y >= 32%)) are reclassified as "desk" ("Escritorio").
  */
 export function disambiguateIndoorClass(
   rawCategoryName: string,
@@ -256,21 +266,19 @@ export function disambiguateIndoorClass(
   if (!rawName) return null;
 
   if (rawName === 'refrigerator') {
-    const isWallMounted = cameraCalibrationService.isWallMountedAboveFloor(bbox);
-    const isWideBoardShape = bbox.width >= bbox.height * 0.82;
-    if (isWallMounted || isWideBoardShape) {
-      // Wall-mounted white panel or wide rectangle in indoor scene is a Pizarra (whiteboard), not a fridge!
-      return score >= 0.36 ? 'blackboard/whiteboard' : null;
-    }
-    // Even for tall floor-standing shapes, require strong confidence for refrigerator
-    if (score < 0.66) {
-      return 'blackboard/whiteboard';
+    const isWallMounted =
+      cameraCalibrationService.isWallMountedAboveFloor(bbox) ||
+      (bbox.y <= 52 && bbox.y + bbox.height < 86);
+    const isWideBoardShape = bbox.width >= bbox.height * 0.52;
+    if (isWallMounted || isWideBoardShape || score < 0.84) {
+      // Wall-mounted white panel or board in indoor scene is a Pizarra (whiteboard), not a fridge!
+      return score >= 0.25 ? 'blackboard/whiteboard' : null;
     }
   }
 
   if (rawName === 'cabinet/shelf') {
-    // A wide waist-high object in the lower half of the frame is a table/desk ("Escritorio"), not a tall wall cabinet ("Mueble")
-    if (bbox.width >= bbox.height * 0.95 && bbox.y >= 30) {
+    // A waist-high surface in the lower/middle frame is a table/desk ("Escritorio"), not a tall wall cabinet ("Mueble")
+    if (bbox.y >= 20 && (bbox.width >= bbox.height * 0.55 || bbox.y >= 32)) {
       return 'desk';
     }
   }
@@ -374,11 +382,13 @@ export class DetectorService {
   private onnxBusy = false;
   private latestOnnxDetections: Detection[] = [];
   private latestOnnxAt = 0;
+  private latestOnnxEpoch = 0;
   private statusListeners = new Set<(status: DetectorStatus) => void>();
 
   clearTransientCache(): void {
     this.latestOnnxDetections = [];
     this.latestOnnxAt = 0;
+    this.latestOnnxEpoch = 0;
   }
   private status: DetectorStatus = {
     ready: false,
@@ -845,10 +855,22 @@ export class DetectorService {
       // Kick off non-blocking background ONNX worker pass if an ONNX engine is loaded and idle
       if (this.onnxEngineLoaded && (this.usingWorker || this.onnxPipeline) && !this.onnxBusy) {
         this.onnxBusy = true;
+        const capturedEpoch = pedestrianNavigationService.getMovementEpoch();
+        const capturedAt = Date.now();
         void this.runOnnxOnSource(videoElement, scoreThreshold, 'real_video')
           .then((onnxRes) => {
-            this.latestOnnxDetections = onnxRes.detections;
-            this.latestOnnxAt = Date.now();
+            if (
+              pedestrianNavigationService.isNotificationStillUseful(
+                capturedEpoch,
+                capturedAt,
+                Date.now(),
+                950
+              )
+            ) {
+              this.latestOnnxDetections = onnxRes.detections;
+              this.latestOnnxAt = Date.now();
+              this.latestOnnxEpoch = capturedEpoch;
+            }
           })
           .catch(() => {
             // Keep fast MediaPipe detections on transient worker error
@@ -858,10 +880,15 @@ export class DetectorService {
           });
       }
 
-      // Fuse fresh background Objects365 detections (<= 1350ms old) with instant MediaPipe detections
+      // Fuse fresh background Objects365 detections (<= 680ms old and same movementEpoch) with instant MediaPipe detections
       const now = Date.now();
+      const currentEpoch = pedestrianNavigationService.getMovementEpoch();
       let combinedList = fastDetections;
-      if (this.latestOnnxDetections.length > 0 && now - this.latestOnnxAt <= 1350) {
+      if (
+        this.latestOnnxDetections.length > 0 &&
+        this.latestOnnxEpoch === currentEpoch &&
+        now - this.latestOnnxAt <= 680
+      ) {
         const merged = [...this.latestOnnxDetections];
         for (const mpDet of fastDetections) {
           const overlapsExisting = merged.some((ox) => {

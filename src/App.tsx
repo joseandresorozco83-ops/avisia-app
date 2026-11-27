@@ -47,6 +47,7 @@ import type {
   StreetAssistFeatures,
 } from './types/avicia';
 import type { StixelNavigationPlan } from './services/DoorAndStixelService';
+import { pedestrianNavigationService } from './services/PedestrianNavigationService';
 import { scenarioManager } from './services/ScenarioManager';
 import { simulationEngine } from './services/SimulationEngine';
 import {
@@ -432,8 +433,38 @@ export function App() {
   const lastSpokenLabelMapRef = useRef<Map<string, number>>(new Map());
   const deltaNarrationMapRef = useRef<Map<string, DeltaNarrationState>>(new Map());
   const obstacleSpeakTimerRef = useRef<number | null>(null);
+  const spokenEpochRef = useRef<number>(0);
+  const speechStartedAtRef = useRef<number>(0);
   const wasPathClearRef = useRef<boolean>(false);
   const lastClearSpokenAtRef = useRef<number>(0);
+
+  // Real-time Movement-Aware Audio Queue Invalidation (GPS + Inertial Step Pedometer + Turn):
+  // When the user steps forward, moves via GPS, or turns >= 20°, discard queued notifications from the
+  // previous position, preempt stale in-progress speech, and unlock cooldowns for the new position!
+  useEffect(() => {
+    if (mode !== 'live_camera' || !cameraActive) return;
+
+    const unsub = pedestrianNavigationService.onMovementChange((motion) => {
+      if (obstacleSpeakTimerRef.current !== null) {
+        window.clearTimeout(obstacleSpeakTimerRef.current);
+        obstacleSpeakTimerRef.current = null;
+      }
+      if (
+        isSpeakingRef.current &&
+        spokenEpochRef.current < motion.movementEpoch &&
+        Date.now() - speechStartedAtRef.current >= 360
+      ) {
+        speechService.cancel();
+        setIsSpeaking(false);
+      }
+      lastAutoSpokenAtRef.current = 0;
+      lastChimedObstacleRef.current = null;
+      lastSpokenLabelMapRef.current.clear();
+      deltaNarrationMapRef.current.clear();
+    });
+
+    return unsub;
+  }, [mode, cameraActive]);
 
   useEffect(() => {
     if (mode === 'live_camera' && !cameraActive) {
@@ -523,12 +554,26 @@ export function App() {
       if (obstacleSpeakTimerRef.current !== null) {
         window.clearTimeout(obstacleSpeakTimerRef.current);
       }
+      const activelyWalking = isLiveCamera && pedestrianNavigationService.isActivelyMoving();
       const detourHint = stixelPlanRef.current?.shortDetourHint;
       const msgToSpeak =
-        detourHint && isLiveCamera
+        detourHint && isLiveCamera && (!activelyWalking || isCriticalHazard)
           ? `${alert.message} ${detourHint}.`
           : alert.message;
+      const scheduledEpoch = pedestrianNavigationService.getMovementEpoch();
+      const scheduledAt = Date.now();
       obstacleSpeakTimerRef.current = window.setTimeout(() => {
+        if (
+          isLiveCamera &&
+          !pedestrianNavigationService.isNotificationStillUseful(
+            scheduledEpoch,
+            scheduledAt,
+            Date.now(),
+            700
+          )
+        ) {
+          return;
+        }
         const spokenAt = Date.now();
         lastAutoSpokenAtRef.current = spokenAt;
         lastSpokenLiveMsgRef.current = { text: msgToSpeak, at: spokenAt };
@@ -544,7 +589,7 @@ export function App() {
           success: true,
         });
         speakText(msgToSpeak);
-      }, isCriticalHazard ? 200 : 80);
+      }, isCriticalHazard ? 90 : 40);
     }
   }, [
     evaluation.obstacleAlert,
@@ -812,9 +857,15 @@ export function App() {
   };
 
   const speakText = (text: string, onFinished?: () => void) => {
-    const effectiveSettings: SpeechSettings = streetFeatures.streetMode
-      ? { ...speechSettings, rate: Math.max(speechSettings.rate, 1.18) }
-      : speechSettings;
+    const isWalkingNow =
+      mode === 'live_camera' && cameraActive && pedestrianNavigationService.isActivelyMoving();
+    const effectiveSettings: SpeechSettings =
+      streetFeatures.streetMode || isWalkingNow
+        ? { ...speechSettings, rate: Math.max(speechSettings.rate, 1.18) }
+        : speechSettings;
+    spokenEpochRef.current = pedestrianNavigationService.getMovementEpoch();
+    speechStartedAtRef.current = Date.now();
+    pedestrianNavigationService.recordNotificationSpoken();
     speechService.speak(text, effectiveSettings, {
       onStart: () => setIsSpeaking(true),
       onEnd: () => {
@@ -1271,7 +1322,7 @@ export function App() {
                       AVISIA
                     </h1>
                     <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                      v5.2.0 Neuronal
+                      v5.3.0 Neuronal
                     </span>
                   </div>
                   <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
@@ -1430,7 +1481,7 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-bold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[9px] font-bold text-[#8aebff]">
-                          v5.2.0
+                          v5.3.0
                         </span>
                         {!isOnline && (
                           <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 font-mono text-[9px] font-bold text-amber-300">

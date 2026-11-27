@@ -1,5 +1,6 @@
 import type { ArchModelVariant, Detection, ObjectCategory } from '../types/avicia';
 import { computeClockPosition, estimatePinholeMeters } from './DetectorService';
+import { pedestrianNavigationService } from './PedestrianNavigationService';
 import { visionWorkerClient } from './VisionWorkerClient';
 
 export interface ArchitecturalStatus {
@@ -84,7 +85,15 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'obstacle',
     priority: 95,
     isInanimateObstacle: true,
-    minAreaPct: 3.2,
+    minAreaPct: 2.0,
+    typicalHeightMeters: 2.1,
+  },
+  drape: {
+    labelEs: 'Cortina',
+    category: 'obstacle',
+    priority: 95,
+    isInanimateObstacle: true,
+    minAreaPct: 2.0,
     typicalHeightMeters: 2.1,
   },
   blind: {
@@ -92,7 +101,7 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
     category: 'obstacle',
     priority: 95,
     isInanimateObstacle: true,
-    minAreaPct: 3.2,
+    minAreaPct: 2.0,
     typicalHeightMeters: 1.85,
   },
   stairs: {
@@ -393,11 +402,27 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
   },
   'bulletin board': {
     labelEs: 'Pizarra',
-    category: 'unknown',
-    priority: 68,
-    isInanimateObstacle: false,
-    minAreaPct: 4.5,
-    typicalHeightMeters: 1.05,
+    category: 'obstacle',
+    priority: 89,
+    isInanimateObstacle: true,
+    minAreaPct: 2.8,
+    typicalHeightMeters: 1.1,
+  },
+  board: {
+    labelEs: 'Pizarra',
+    category: 'obstacle',
+    priority: 89,
+    isInanimateObstacle: true,
+    minAreaPct: 3.0,
+    typicalHeightMeters: 1.1,
+  },
+  refrigerator: {
+    labelEs: 'Refrigerador',
+    category: 'obstacle',
+    priority: 89,
+    isInanimateObstacle: true,
+    minAreaPct: 3.5,
+    typicalHeightMeters: 1.7,
   },
   signboard: {
     labelEs: 'Rótulo',
@@ -458,6 +483,29 @@ const WALKABLE_LABELS = new Set([
 type SegmentPipelineFn = (input: unknown) => Promise<RawSegmentItem[]>;
 
 /**
+ * Normalizes HuggingFace ADE20K multi-synonym labels (e.g. "curtain, drape, drapery, mantle, pall",
+ * "floor, flooring", "blind, screen", "door, double door", "bulletin board, notice board",
+ * "chest of drawers, chest, bureau, dresser") into canonical single keys in WALKABLE_LABELS or ARCH_CLASS_MAP.
+ */
+export function normalizeAde20kLabel(raw: string): string {
+  const clean = (raw || '').toLowerCase().trim();
+  if (!clean) return '';
+  if (clean === 'wall' || WALKABLE_LABELS.has(clean) || ARCH_CLASS_MAP[clean]) {
+    return clean;
+  }
+  const parts = clean
+    .split(/[,;/]+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  for (const part of parts) {
+    if (part === 'wall' || WALKABLE_LABELS.has(part) || ARCH_CLASS_MAP[part]) {
+      return part;
+    }
+  }
+  return parts[0] ?? clean;
+}
+
+/**
  * Pure helper to convert ADE20K semantic segmentation masks (from SegFormer B0/B1)
  * into architectural detections (doors, curtains, stairs, walls, columns, cabinets),
  * compute 5-sector bottom-to-top floor reach (Stixels), and detect geometric open doorways
@@ -488,7 +536,7 @@ export function parseArchitecturalSegments(
 
   for (let sIdx = 0; sIdx < segments.length; sIdx++) {
     const seg = segments[sIdx];
-    const labelRaw = (seg.label || '').toLowerCase().trim();
+    const labelRaw = normalizeAde20kLabel(seg.label || '');
     const mask = seg.mask;
     if (!mask || !mask.data || mask.width <= 0 || mask.height <= 0) continue;
 
@@ -585,16 +633,24 @@ export function parseArchitecturalSegments(
     const cfg = ARCH_CLASS_MAP[labelRaw];
     if (!cfg || areaPct < cfg.minAreaPct) continue;
 
-    // Disambiguate "Mesa / Escritorio" vs "Mueble": a wide horizontal cabinet/drawers region in the lower half is a table/desk
+    // Disambiguate indoor classes using 3D geometry & portrait/landscape aspect ratio:
+    // 1) "Mesa / Escritorio" vs "Mueble": waist-level cabinet/drawers/shelf (by >= 20% and bw >= bh * 0.55 in 9:16 portrait) is an Escritorio
+    // 2) "Pizarra" vs "Refrigerador": wall-mounted white panel above floor (by + bh < 85% or bw >= bh * 0.52) is a Pizarra
     let resolvedLabelEs = cfg.labelEs;
     let resolvedPriority = cfg.priority;
     if (
-      (labelRaw === 'cabinet' || labelRaw === 'chest of drawers') &&
-      bw >= bh * 1.05 &&
-      by >= 30
+      (labelRaw === 'cabinet' || labelRaw === 'chest of drawers' || labelRaw === 'shelf') &&
+      by >= 20 &&
+      (bw >= bh * 0.55 || by >= 32)
     ) {
       resolvedLabelEs = 'Escritorio';
       resolvedPriority = 90;
+    } else if (
+      labelRaw === 'refrigerator' &&
+      (by + bh < 85 || bw >= bh * 0.52 || by <= 48)
+    ) {
+      resolvedLabelEs = 'Pizarra';
+      resolvedPriority = 89;
     }
 
     if (seenLabels.has(resolvedLabelEs)) continue;
@@ -646,8 +702,24 @@ export function parseArchitecturalSegments(
     });
   }
 
-  // Disambiguate "Cortina" vs "Puerta": when SegFormer segments a window/doorway curtain ("curtain"/"blind")
+  // Disambiguate "Cortina" vs "Puerta": when SegFormer segments a window/doorway curtain ("curtain"/"blind"/"drape")
   // and also fires a spurious "door" mask on the same vertical frame, keep "Cortina" and suppress the duplicate "Puerta"!
+  // Also if a "Puerta" overlaps a "Ventana" and does not reach the floor (by + bh < 82), reclassify it as "Cortina".
+  const windowDets = detections.filter((d) => d.labelEs === 'Ventana');
+  for (const d of detections) {
+    if (!d.labelEs.startsWith('Puerta')) continue;
+    const dCx = d.bbox.x + d.bbox.width / 2;
+    const isWindowBlind =
+      d.bbox.y + d.bbox.height < 82 &&
+      windowDets.some((w) => Math.abs(w.bbox.x + w.bbox.width / 2 - dCx) <= 28);
+    if (isWindowBlind && !seenLabels.has('Cortina')) {
+      seenLabels.delete(d.labelEs);
+      d.labelEs = 'Cortina';
+      d.doorState = undefined;
+      seenLabels.add('Cortina');
+    }
+  }
+
   const curtainDets = detections.filter((d) => d.labelEs === 'Cortina');
   if (curtainDets.length > 0) {
     for (let i = detections.length - 1; i >= 0; i--) {
@@ -656,7 +728,7 @@ export function parseArchitecturalSegments(
       const dCx = d.bbox.x + d.bbox.width / 2;
       const overlapsCurtain = curtainDets.some((c) => {
         const cCx = c.bbox.x + c.bbox.width / 2;
-        return Math.abs(cCx - dCx) <= 24 && (c.confidence ?? 0) + 0.05 >= (d.confidence ?? 0);
+        return Math.abs(cCx - dCx) <= 32;
       });
       if (overlapsCurtain) {
         detections.splice(i, 1);
@@ -984,6 +1056,8 @@ export class ArchitecturalSegmenterService {
 
     ctx.drawImage(source, 0, 0, w, h);
 
+    const capturedEpoch = pedestrianNavigationService.getMovementEpoch();
+    const capturedAt = Date.now();
     let segments: RawSegmentItem[] = [];
     let elapsed = 0;
 
@@ -999,6 +1073,15 @@ export class ArchitecturalSegmenterService {
       segments = await this.segmenter(rawImg);
       elapsed = Math.round(performance.now() - start);
     } else {
+      return null;
+    }
+
+    // If the user stepped, turned, or moved via GPS while SegFormer was running on a video frame,
+    // discard this stale segmentation so previous-position masks never trigger delayed alerts!
+    if (
+      source instanceof HTMLVideoElement &&
+      !pedestrianNavigationService.isNotificationStillUseful(capturedEpoch, capturedAt, Date.now(), 1350)
+    ) {
       return null;
     }
 

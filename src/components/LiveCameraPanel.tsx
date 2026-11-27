@@ -19,6 +19,10 @@ import {
   cameraCalibrationService,
   type CameraPoseCalibration,
 } from '../services/CameraCalibrationService';
+import {
+  pedestrianNavigationService,
+  type PedestrianMotionState,
+} from '../services/PedestrianNavigationService';
 import { detectorService } from '../services/DetectorService';
 import {
   archTemporalTrackerService,
@@ -146,6 +150,9 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   const [tiltWarning, setTiltWarning] = useState<string | null>(null);
   const [poseCalibration, setPoseCalibration] = useState<CameraPoseCalibration>(() =>
     cameraCalibrationService.getCalibration()
+  );
+  const [motionState, setMotionState] = useState<PedestrianMotionState>(() =>
+    pedestrianNavigationService.getState()
   );
 
   const depthSummaryRef = useRef<DepthMapSummary | null>(null);
@@ -303,6 +310,35 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     };
   }, [cameraActive]);
 
+  // Real-Time GPS + Inertial Step Pedometer + Turn Invalidation loop:
+  // Whenever the user takes a physical step, translates via GPS, or turns >= 20°,
+  // immediately flush stale worker caches and temporal tracks from the previous position!
+  useEffect(() => {
+    if (!cameraActive) {
+      pedestrianNavigationService.stopTracking();
+      return;
+    }
+
+    pedestrianNavigationService.startTracking();
+    setMotionState(pedestrianNavigationService.getState());
+
+    const unsub = pedestrianNavigationService.onMovementChange((nextMotion) => {
+      setMotionState(nextMotion);
+      detectorService.clearTransientCache();
+      temporalTrackerService.reset();
+      archTemporalTrackerService.reset();
+      archSummaryRef.current = null;
+      if (nextMotion.lastTrigger === 'turn') {
+        depthSummaryRef.current = null;
+      }
+    });
+
+    return () => {
+      unsub();
+      pedestrianNavigationService.stopTracking();
+    };
+  }, [cameraActive]);
+
   // Optional Depth Anything V2 neural depth loop
   useEffect(() => {
     if (!depthAnythingEnabled || !cameraActive) {
@@ -332,10 +368,21 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       if (cancelled || busy || !videoRef.current || videoRef.current.readyState < 2) return;
       if (!depthModelService.getStatus().ready) return;
       busy = true;
+      const capturedEpoch = pedestrianNavigationService.getMovementEpoch();
+      const capturedAt = Date.now();
       void depthModelService
         .estimateFromVideo(videoRef.current)
         .then((summary) => {
-          if (!cancelled && summary) {
+          if (
+            !cancelled &&
+            summary &&
+            pedestrianNavigationService.isNotificationStillUseful(
+              capturedEpoch,
+              capturedAt,
+              Date.now(),
+              1250
+            )
+          ) {
             depthSummaryRef.current = summary;
             setDepthSummary(summary);
           }
@@ -1051,11 +1098,10 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           setProximity(prox);
           latestProximityRef.current = prox;
 
-          // Flush stale background worker detections immediately on rapid camera pan/turn
-          // so boxes from a previous desk never appear floating on an empty wall!
-          if (prox && prox.motionScore >= 21) {
-            detectorService.clearTransientCache();
-            temporalTrackerService.reset();
+          // Feed visual optical flow into PedestrianNavigationService to detect physical steps/turns
+          // and flush stale detections from the previous position immediately
+          if (prox) {
+            setMotionState(pedestrianNavigationService.updateFromVisualMotion(prox.motionScore));
           }
 
           // Light channel musical tone (Seeing AI style)
@@ -1494,7 +1540,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v5.2.0 · Cámara Asistiva
+              AVISIA v5.3.0 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.
@@ -1507,12 +1553,12 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
         {cameraActive && (
           <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none gap-1">
-            <span className="px-2 py-0.5 rounded-full bg-slate-950/80 border border-emerald-400/40 text-[10px] font-semibold text-emerald-300 flex items-center gap-1 truncate max-w-[42%]">
+            <span className="px-2 py-0.5 rounded-full bg-slate-950/80 border border-emerald-400/40 text-[10px] font-semibold text-emerald-300 flex items-center gap-1 truncate max-w-[34%]">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
               <span className="truncate">{modelBadge.split(' ')[0]}</span>
             </span>
             <span className="px-2 py-0.5 rounded-full bg-slate-950/80 border border-cyan-400/35 text-[9px] font-mono text-cyan-200 truncate">
-              {poseCalibration.statusBadge}
+              {poseCalibration.statusBadge} · {motionState.isMoving ? `Paso #${motionState.totalSteps}` : motionState.gpsActive ? 'GPS Activo' : `Paso #${motionState.totalSteps}`}
             </span>
             <span className="px-2 py-0.5 rounded-full bg-slate-950/80 border border-white/15 text-[10px] font-medium text-slate-200 shrink-0">
               {liveCount} {liveCount === 1 ? 'obj' : 'objs'}
