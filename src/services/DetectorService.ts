@@ -295,12 +295,27 @@ export function computeClockPosition(centerX: number): string {
 
 export function estimatePinholeMeters(
   bboxHeightPct: number,
-  typicalHeightMeters: number
+  typicalHeightMeters: number,
+  bboxWidthPct?: number,
+  bottomYPct?: number
 ): number {
-  // Standard smartphone vertical FOV ~55 deg => normalized focal length ~0.96
-  const heightFrac = Math.max(0.06, bboxHeightPct / 100);
-  const rawMeters = (typicalHeightMeters * 0.96) / heightFrac;
-  return Number(Math.min(14.0, Math.max(0.4, rawMeters)).toFixed(1));
+  // Portrait smartphone wide-angle vertical FOV (~68 deg) => normalized vertical focal length ~0.72.
+  // Use effective apparent size (considering width for angled/partially occluded furniture like chairs & desks)
+  const effectivePct =
+    typeof bboxWidthPct === 'number'
+      ? Math.max(bboxHeightPct, Math.min(bboxHeightPct * 1.45, bboxWidthPct * 0.78))
+      : bboxHeightPct;
+  const heightFrac = Math.max(0.08, effectivePct / 100);
+  let rawMeters = (typicalHeightMeters * 0.72) / heightFrac;
+
+  // Ground-plane perspective constraint: objects whose bottom edge rests lower in the frame cannot be 8m away
+  if (typeof bottomYPct === 'number' && bottomYPct >= 45 && typicalHeightMeters <= 1.85) {
+    // At bottomY=95% -> ~1.1m max; at bottomY=75% -> ~2.2m max; at bottomY=55% -> ~3.4m max
+    const perspectiveCap = Math.max(1.0, 4.6 - ((bottomYPct - 40) / 55) * 3.4);
+    rawMeters = Math.min(rawMeters, perspectiveCap);
+  }
+
+  return Number(Math.min(6.5, Math.max(0.4, rawMeters)).toFixed(1));
 }
 
 export class DetectorService {
@@ -314,7 +329,15 @@ export class DetectorService {
   private lastScoreThreshold = 0.36;
   private initPromise: Promise<DetectorStatus> | null = null;
   private bgOnnxUpgradeEngine: DetectorEngineId | null = null;
+  private onnxBusy = false;
+  private latestOnnxDetections: Detection[] = [];
+  private latestOnnxAt = 0;
   private statusListeners = new Set<(status: DetectorStatus) => void>();
+
+  clearTransientCache(): void {
+    this.latestOnnxDetections = [];
+    this.latestOnnxAt = 0;
+  }
   private status: DetectorStatus = {
     ready: false,
     loading: false,
@@ -757,36 +780,73 @@ export class DetectorService {
       throw new Error('El modelo visual no está inicializado.');
     }
 
-    if (this.onnxEngineLoaded && (this.usingWorker || this.onnxPipeline)) {
-      try {
-        return await this.runOnnxOnSource(videoElement, scoreThreshold, 'real_video');
-      } catch {
-        // Fallback transparently to warm MediaPipe detector if ONNX frame fails
-        this.usingWorker = false;
-        this.onnxEngineLoaded = null;
+    // Real-Time Hybrid Architecture (v5.1.1):
+    // 1) If fast GPU MediaPipe detector is available, ALWAYS run it synchronously (~40ms) for zero-lag tracking!
+    // 2) Simultaneously poll the 366-class D-FINE ONNX Web Worker asynchronously in the background without blocking the camera loop,
+    //    and fuse fresh Objects365 detections (Escritorio, Monitor, Teléfono fijo, Extintor, Silla, Persona) from the last 1.3s!
+    if (this.detector) {
+      if (this.currentRunningMode !== 'VIDEO' || this.lastScoreThreshold !== scoreThreshold) {
+        await this.detector.setOptions({ runningMode: 'VIDEO', scoreThreshold });
+        this.currentRunningMode = 'VIDEO';
+        this.lastScoreThreshold = scoreThreshold;
       }
+
+      const start = performance.now();
+      const result = this.detector.detectForVideo(videoElement, performance.now());
+      const elapsed = Math.round(performance.now() - start);
+      this.status.inferenceTimeMs = elapsed;
+
+      const width = videoElement.videoWidth || 1;
+      const height = videoElement.videoHeight || 1;
+      const fastDetections = this.mapDetections(result.detections, width, height, 'real_video');
+
+      // Kick off non-blocking background ONNX worker pass if an ONNX engine is loaded and idle
+      if (this.onnxEngineLoaded && (this.usingWorker || this.onnxPipeline) && !this.onnxBusy) {
+        this.onnxBusy = true;
+        void this.runOnnxOnSource(videoElement, scoreThreshold, 'real_video')
+          .then((onnxRes) => {
+            this.latestOnnxDetections = onnxRes.detections;
+            this.latestOnnxAt = Date.now();
+          })
+          .catch(() => {
+            // Keep fast MediaPipe detections on transient worker error
+          })
+          .finally(() => {
+            this.onnxBusy = false;
+          });
+      }
+
+      // Fuse fresh background Objects365 detections (<= 1350ms old) with instant MediaPipe detections
+      const now = Date.now();
+      if (this.latestOnnxDetections.length > 0 && now - this.latestOnnxAt <= 1350) {
+        const merged = [...this.latestOnnxDetections];
+        for (const mpDet of fastDetections) {
+          const overlapsExisting = merged.some((ox) => {
+            const x1 = Math.max(ox.bbox.x, mpDet.bbox.x);
+            const y1 = Math.max(ox.bbox.y, mpDet.bbox.y);
+            const x2 = Math.min(ox.bbox.x + ox.bbox.width, mpDet.bbox.x + mpDet.bbox.width);
+            const y2 = Math.min(ox.bbox.y + ox.bbox.height, mpDet.bbox.y + mpDet.bbox.height);
+            const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+            if (inter <= 0) return false;
+            const areaA = Math.max(1, ox.bbox.width * ox.bbox.height);
+            const areaB = Math.max(1, mpDet.bbox.width * mpDet.bbox.height);
+            return inter / (areaA + areaB - inter) >= 0.32;
+          });
+          if (!overlapsExisting) {
+            merged.push(mpDet);
+          }
+        }
+        return { detections: merged.slice(0, 12), inferenceTimeMs: elapsed };
+      }
+
+      return { detections: fastDetections, inferenceTimeMs: elapsed };
     }
 
-    if (!this.detector) {
-      throw new Error('El modelo EfficientDet no está inicializado.');
+    if (this.onnxEngineLoaded && (this.usingWorker || this.onnxPipeline)) {
+      return this.runOnnxOnSource(videoElement, scoreThreshold, 'real_video');
     }
 
-    if (this.currentRunningMode !== 'VIDEO' || this.lastScoreThreshold !== scoreThreshold) {
-      await this.detector.setOptions({ runningMode: 'VIDEO', scoreThreshold });
-      this.currentRunningMode = 'VIDEO';
-      this.lastScoreThreshold = scoreThreshold;
-    }
-
-    const start = performance.now();
-    const result = this.detector.detectForVideo(videoElement, performance.now());
-    const elapsed = Math.round(performance.now() - start);
-    this.status.inferenceTimeMs = elapsed;
-
-    const width = videoElement.videoWidth || 1;
-    const height = videoElement.videoHeight || 1;
-
-    const detections = this.mapDetections(result.detections, width, height, 'real_video');
-    return { detections, inferenceTimeMs: elapsed };
+    throw new Error('El modelo de detección no está inicializado.');
   }
 
   private buildDetection(
@@ -806,19 +866,23 @@ export class DetectorService {
 
     const centerX = bbox.x + bbox.width / 2;
     const bottomY = bbox.y + bbox.height;
-    // Strict central walking corridor [34%..66%]: prevents side objects ("a las 3") from triggering frontal alerts
     const centerOverlapWidth = Math.max(
       0,
-      Math.min(bbox.x + bbox.width, 66) - Math.max(bbox.x, 34)
+      Math.min(bbox.x + bbox.width, 72) - Math.max(bbox.x, 28)
     );
-    const coversCenterPath = centerOverlapWidth >= 14;
-    const isCentered = (centerX >= 30 && centerX <= 70) || coversCenterPath;
+    const coversCenterPath = centerOverlapWidth >= 10;
+    const isCentered = (centerX >= 25 && centerX <= 75) || coversCenterPath;
 
-    const estimatedMeters = estimatePinholeMeters(bbox.height, typicalHeight);
+    const estimatedMeters = estimatePinholeMeters(
+      bbox.height,
+      typicalHeight,
+      bbox.width,
+      bottomY
+    );
     const clockPosition = computeClockPosition(centerX);
 
     const proximityZone: Detection['proximityZone'] = isCentered
-      ? estimatedMeters <= 1.8 || bbox.height >= 36 || (bottomY >= 80 && bbox.width >= 28)
+      ? estimatedMeters <= 1.8 || bbox.height >= 34 || (bottomY >= 78 && bbox.width >= 24)
         ? 'front_close'
         : 'front_mid'
       : 'side';

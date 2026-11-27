@@ -469,12 +469,17 @@ describe('AVISIA v5.0 Regression — 3D Ground-Plane Anti-False-Stair, Hysteresi
     expect(fused).not.toBeNull();
     expect(fused!).toBeLessThan(1.8);
 
-    // TemporalTracker rejects moderate single-frame noise (0.75 < 0.84 instant confirm threshold)
+    // TemporalTracker rejects low single-frame noise (0.42 < 0.48 instant confirm threshold) and confirms on frame 2,
+    // while confirming clear objects (>= 0.48) immediately on frame 1!
     const tracker = new TemporalTrackerService();
-    const out1 = tracker.update([{ ...clippedDet, confidence: 0.75 }], 1000, closeGrid);
+    const out1 = tracker.update([{ ...clippedDet, confidence: 0.42 }], 1000, closeGrid);
     expect(out1.length).toBe(0);
-    const out2 = tracker.update([{ ...clippedDet, confidence: 0.76 }], 1400, closeGrid);
+    const out2 = tracker.update([{ ...clippedDet, confidence: 0.44 }], 1400, closeGrid);
     expect(out2.length).toBe(1);
+
+    const trackerInstant = new TemporalTrackerService();
+    const instantOut = trackerInstant.update([{ ...clippedDet, confidence: 0.58 }], 1000, closeGrid);
+    expect(instantOut.length).toBe(1);
   });
 
   it('gates verbal alerts via Parsimonious Delta Narration (speaks on approach >= 0.6m or escalation)', () => {

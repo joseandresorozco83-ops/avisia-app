@@ -469,19 +469,16 @@ export function App() {
     const isCriticalHazard =
       alert.zone === 'front_close' ||
       normLabel.includes('pared') ||
+      normLabel.includes('extintor') ||
+      normLabel.includes('mostrador') ||
       normLabel.includes('grada') ||
       normLabel.includes('bajada') ||
       normLabel.includes('desnivel') ||
       normLabel.includes('escalera');
 
-    // In calm "essential" mode, ignore distant front_mid objects in live camera (user can tap screen anytime)
-    if (isLiveCamera && streetFeatures.audioVerbosity === 'essential' && !isCriticalHazard) {
-      return;
-    }
-
     const now = Date.now();
-    const perLabelCooldownMs = streetFeatures.audioVerbosity === 'essential' ? 10500 : 7500;
-    const globalMinGapMs = isCriticalHazard ? 2600 : 4500;
+    const perLabelCooldownMs = streetFeatures.audioVerbosity === 'essential' ? 8000 : 6500;
+    const globalMinGapMs = isCriticalHazard ? 2400 : 3800;
 
     // Resolve live distance & clock for Parsimonious Delta Narration
     const matchedDet = realDetections.find(
@@ -581,7 +578,7 @@ export function App() {
     const topDet = realDetections[0];
     if (
       streetFeatures.audioVerbosity === 'essential' &&
-      ((topDet?.estimatedMeters ?? 3.5) > 2.4 || topDet?.proximityZone === 'side')
+      (topDet?.estimatedMeters ?? 3.5) > 4.2
     ) {
       return;
     }
@@ -589,10 +586,10 @@ export function App() {
     const now = Date.now();
     const cooldownMs =
       streetFeatures.audioVerbosity === 'essential'
-        ? 9500
+        ? 7000
         : streetFeatures.streetMode
-          ? 4500
-          : 7500;
+          ? 4200
+          : 6000;
     if (now - lastAutoSpokenAtRef.current < cooldownMs) return;
 
     const topLabel = realDetections[0]?.labelEs.toLowerCase().trim() ?? '';

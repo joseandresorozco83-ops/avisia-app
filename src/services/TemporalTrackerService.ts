@@ -115,13 +115,17 @@ export function fuseDepthAndPinholeMeters(
     return Number(Math.min(pinhole, depthMeters).toFixed(1));
   }
 
+  // Never let a relative depth map inflate the distance of a visibly large foreground object
+  // (e.g., a chair covering 58% of screen height is ~1.2m away, never 3.5m!)
+  const cappedDepthMeters =
+    det.bbox.height >= 26 ? Math.min(depthMeters, pinhole * 1.15) : depthMeters;
+
   // Only treat large foreground boxes touching the bottom walking border as close border-clipped obstacles
-  // (prevents small distant background boxes near y=0 from being pulled down to 2m!)
   const isForegroundBottomClipped =
     det.bbox.height >= 36 && det.bbox.y + det.bbox.height >= 92;
-  const depthWeight = isForegroundBottomClipped ? 0.76 : 0.48;
-  const blended = depthWeight * depthMeters + (1 - depthWeight) * pinhole;
-  return Number(Math.max(0.4, Math.min(12, blended)).toFixed(1));
+  const depthWeight = isForegroundBottomClipped ? 0.65 : 0.35;
+  const blended = depthWeight * cappedDepthMeters + (1 - depthWeight) * pinhole;
+  return Number(Math.max(0.4, Math.min(6.5, blended)).toFixed(1));
 }
 
 /**
@@ -135,7 +139,8 @@ export class TemporalTrackerService {
   private nextId = 1;
   private readonly emaAlpha = 0.58;
   private readonly minHitsToConfirm = 2;
-  private readonly highConfidenceInstantConfirm = 0.84;
+  /** Confirm plausible detections (>= 48% confidence) immediately on frame 1 so walking people and close obstacles never require holding the phone still for 2 worker cycles */
+  private readonly highConfidenceInstantConfirm = 0.48;
   private readonly maxMissedFrames = 1;
 
   reset(): void {
@@ -161,7 +166,7 @@ export class TemporalTrackerService {
         const iou = computeIoU(track.detection.bbox, det.bbox);
         const dist = centerDistance(track.detection.bbox, det.bbox);
 
-        if (iou >= 0.18 || dist <= 22) {
+        if (iou >= 0.12 || dist <= 32) {
           const score = iou * 2 - dist / 100;
           if (score > bestScore) {
             bestScore = score;

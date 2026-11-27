@@ -369,10 +369,16 @@ export function computeStixelCorridor(
       }
     }
 
-    // 4. Clip center sectors on flat wall or confirmed stairs/curb hazard
+    // 4. Clip sector against real-time 2D/3D wall, counter, or stairs hazard
+    if (proximity?.sectorReachCap) {
+      reachPct = Math.min(reachPct, proximity.sectorReachCap[s]);
+    }
     if (s >= 1 && s <= 3) {
-      if (proximity?.flatWallAhead || depthSummary?.wallAhead) {
+      if (proximity?.flatWallAhead || proximity?.redExtinguisherOnWall || depthSummary?.wallAhead) {
         reachPct = Math.min(reachPct, 8);
+      }
+      if (proximity?.centralCounterOrWallAhead) {
+        reachPct = Math.min(reachPct, 16);
       }
       if (proximity?.floorVariationDetected || depthSummary?.stepDetectedInDepth) {
         reachPct = Math.min(reachPct, 18);

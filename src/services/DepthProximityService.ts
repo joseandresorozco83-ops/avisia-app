@@ -23,6 +23,12 @@ export interface ProximityAssessment {
   /** Informational 2D floor texture/color contrast score [0..100] (never fires a stair alarm) */
   floorTextureContrast?: number;
   flatWallAhead: boolean;
+  /** True when a bright red fire extinguisher cabinet is mounted on a close frontal wall */
+  redExtinguisherOnWall?: boolean;
+  /** True when a close counter, desk partition, or wall blocks the central walking sector */
+  centralCounterOrWallAhead?: boolean;
+  /** Per-sector instant visual reach cap [0..100] from real-time wall/surface vertical continuity */
+  sectorReachCap?: [number, number, number, number, number];
   approachingFast: boolean;
   ttcSeconds: number | null;
   cameraQuality: CameraQualityIssue;
@@ -258,6 +264,99 @@ export class DepthProximityService {
       Math.max(0, centerSq / Math.max(1, centerCount) - centerMean * centerMean)
     );
 
+    // Real-time 5-sector vertical wall & close-counter detector (<1.5ms on 96x72 frame):
+    // Detects when a painted wall (e.g. white wall with red EXTINTOR in Screenshot #1 or left wall in #5)
+    // or a close white counter/partition (Screenshot #2) extends into the lower walking corridor where dark floor should be!
+    const sectorReachCap: [number, number, number, number, number] = [100, 100, 100, 100, 100];
+    let wallSectorsCentral = 0;
+    let centralCounterOrWallAhead = false;
+    let redExtinguisherPixels = 0;
+    let centralSampledPixels = 0;
+
+    if (avgLuma >= 24) {
+      for (let s = 0; s < 5; s++) {
+        const sx1 = Math.floor((s * w) / 5) + 1;
+        const sx2 = Math.floor(((s + 1) * w) / 5) - 1;
+        const upperY1 = Math.floor(h * 0.24);
+        const upperY2 = Math.floor(h * 0.54);
+        const lowerY1 = Math.floor(h * 0.56);
+        const lowerY2 = Math.floor(h * 0.86);
+
+        let uSum = 0;
+        let uSq = 0;
+        let uCnt = 0;
+        for (let y = upperY1; y < upperY2; y++) {
+          for (let x = sx1; x < sx2; x++) {
+            const v = lumaAt(x, y);
+            uSum += v;
+            uSq += v * v;
+            uCnt++;
+            if (s >= 1 && s <= 3) {
+              const p = (y * w + x) * 4;
+              const r = frame[p];
+              const g = frame[p + 1];
+              const b = frame[p + 2];
+              centralSampledPixels++;
+              if (r >= 150 && r > g * 1.9 && r > b * 1.9) {
+                redExtinguisherPixels++;
+              }
+            }
+          }
+        }
+
+        let lSum = 0;
+        let lSq = 0;
+        let lCnt = 0;
+        for (let y = lowerY1; y < lowerY2; y++) {
+          for (let x = sx1; x < sx2; x++) {
+            const v = lumaAt(x, y);
+            lSum += v;
+            lSq += v * v;
+            lCnt++;
+            if (s >= 1 && s <= 3) {
+              const p = (y * w + x) * 4;
+              const r = frame[p];
+              const g = frame[p + 1];
+              const b = frame[p + 2];
+              centralSampledPixels++;
+              if (r >= 150 && r > g * 1.9 && r > b * 1.9) {
+                redExtinguisherPixels++;
+              }
+            }
+          }
+        }
+
+        const uMean = uSum / Math.max(1, uCnt);
+        const uStd = Math.sqrt(Math.max(0, uSq / Math.max(1, uCnt) - uMean * uMean));
+        const lMean = lSum / Math.max(1, lCnt);
+        const lStd = Math.sqrt(Math.max(0, lSq / Math.max(1, lCnt) - lMean * lMean));
+
+        // Case A: Continuous vertical wall extending all the way down into the walking floor zone (y=56..86%)
+        // (Bright painted wall in lower zone with low texture std, OR seamless vertical luma continuity from upper to lower zone)
+        const lowerIsPaintedWall = lMean >= 146 && lStd < 19.5;
+        const seamlessVerticalWall =
+          uMean >= 128 &&
+          lMean >= 128 &&
+          Math.abs(uMean - lMean) < 16 &&
+          uStd < 22 &&
+          lStd < 20;
+
+        if (lowerIsPaintedWall || seamlessVerticalWall) {
+          sectorReachCap[s] = 10;
+          if (s >= 1 && s <= 3) wallSectorsCentral++;
+        } else if (s === 2 && uMean >= 164 && uStd < 24 && uMean - lMean >= 32) {
+          // Case B: Bright central counter / white partition desk at 12 o'clock (Screenshot #2)
+          sectorReachCap[s] = 16;
+          centralCounterOrWallAhead = true;
+        }
+      }
+    }
+
+    const redExtinguisherOnWall =
+      centralSampledPixels > 0 &&
+      redExtinguisherPixels / centralSampledPixels >= 0.07 &&
+      (wallSectorsCentral >= 1 || sectorReachCap[2] <= 20);
+
     let cameraQuality: CameraQualityIssue = 'ok';
     if (avgLuma < 14 && lumaStdDev < 10) {
       cameraQuality = 'lens_blocked';
@@ -268,13 +367,12 @@ export class DepthProximityService {
     } else if (motionScore > 26) {
       cameraQuality = 'fast_motion';
     } else if (
-      centerStd < 11.5 &&
-      centerMean >= 38 &&
-      !detections.some((d) => d.proximityZone === 'front_close')
+      (centerStd < 13.5 && centerMean >= 38) ||
+      wallSectorsCentral >= 2 ||
+      redExtinguisherOnWall
     ) {
-      // Uniform wall or partition filling center across >= 3 calm frames
       this.flatWallStreak = Math.min(6, this.flatWallStreak + 1);
-      if (this.flatWallStreak >= 3) {
+      if (this.flatWallStreak >= 2 || redExtinguisherOnWall || wallSectorsCentral >= 2) {
         cameraQuality = 'flat_wall_close';
       }
     } else {
@@ -325,8 +423,10 @@ export class DepthProximityService {
     );
 
     let level: ProximityLevel = ttcInfo.approachingFast ? 'danger' : detEstimate.level;
-    if (flatWallAhead) {
+    if (flatWallAhead || redExtinguisherOnWall) {
       level = 'danger';
+    } else if (centralCounterOrWallAhead) {
+      level = level === 'danger' ? 'danger' : 'caution';
     }
 
     let alertText: string | null = null;
@@ -334,26 +434,36 @@ export class DepthProximityService {
       alertText = 'Cámara cubierta o sin luz. Revisa que nada tape el lente.';
     } else if (cameraQuality === 'too_dark') {
       alertText = 'Poca luz para detectar con precisión.';
+    } else if (redExtinguisherOnWall) {
+      alertText = '¡Alto! Pared y extintor a las 12, muy cerca, a un paso.';
     } else if (flatWallAhead) {
-      alertText = '¡Alto! Pared muy cerca frente a ti.';
+      alertText = '¡Alto! Pared muy cerca frente a ti, a un paso.';
+    } else if (centralCounterOrWallAhead && detections.length === 0) {
+      alertText = 'Mostrador o pared a las 12, a dos pasos.';
     } else if (ttcInfo.approachingFast && ttcInfo.targetLabel) {
       alertText = `¡Alto! ${ttcInfo.targetLabel} acercándose rápido (~${ttcInfo.ttcSeconds}s)`;
     } else if (detEstimate.level === 'danger' && detEstimate.closestLabel) {
       alertText = `${detEstimate.closestLabel} muy cerca, a ${detEstimate.estimatedMeters} m.`;
-    } else if (verticalObstacleDetected && detections.length === 0) {
-      alertText = 'Posible obstáculo inmóvil frente a ti.';
     } else if (detEstimate.level === 'caution' && detEstimate.closestLabel) {
       alertText = `${detEstimate.closestLabel} a ${detEstimate.estimatedMeters} m.`;
     }
 
     return {
       level,
-      estimatedMeters: flatWallAhead ? 0.5 : detEstimate.estimatedMeters,
+      estimatedMeters:
+        flatWallAhead || redExtinguisherOnWall
+          ? 0.7
+          : centralCounterOrWallAhead
+            ? detEstimate.estimatedMeters ?? 1.2
+            : detEstimate.estimatedMeters,
       corridorScore,
       verticalObstacleDetected,
       floorVariationDetected,
       floorTextureContrast,
       flatWallAhead,
+      redExtinguisherOnWall,
+      centralCounterOrWallAhead,
+      sectorReachCap,
       approachingFast: ttcInfo.approachingFast,
       ttcSeconds: ttcInfo.ttcSeconds,
       cameraQuality,

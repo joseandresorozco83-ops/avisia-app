@@ -1015,6 +1015,13 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           setProximity(prox);
           latestProximityRef.current = prox;
 
+          // Flush stale background worker detections immediately on rapid camera pan/turn
+          // so boxes from a previous desk never appear floating on an empty wall!
+          if (prox && prox.motionScore >= 21) {
+            detectorService.clearTransientCache();
+            temporalTrackerService.reset();
+          }
+
           // Light channel musical tone (Seeing AI style)
           if (channelRef.current === 'light' && lightToneOnRef.current && prox) {
             speechService.playLightTone(prox.brightnessPct);
@@ -1088,13 +1095,20 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             channelRef.current === 'explore' &&
             prox &&
             (prox.flatWallAhead ||
+              prox.redExtinguisherOnWall ||
+              prox.centralCounterOrWallAhead ||
               depthStepConfirmed ||
               (!hasFrontObstacle && (prox.verticalObstacleDetected || depthWallOrObstacle)))
           ) {
             const depthDist = depthSummaryRef.current?.estimatedMeters;
             const isStep = depthStepConfirmed;
             const isDropOff = depthSummaryRef.current?.groundHazardType === 'descending_dropoff';
-            const isWall = prox.flatWallAhead || Boolean(depthSummaryRef.current?.wallAhead);
+            const isExtinguisherWall = Boolean(prox.redExtinguisherOnWall);
+            const isCounter = Boolean(prox.centralCounterOrWallAhead) && !prox.flatWallAhead;
+            const isWall =
+              prox.flatWallAhead ||
+              isExtinguisherWall ||
+              Boolean(depthSummaryRef.current?.wallAhead);
             const clearHint =
               depthSummaryRef.current?.clearSide === 'left'
                 ? ' (libre izquierda)'
@@ -1105,28 +1119,32 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             combinedDetections.push({
               id: `corridor-${Date.now()}`,
               category: 'obstacle',
-              labelEs: isWall
-                ? `Pared muy cerca${clearHint}`
-                : isStep
-                  ? isDropOff
-                    ? 'Bajada o desnivel 3D'
-                    : 'Escaleras confirmadas'
-                  : depthWallOrObstacle && depthDist
-                    ? `Obstáculo a ${depthDist} m${clearHint}`
-                    : 'Obstáculo inmóvil',
+              labelEs: isExtinguisherWall
+                ? 'Pared y extintor'
+                : isWall
+                  ? `Pared muy cerca${clearHint}`
+                  : isCounter
+                    ? 'Mostrador o pared'
+                    : isStep
+                      ? isDropOff
+                        ? 'Bajada o desnivel 3D'
+                        : 'Escaleras confirmadas'
+                      : depthWallOrObstacle && depthDist
+                        ? `Obstáculo a ${depthDist} m${clearHint}`
+                        : 'Obstáculo inmóvil',
               source: 'real_video',
-              confidence: Math.min(0.95, Math.max(0.65, prox.corridorScore / 100)),
-              bbox: { x: 30, y: isStep ? 58 : 42, width: 40, height: isStep ? 34 : 46 },
+              confidence: Math.min(0.95, Math.max(0.72, prox.corridorScore / 100)),
+              bbox: { x: 28, y: isStep ? 58 : 28, width: 44, height: isStep ? 34 : 56 },
               confirmationStatus: 'confirmed',
               priority: 97,
               firstSeenAt: Date.now(),
               lastSeenAt: Date.now(),
               isNew: true,
               isInanimateObstacle: true,
-              estimatedMeters: isWall ? 0.6 : depthDist ?? 1.2,
+              estimatedMeters: isWall ? 0.7 : isCounter ? 1.2 : depthDist ?? 1.2,
               clockPosition: 'a las 12',
               proximityZone:
-                isWall || isStep || prox.level === 'danger' || depthWallOrObstacle
+                isWall || isCounter || isStep || prox.level === 'danger' || depthWallOrObstacle
                   ? 'front_close'
                   : 'front_mid',
             });
