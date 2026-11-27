@@ -486,7 +486,7 @@ export function App() {
     // Resolve live distance & clock for Parsimonious Delta Narration
     const matchedDet = realDetections.find(
       (d) =>
-        d.isInanimateObstacle &&
+        (d.isInanimateObstacle || d.category === 'person') &&
         d.labelEs.toLowerCase().includes(normLabel.slice(0, 8))
     );
     const nextDelta = {
@@ -564,7 +564,7 @@ export function App() {
     };
   }, []);
 
-  // Auto-speak general (non-obstacle) detections ONLY in Detailed mode (Essential stays quiet until tapped)
+  // Auto-speak general detections: in Detailed mode speaks all; in Essential mode speaks close foreground items (<= 2.4m) calmly
   useEffect(() => {
     const isLiveStreamMode =
       (mode === 'live_camera' && cameraActive) || mode === 'video_lab';
@@ -572,15 +572,27 @@ export function App() {
       !isLiveStreamMode ||
       !speechSettings.enabled ||
       demoActive ||
-      streetFeatures.soundOnlyMode ||
-      streetFeatures.audioVerbosity === 'essential'
+      streetFeatures.soundOnlyMode
     ) {
       return;
     }
     if (realDetections.length === 0 || evaluation.obstacleAlert || isSpeakingRef.current) return;
 
+    const topDet = realDetections[0];
+    if (
+      streetFeatures.audioVerbosity === 'essential' &&
+      ((topDet?.estimatedMeters ?? 3.5) > 2.4 || topDet?.proximityZone === 'side')
+    ) {
+      return;
+    }
+
     const now = Date.now();
-    const cooldownMs = streetFeatures.streetMode ? 4500 : 7500;
+    const cooldownMs =
+      streetFeatures.audioVerbosity === 'essential'
+        ? 9500
+        : streetFeatures.streetMode
+          ? 4500
+          : 7500;
     if (now - lastAutoSpokenAtRef.current < cooldownMs) return;
 
     const topLabel = realDetections[0]?.labelEs.toLowerCase().trim() ?? '';
@@ -726,7 +738,7 @@ export function App() {
   ]);
 
   // v2.5 Hands-Free Wake Word ("Avisia" / "Oye Avisia") for harness mounting
-  const handleSendQuestionRef = useRef<(q: string) => void>(() => {});
+  const handleSendQuestionRef = useRef<(q: string) => void>(() => { });
   useEffect(() => {
     if (!streetFeatures.handsFreeWakeWord || demoActive) return;
 
@@ -1245,133 +1257,128 @@ export function App() {
       {/* Desktop Telemetry Header (hidden on native Android app and mobile screens) */}
       {!isNativeApp && (
         <header className="hidden lg:block shrink-0 z-30 border-b border-[#3c494c]/40 bg-[#0a0e16]/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.35)]">
-        <div className="max-w-[1680px] mx-auto px-4 py-2 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="flex items-center justify-center p-0.5 rounded-full bg-white border border-[#8aebff]/50 shadow-[0_0_15px_rgba(138,235,255,0.25)] shrink-0">
-                <AvisiaLogo className="w-10 h-10" variant="dark" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-sm sm:text-base font-extrabold tracking-tight text-[#8aebff] uppercase">
-                    AVISIA
-                  </h1>
-                  <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                    v5.1.0 Neuronal
-                  </span>
+          <div className="max-w-[1680px] mx-auto px-4 py-2 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex items-center justify-center p-0.5 rounded-full bg-white border border-[#8aebff]/50 shadow-[0_0_15px_rgba(138,235,255,0.25)] shrink-0">
+                  <AvisiaLogo className="w-10 h-10" variant="dark" />
                 </div>
-                <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
-                  Asistencia Visual Inteligente para Movilidad
-                </p>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-sm sm:text-base font-extrabold tracking-tight text-[#8aebff] uppercase">
+                      AVISIA
+                    </h1>
+                    <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
+                      v5.1.0 Neuronal
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
+                    Asistencia Visual Inteligente para Movilidad
+                  </p>
+                </div>
               </div>
-            </div>
 
-            <div className="hidden lg:flex items-center gap-2 pl-3 border-l border-[#3c494c]/50">
-              <div className="bg-white/95 px-2.5 py-1 rounded-lg shadow-sm flex items-center">
-                <img
-                  src="/uam-logo.png"
-                  alt="Universidad Americana UAM"
-                  className="h-6 w-auto object-contain"
-                />
-              </div>
-              <span className="font-mono text-[10px] text-[#bbc9cd] uppercase tracking-wider">
-                UAM Managua
-              </span>
-            </div>
-
-            <div
-              className={`hidden md:flex items-center gap-1.5 ml-2 px-2.5 py-1 rounded-full bg-[#181c24] border ${
-                isOnline
-                  ? 'border-[#4edea3]/25 shadow-[0_0_12px_rgba(78,222,163,0.12)]'
-                  : 'border-amber-400/40'
-              }`}
-            >
-              {isOnline ? (
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4edea3] opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#4edea3]" />
+              <div className="hidden lg:flex items-center gap-2 pl-3 border-l border-[#3c494c]/50">
+                <div className="bg-white/95 px-2.5 py-1 rounded-lg shadow-sm flex items-center">
+                  <img
+                    src="/uam-logo.png"
+                    alt="Universidad Americana UAM"
+                    className="h-6 w-auto object-contain"
+                  />
+                </div>
+                <span className="font-mono text-[10px] text-[#bbc9cd] uppercase tracking-wider">
+                  UAM Managua
                 </span>
-              ) : (
-                <WifiOff className="w-3 h-3 text-amber-300" aria-hidden="true" />
-              )}
-              <span
-                className={`font-mono text-[10px] font-semibold tracking-wide uppercase ${
-                  isOnline ? 'text-[#4edea3]' : 'text-amber-300'
-                }`}
+              </div>
+
+              <div
+                className={`hidden md:flex items-center gap-1.5 ml-2 px-2.5 py-1 rounded-full bg-[#181c24] border ${isOnline
+                    ? 'border-[#4edea3]/25 shadow-[0_0_12px_rgba(78,222,163,0.12)]'
+                    : 'border-amber-400/40'
+                  }`}
               >
-                {!isOnline
-                  ? 'Sin conexión · Modo local'
-                  : demoActive
-                    ? 'Demo Autónoma'
-                    : cameraActive
-                      ? 'Cámara En Vivo'
-                      : 'En línea · Web IA'}
-              </span>
+                {isOnline ? (
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4edea3] opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#4edea3]" />
+                  </span>
+                ) : (
+                  <WifiOff className="w-3 h-3 text-amber-300" aria-hidden="true" />
+                )}
+                <span
+                  className={`font-mono text-[10px] font-semibold tracking-wide uppercase ${isOnline ? 'text-[#4edea3]' : 'text-amber-300'
+                    }`}
+                >
+                  {!isOnline
+                    ? 'Sin conexión · Modo local'
+                    : demoActive
+                      ? 'Demo Autónoma'
+                      : cameraActive
+                        ? 'Cámara En Vivo'
+                        : 'En línea · Web IA'}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => setConsentModalOpen(true)}
+                className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#262a33] hover:bg-[#31353e] text-[#bbc9cd] hover:text-white font-mono text-[10px] border border-[#3c494c]/40 transition-colors"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-[#4edea3] shrink-0" />
+                <span>Seguridad y Privacidad · UAM</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (speechSettings.enabled) {
+                    speechService.cancel();
+                    setIsSpeaking(false);
+                  }
+                  setSpeechSettings((s) => ({ ...s, enabled: !s.enabled }));
+                }}
+                aria-label={speechSettings.enabled ? 'Silenciar audio' : 'Activar audio'}
+                title={speechSettings.enabled ? 'Silenciar audio' : 'Activar audio'}
+                className="flex items-center justify-center w-9 h-9 rounded-lg bg-[#262a33] hover:bg-[#31353e] text-[#bbc9cd] hover:text-white border border-[#3c494c]/40 transition-colors"
+              >
+                {speechSettings.enabled ? (
+                  <Volume2 className="w-4 h-4 text-[#8aebff]" />
+                ) : (
+                  <VolumeX className="w-4 h-4 text-[#ffb147]" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={startGuidedDemo}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#22d3ee] hover:bg-[#8aebff] active:scale-95 text-[#00363e] font-semibold text-xs transition-all shadow-[0_0_18px_rgba(34,211,238,0.35)]"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                Iniciar Demo Autónoma
+              </button>
             </div>
           </div>
-
-          <div className="flex flex-wrap items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => setConsentModalOpen(true)}
-              className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#262a33] hover:bg-[#31353e] text-[#bbc9cd] hover:text-white font-mono text-[10px] border border-[#3c494c]/40 transition-colors"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-[#4edea3] shrink-0" />
-              <span>Seguridad y Privacidad · UAM</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (speechSettings.enabled) {
-                  speechService.cancel();
-                  setIsSpeaking(false);
-                }
-                setSpeechSettings((s) => ({ ...s, enabled: !s.enabled }));
-              }}
-              aria-label={speechSettings.enabled ? 'Silenciar audio' : 'Activar audio'}
-              title={speechSettings.enabled ? 'Silenciar audio' : 'Activar audio'}
-              className="flex items-center justify-center w-9 h-9 rounded-lg bg-[#262a33] hover:bg-[#31353e] text-[#bbc9cd] hover:text-white border border-[#3c494c]/40 transition-colors"
-            >
-              {speechSettings.enabled ? (
-                <Volume2 className="w-4 h-4 text-[#8aebff]" />
-              ) : (
-                <VolumeX className="w-4 h-4 text-[#ffb147]" />
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={startGuidedDemo}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#22d3ee] hover:bg-[#8aebff] active:scale-95 text-[#00363e] font-semibold text-xs transition-all shadow-[0_0_18px_rgba(34,211,238,0.35)]"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              Iniciar Demo Autónoma
-            </button>
-          </div>
-        </div>
-      </header>
+        </header>
       )}
 
       {/* SPLIT-SCREEN ON DESKTOP, FULL-SCREEN NATIVE APP ON ANDROID/MOBILE */}
       <div
-        className={`flex-1 min-h-0 w-full mx-auto flex flex-col lg:flex-row items-stretch ${
-          isNativeApp ? 'p-0' : 'max-w-[1680px] lg:px-5 lg:py-3 lg:gap-4'
-        }`}
+        className={`flex-1 min-h-0 w-full mx-auto flex flex-col lg:flex-row items-stretch ${isNativeApp ? 'p-0' : 'max-w-[1680px] lg:px-5 lg:py-3 lg:gap-4'
+          }`}
       >
         {/* LEFT 30% ON DESKTOP / FULL-SCREEN ON ANDROID APP */}
         <aside
           aria-label="Vista móvil AVISIA"
-          className={`w-full h-full flex flex-col items-center justify-center relative ${
-            isNativeApp ? '' : 'lg:w-[32%] xl:w-[30%]'
-          }`}
+          className={`w-full h-full flex flex-col items-center justify-center relative ${isNativeApp ? '' : 'lg:w-[32%] xl:w-[30%]'
+            }`}
         >
           <div
-            className={`w-full h-full flex flex-col relative ${
-              isNativeApp
+            className={`w-full h-full flex flex-col relative ${isNativeApp
                 ? ''
                 : 'lg:rounded-[40px] lg:bg-slate-900 lg:p-[9px] lg:ring-1 lg:ring-white/15 lg:shadow-[0_25px_60px_-15px_rgba(0,0,0,0.85)]'
-            }`}
+              }`}
           >
             {/* Physical side hardware button accents (desktop simulator only) */}
             {!isNativeApp && (
@@ -1383,9 +1390,8 @@ export function App() {
             )}
 
             <div
-              className={`w-full h-full flex flex-col bg-[#0f131c] text-[#dfe2ee] overflow-hidden relative ${
-                isNativeApp ? '' : 'lg:rounded-[32px]'
-              }`}
+              className={`w-full h-full flex flex-col bg-[#0f131c] text-[#dfe2ee] overflow-hidden relative ${isNativeApp ? '' : 'lg:rounded-[32px]'
+                }`}
             >
               {/* Simulated Android Status Bar (desktop simulator only, never on real phone) */}
               {!isNativeApp && (
@@ -1463,11 +1469,10 @@ export function App() {
                         ? 'Desactivar botón Bluetooth'
                         : 'Activar botón Bluetooth'
                     }
-                    className={`h-11 px-3 rounded-full flex items-center gap-1.5 text-xs font-semibold border transition-colors ${
-                      streetFeatures.headsetButton
+                    className={`h-11 px-3 rounded-full flex items-center gap-1.5 text-xs font-semibold border transition-colors ${streetFeatures.headsetButton
                         ? 'bg-[#22d3ee]/20 border-[#22d3ee] text-[#8aebff]'
                         : 'bg-[#262a33] border-[#3c494c]/50 text-[#bbc9cd]'
-                    }`}
+                      }`}
                   >
                     <Bluetooth className="w-4 h-4" />
                     <span>{streetFeatures.headsetButton ? 'BT ON' : 'BT'}</span>
@@ -1486,11 +1491,10 @@ export function App() {
                       setSpeechSettings((s) => ({ ...s, enabled: !s.enabled }));
                     }}
                     aria-label={speechSettings.enabled ? 'Silenciar voz' : 'Activar voz'}
-                    className={`w-11 h-11 rounded-full flex items-center justify-center border transition-colors ${
-                      speechSettings.enabled
+                    className={`w-11 h-11 rounded-full flex items-center justify-center border transition-colors ${speechSettings.enabled
                         ? 'bg-[#262a33] border-[#3c494c]/50 text-[#4edea3]'
                         : 'bg-[#93000a]/60 border-[#ffb4ab]/40 text-[#ffdad6]'
-                    }`}
+                      }`}
                   >
                     {speechSettings.enabled ? (
                       <Volume2 className="w-4 h-4" />
@@ -1501,815 +1505,487 @@ export function App() {
                 </div>
               </div>
 
-            {/* Unified Human-Centered Hamburger Menu (Simple 1-Tap Modes & Scenes on both Web and Android) */}
-            {androidMenuOpen && (
-              <div className="absolute inset-x-0 top-[56px] bottom-[62px] z-40 bg-[#181c24]/98 backdrop-blur-md p-3.5 overflow-y-auto space-y-4 border-b border-[#3c494c]/40">
-                {/* 1. SELECCIÓN DE MODO DE USO EN VIVO (1 TOQUE CONFIGURA TODO) */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <h2 className="text-sm font-extrabold text-[#8aebff]">
-                        1. Modos de Cámara en Vivo
-                      </h2>
-                      <p className="text-[11px] text-[#bbc9cd]">
-                        Elige para qué vas a usar AVISIA; cada botón activa los modelos y el audio ideales.
-                      </p>
+              {/* Unified Human-Centered Hamburger Menu (Simple 1-Tap Modes & Scenes on both Web and Android) */}
+              {androidMenuOpen && (
+                <div className="absolute inset-x-0 top-[56px] bottom-[62px] z-40 bg-[#181c24]/98 backdrop-blur-md p-3.5 overflow-y-auto space-y-4 border-b border-[#3c494c]/40">
+                  {/* 1. SELECCIÓN DE MODO DE USO EN VIVO (1 TOQUE CONFIGURA TODO) */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <h2 className="text-sm font-extrabold text-[#8aebff]">
+                          1. Modos de Cámara en Vivo
+                        </h2>
+                        <p className="text-[11px] text-[#bbc9cd]">
+                          Elige para qué vas a usar AVISIA; cada botón activa los modelos y el audio ideales.
+                        </p>
+                      </div>
+                      {mode === 'live_camera' && cameraActive && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAutoStartCamera(false);
+                            setCameraActive(false);
+                            setRealDetections([]);
+                            setMode('simulation');
+                            setAndroidMenuOpen(false);
+                          }}
+                          className="px-2.5 py-1.5 rounded-xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] text-[11px] font-bold shrink-0"
+                        >
+                          Apagar cámara
+                        </button>
+                      )}
                     </div>
-                    {mode === 'live_camera' && cameraActive && (
+
+                    <div className="space-y-2">
+                      {APP_PRESETS.map((preset) => {
+                        const selected =
+                          mode === 'live_camera' &&
+                          (streetFeatures.activePreset ?? 'indoor') === preset.id;
+                        const PresetIcon =
+                          preset.id === 'indoor'
+                            ? Home
+                            : preset.id === 'street'
+                              ? Footprints
+                              : preset.id === 'currency'
+                                ? Banknote
+                                : preset.id === 'precision'
+                                  ? Crosshair
+                                  : BellOff;
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => {
+                              speechService.unlockAudio();
+                              speechService.vibratePattern('confirm');
+                              setStreetFeatures((prev) =>
+                                applyAppPreset(prev, preset.id as AppPresetId)
+                              );
+                              setPresetSyncKey((k) => k + 1);
+                              setDemoActive(false);
+                              setMode('live_camera');
+                              setMobileTab('vision');
+                              setAutoStartCamera(true);
+                              telemetryService.recordEvent({
+                                type: 'preset_change',
+                                detail: preset.id,
+                                success: true,
+                              });
+                              setAndroidMenuOpen(false);
+                              speakText(preset.spokenConfirm);
+                            }}
+                            className={`w-full p-3 rounded-2xl border text-left flex items-start gap-3 transition-all active:scale-[0.98] ${selected
+                                ? 'bg-[#22d3ee]/16 border-[#22d3ee] shadow-md'
+                                : 'bg-[#1c2028] border-[#3c494c]/50 hover:border-[#8aebff]/50'
+                              }`}
+                          >
+                            <div
+                              className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${selected
+                                  ? 'bg-[#22d3ee] text-[#00363e]'
+                                  : 'bg-[#0f131c] text-[#8aebff]'
+                                }`}
+                            >
+                              <PresetIcon className="w-5 h-5" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs sm:text-sm font-extrabold text-[#dfe2ee] truncate">
+                                  {preset.title}
+                                </span>
+                                {selected ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#4edea3]/20 text-[#4edea3] text-[10px] font-bold shrink-0">
+                                    <Check className="w-3 h-3" />
+                                    Activo
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full bg-[#0f131c] text-[#8aebff] text-[10px] font-medium shrink-0">
+                                    {preset.subtitle}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-[#bbc9cd] mt-1 leading-snug">
+                                {preset.description}
+                              </p>
+                              <div className="flex flex-wrap gap-1 mt-2">
+                                {preset.includedSummary.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className="px-2 py-0.5 rounded-md bg-[#0f131c]/90 border border-[#3c494c]/40 text-[10px] text-[#8aebff]"
+                                  >
+                                    ✓ {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 2. ESCENAS SIMULADAS DE MANAGUA Y DEMOSTRACIÓN GUIADA */}
+                  <div className="pt-3 border-t border-[#3c494c]/40 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <h2 className="text-sm font-extrabold text-[#8aebff]">
+                          2. Escenas de Prueba (Managua)
+                        </h2>
+                        <p className="text-[11px] text-[#bbc9cd]">
+                          Toca una escena para evaluar cómo responde AVISIA o inicia el recorrido guiado.
+                        </p>
+                      </div>
+                    </div>
+
+                    {demoActive ? (
+                      <button
+                        type="button"
+                        onClick={stopGuidedDemo}
+                        className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md"
+                      >
+                        <Square className="w-4 h-4 fill-current" />
+                        Detener Recorrido Guiado
+                      </button>
+                    ) : (
                       <button
                         type="button"
                         onClick={() => {
-                          setAutoStartCamera(false);
-                          setCameraActive(false);
-                          setRealDetections([]);
-                          setMode('simulation');
-                          setAndroidMenuOpen(false);
+                          speechService.unlockAudio();
+                          startGuidedDemo();
                         }}
-                        className="px-2.5 py-1.5 rounded-xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] text-[11px] font-bold shrink-0"
+                        className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md"
                       >
-                        Apagar cámara
+                        <Play className="w-4 h-4 fill-current" />
+                        Iniciar Recorrido Guiado Automático
                       </button>
                     )}
-                  </div>
 
-                  <div className="space-y-2">
-                    {APP_PRESETS.map((preset) => {
-                      const selected =
-                        mode === 'live_camera' &&
-                        (streetFeatures.activePreset ?? 'indoor') === preset.id;
-                      const PresetIcon =
-                        preset.id === 'indoor'
-                          ? Home
-                          : preset.id === 'street'
-                            ? Footprints
-                            : preset.id === 'currency'
-                              ? Banknote
-                              : preset.id === 'precision'
-                                ? Crosshair
-                                : BellOff;
-                      return (
-                        <button
-                          key={preset.id}
-                          type="button"
-                          aria-pressed={selected}
-                          onClick={() => {
-                            speechService.unlockAudio();
-                            speechService.vibratePattern('confirm');
-                            setStreetFeatures((prev) =>
-                              applyAppPreset(prev, preset.id as AppPresetId)
-                            );
-                            setPresetSyncKey((k) => k + 1);
-                            setDemoActive(false);
-                            setMode('live_camera');
-                            setMobileTab('vision');
-                            setAutoStartCamera(true);
-                            telemetryService.recordEvent({
-                              type: 'preset_change',
-                              detail: preset.id,
-                              success: true,
-                            });
-                            setAndroidMenuOpen(false);
-                            speakText(preset.spokenConfirm);
-                          }}
-                          className={`w-full p-3 rounded-2xl border text-left flex items-start gap-3 transition-all active:scale-[0.98] ${
-                            selected
-                              ? 'bg-[#22d3ee]/16 border-[#22d3ee] shadow-md'
-                              : 'bg-[#1c2028] border-[#3c494c]/50 hover:border-[#8aebff]/50'
-                          }`}
-                        >
-                          <div
-                            className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
-                              selected
-                                ? 'bg-[#22d3ee] text-[#00363e]'
-                                : 'bg-[#0f131c] text-[#8aebff]'
-                            }`}
+                    <div className="space-y-1.5">
+                      {scenarios.map((s) => {
+                        const isCurrentScene = mode === 'simulation' && s.id === activeScenario.id;
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => {
+                              setDemoActive(false);
+                              setMode('simulation');
+                              setMobileTab('vision');
+                              handleSelectScenario(s.id);
+                            }}
+                            className={`w-full p-2.5 rounded-xl text-left border flex items-center justify-between gap-2 transition-colors ${isCurrentScene
+                                ? 'bg-[#22d3ee]/16 border-[#22d3ee] text-[#8aebff]'
+                                : 'bg-[#1c2028] border-[#3c494c]/40 text-[#dfe2ee] hover:border-[#859397]'
+                              }`}
                           >
-                            <PresetIcon className="w-5 h-5" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs sm:text-sm font-extrabold text-[#dfe2ee] truncate">
-                                {preset.title}
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold truncate">
+                                Escena {s.number}: {s.title}
+                              </div>
+                              <div className="text-[11px] text-[#bbc9cd] truncate">{s.subtitle}</div>
+                            </div>
+                            {isCurrentScene && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#4edea3]/20 text-[#4edea3] text-[10px] font-bold shrink-0">
+                                <Check className="w-3 h-3" />
+                                Activa
                               </span>
-                              {selected ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#4edea3]/20 text-[#4edea3] text-[10px] font-bold shrink-0">
-                                  <Check className="w-3 h-3" />
-                                  Activo
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded-full bg-[#0f131c] text-[#8aebff] text-[10px] font-medium shrink-0">
-                                  {preset.subtitle}
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-[11px] text-[#bbc9cd] mt-1 leading-snug">
-                              {preset.description}
-                            </p>
-                            <div className="flex flex-wrap gap-1 mt-2">
-                              {preset.includedSummary.map((tag) => (
-                                <span
-                                  key={tag}
-                                  className="px-2 py-0.5 rounded-md bg-[#0f131c]/90 border border-[#3c494c]/40 text-[10px] text-[#8aebff]"
-                                >
-                                  ✓ {tag}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* 2. ESCENAS SIMULADAS DE MANAGUA Y DEMOSTRACIÓN GUIADA */}
-                <div className="pt-3 border-t border-[#3c494c]/40 space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <h2 className="text-sm font-extrabold text-[#8aebff]">
-                        2. Escenas de Prueba (Managua)
-                      </h2>
-                      <p className="text-[11px] text-[#bbc9cd]">
-                         Toca una escena para evaluar cómo responde AVISIA o inicia el recorrido guiado.
-                      </p>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
-                  {demoActive ? (
-                    <button
-                      type="button"
-                      onClick={stopGuidedDemo}
-                      className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md"
-                    >
-                      <Square className="w-4 h-4 fill-current" />
-                      Detener Recorrido Guiado
-                    </button>
-                  ) : (
+                  {/* 3. LABORATORIO DE ARCHIVOS (SUBIR FOTO / VIDEO) Y SEGURIDAD */}
+                  <div className="pt-3 border-t border-[#3c494c]/40 space-y-2">
+                    <div className="text-xs font-extrabold text-[#8aebff]">
+                      3. Evaluar con Foto o Video Guardado
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleModeChange('vision_lab')}
+                        className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border ${mode === 'vision_lab'
+                            ? 'bg-[#4edea3]/20 border-[#4edea3] text-[#6ffbbe]'
+                            : 'bg-[#1c2028] border-[#3c494c]/50 text-[#dfe2ee]'
+                          }`}
+                      >
+                        <FlaskConical className="w-4 h-4 shrink-0" />
+                        Subir Foto
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleModeChange('video_lab')}
+                        className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border ${mode === 'video_lab'
+                            ? 'bg-[#22d3ee]/20 border-[#22d3ee] text-[#8aebff]'
+                            : 'bg-[#1c2028] border-[#3c494c]/50 text-[#dfe2ee]'
+                          }`}
+                      >
+                        <Film className="w-4 h-4 shrink-0" />
+                        Subir Video
+                      </button>
+                    </div>
+
                     <button
                       type="button"
                       onClick={() => {
-                        speechService.unlockAudio();
-                        startGuidedDemo();
+                        setAndroidMenuOpen(false);
+                        setConsentModalOpen(true);
                       }}
-                      className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md"
+                      className="w-full min-h-[42px] py-2 px-3 rounded-xl bg-[#0f131c] border border-[#3c494c]/60 text-[#bbc9cd] font-semibold text-xs flex items-center justify-center gap-2"
                     >
-                      <Play className="w-4 h-4 fill-current" />
-                      Iniciar Recorrido Guiado Automático
+                      <ShieldCheck className="w-4 h-4 text-[#4edea3]" />
+                      Aviso de Seguridad y Privacidad · UAM
                     </button>
-                  )}
+                  </div>
 
-                  <div className="space-y-1.5">
-                    {scenarios.map((s) => {
-                      const isCurrentScene = mode === 'simulation' && s.id === activeScenario.id;
-                      return (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => {
-                            setDemoActive(false);
-                            setMode('simulation');
-                            setMobileTab('vision');
-                            handleSelectScenario(s.id);
-                          }}
-                          className={`w-full p-2.5 rounded-xl text-left border flex items-center justify-between gap-2 transition-colors ${
-                            isCurrentScene
-                              ? 'bg-[#22d3ee]/16 border-[#22d3ee] text-[#8aebff]'
-                              : 'bg-[#1c2028] border-[#3c494c]/40 text-[#dfe2ee] hover:border-[#859397]'
-                          }`}
-                        >
-                          <div className="min-w-0">
-                            <div className="text-xs font-bold truncate">
-                              Escena {s.number}: {s.title}
-                            </div>
-                            <div className="text-[11px] text-[#bbc9cd] truncate">{s.subtitle}</div>
-                          </div>
-                          {isCurrentScene && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#4edea3]/20 text-[#4edea3] text-[10px] font-bold shrink-0">
-                              <Check className="w-3 h-3" />
-                              Activa
+                  {/* 4. AJUSTES TÉCNICOS AVANZADOS (COLAPSADOS POR DEFECTO PARA NO CONFUNDIR) */}
+                  {!isNativeApp && (
+                    <div className="pt-2 border-t border-[#3c494c]/30">
+                      <button
+                        type="button"
+                        aria-expanded={showAdvancedTech}
+                        onClick={() => setShowAdvancedTech((v) => !v)}
+                        className="w-full py-2 px-3 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-[11px] font-semibold text-[#859397] hover:text-[#dfe2ee] flex items-center justify-between"
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <Cpu className="w-3.5 h-3.5 text-[#8aebff]" />
+                          Ajustes técnicos manuales (se configuran solos con el modo)
+                        </span>
+                        <span>{showAdvancedTech ? 'Ocultar ▲' : 'Mostrar ▼'}</span>
+                      </button>
+
+                      {showAdvancedTech && (
+                        <div className="mt-2 p-3 rounded-2xl border border-[#3c494c]/40 bg-[#141821] space-y-2.5">
+                          <div className="space-y-1">
+                            <span className="text-[10px] text-[#bbc9cd] block">
+                              Motor detector neuronal:
                             </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                            <div className="grid grid-cols-3 gap-1">
+                              {(
+                                [
+                                  { id: 'dfine_s_obj365', label: 'Obj365 · 366cl' },
+                                  { id: 'dfine_n', label: 'D-FINE-N · 43%' },
+                                  { id: 'dfine_s', label: 'D-FINE-S · 49%' },
+                                  { id: 'yolov10n', label: 'YOLOv10n' },
+                                  { id: 'efficientdet_lite2', label: 'Lite2 · 34%' },
+                                  { id: 'efficientdet_lite0', label: 'Lite0 Ráp.' },
+                                ] as Array<{ id: DetectorEngineId; label: string }>
+                              ).map((eng) => {
+                                const selected = streetFeatures.detectorEngine === eng.id;
+                                return (
+                                  <button
+                                    key={eng.id}
+                                    type="button"
+                                    onClick={() =>
+                                      setStreetFeatures((prev) => ({
+                                        ...prev,
+                                        detectorEngine: eng.id,
+                                      }))
+                                    }
+                                    className={`py-1.5 px-1.5 rounded-lg text-[10px] font-bold border transition-colors ${selected
+                                        ? 'bg-[#22d3ee] text-[#00363e] border-[#22d3ee]'
+                                        : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/50'
+                                      }`}
+                                  >
+                                    {eng.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
 
-                {/* 3. LABORATORIO DE ARCHIVOS (SUBIR FOTO / VIDEO) Y SEGURIDAD */}
-                <div className="pt-3 border-t border-[#3c494c]/40 space-y-2">
-                  <div className="text-xs font-extrabold text-[#8aebff]">
-                    3. Evaluar con Foto o Video Guardado
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleModeChange('vision_lab')}
-                      className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border ${
-                        mode === 'vision_lab'
-                          ? 'bg-[#4edea3]/20 border-[#4edea3] text-[#6ffbbe]'
-                          : 'bg-[#1c2028] border-[#3c494c]/50 text-[#dfe2ee]'
-                      }`}
-                    >
-                      <FlaskConical className="w-4 h-4 shrink-0" />
-                      Subir Foto
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleModeChange('video_lab')}
-                      className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border ${
-                        mode === 'video_lab'
-                          ? 'bg-[#22d3ee]/20 border-[#22d3ee] text-[#8aebff]'
-                          : 'bg-[#1c2028] border-[#3c494c]/50 text-[#dfe2ee]'
-                      }`}
-                    >
-                      <Film className="w-4 h-4 shrink-0" />
-                      Subir Video
-                    </button>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAndroidMenuOpen(false);
-                      setConsentModalOpen(true);
-                    }}
-                    className="w-full min-h-[42px] py-2 px-3 rounded-xl bg-[#0f131c] border border-[#3c494c]/60 text-[#bbc9cd] font-semibold text-xs flex items-center justify-center gap-2"
-                  >
-                    <ShieldCheck className="w-4 h-4 text-[#4edea3]" />
-                    Aviso de Seguridad y Privacidad · UAM
-                  </button>
-                </div>
-
-                {/* 4. AJUSTES TÉCNICOS AVANZADOS (COLAPSADOS POR DEFECTO PARA NO CONFUNDIR) */}
-                {!isNativeApp && (
-                  <div className="pt-2 border-t border-[#3c494c]/30">
-                    <button
-                      type="button"
-                      aria-expanded={showAdvancedTech}
-                      onClick={() => setShowAdvancedTech((v) => !v)}
-                      className="w-full py-2 px-3 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-[11px] font-semibold text-[#859397] hover:text-[#dfe2ee] flex items-center justify-between"
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <Cpu className="w-3.5 h-3.5 text-[#8aebff]" />
-                        Ajustes técnicos manuales (se configuran solos con el modo)
-                      </span>
-                      <span>{showAdvancedTech ? 'Ocultar ▲' : 'Mostrar ▼'}</span>
-                    </button>
-
-                    {showAdvancedTech && (
-                      <div className="mt-2 p-3 rounded-2xl border border-[#3c494c]/40 bg-[#141821] space-y-2.5">
-                        <div className="space-y-1">
-                          <span className="text-[10px] text-[#bbc9cd] block">
-                            Motor detector neuronal:
-                          </span>
-                          <div className="grid grid-cols-3 gap-1">
+                          <div className="grid grid-cols-2 gap-1">
                             {(
                               [
-                                { id: 'dfine_s_obj365', label: 'Obj365 · 366cl' },
-                                { id: 'dfine_n', label: 'D-FINE-N · 43%' },
-                                { id: 'dfine_s', label: 'D-FINE-S · 49%' },
-                                { id: 'yolov10n', label: 'YOLOv10n' },
-                                { id: 'efficientdet_lite2', label: 'Lite2 · 34%' },
-                                { id: 'efficientdet_lite0', label: 'Lite0 Ráp.' },
-                              ] as Array<{ id: DetectorEngineId; label: string }>
-                            ).map((eng) => {
-                              const selected = streetFeatures.detectorEngine === eng.id;
+                                { id: 'essential', label: 'Voz: Esencial (Tranquilo)' },
+                                { id: 'detailed', label: 'Voz: Detallada' },
+                              ] as Array<{ id: AudioVerbosity; label: string }>
+                            ).map((opt) => {
+                              const selected = streetFeatures.audioVerbosity === opt.id;
                               return (
                                 <button
-                                  key={eng.id}
+                                  key={opt.id}
                                   type="button"
                                   onClick={() =>
                                     setStreetFeatures((prev) => ({
                                       ...prev,
-                                      detectorEngine: eng.id,
+                                      audioVerbosity: opt.id,
                                     }))
                                   }
-                                  className={`py-1.5 px-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
-                                    selected
-                                      ? 'bg-[#22d3ee] text-[#00363e] border-[#22d3ee]'
+                                  className={`py-1.5 px-2 rounded-lg text-[10px] font-bold border ${selected
+                                      ? 'bg-[#4edea3] text-[#003824] border-[#4edea3]'
                                       : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/50'
-                                  }`}
+                                    }`}
                                 >
-                                  {eng.label}
+                                  {opt.label}
                                 </button>
                               );
                             })}
                           </div>
-                        </div>
 
-                        <div className="grid grid-cols-2 gap-1">
                           {(
                             [
-                              { id: 'essential', label: 'Voz: Esencial (Tranquilo)' },
-                              { id: 'detailed', label: 'Voz: Detallada' },
-                            ] as Array<{ id: AudioVerbosity; label: string }>
-                          ).map((opt) => {
-                            const selected = streetFeatures.audioVerbosity === opt.id;
+                              {
+                                key: 'architecturalVisionEnabled',
+                                label: 'Puertas, paredes y piso libre (SegFormer)',
+                              },
+                              {
+                                key: 'depthAnythingEnabled',
+                                label: 'Profundidad 3D (Depth Anything V2)',
+                              },
+                              {
+                                key: 'showStixelOverlay',
+                                label: 'Barras visuales de espacio libre (10h..2h)',
+                              },
+                              {
+                                key: 'clockFaceDirections',
+                                label: 'Direcciones tipo reloj (a las 10 / 12 / 2)',
+                              },
+                              {
+                                key: 'stereoSonar',
+                                label: 'Sonar direccional (Izquierda / Centro / Derecha)',
+                              },
+                              {
+                                key: 'soundOnlyMode',
+                                label: 'Solo sonidos y vibración (sin voz)',
+                              },
+                              {
+                                key: 'handsFreeWakeWord',
+                                label: 'Comando manos libres ("Oye Avisia")',
+                              },
+                            ] as const
+                          ).map((item) => {
+                            const enabled = Boolean(streetFeatures[item.key]);
                             return (
                               <button
-                                key={opt.id}
+                                key={item.key}
                                 type="button"
+                                role="switch"
+                                aria-checked={enabled}
                                 onClick={() =>
                                   setStreetFeatures((prev) => ({
                                     ...prev,
-                                    audioVerbosity: opt.id,
+                                    [item.key]: !prev[item.key],
                                   }))
                                 }
-                                className={`py-1.5 px-2 rounded-lg text-[10px] font-bold border ${
-                                  selected
-                                    ? 'bg-[#4edea3] text-[#003824] border-[#4edea3]'
-                                    : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/50'
-                                }`}
+                                className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
                               >
-                                {opt.label}
+                                <span className="text-[11px] font-medium text-[#dfe2ee]">
+                                  {item.label}
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${enabled
+                                      ? 'bg-[#4edea3]/20 text-[#4edea3]'
+                                      : 'bg-[#262a33] text-[#859397]'
+                                    }`}
+                                >
+                                  {enabled ? 'ON' : 'OFF'}
+                                </span>
                               </button>
                             );
                           })}
                         </div>
-
-                        {(
-                          [
-                            {
-                              key: 'architecturalVisionEnabled',
-                              label: 'Puertas, paredes y piso libre (SegFormer)',
-                            },
-                            {
-                              key: 'depthAnythingEnabled',
-                              label: 'Profundidad 3D (Depth Anything V2)',
-                            },
-                            {
-                              key: 'showStixelOverlay',
-                              label: 'Barras visuales de espacio libre (10h..2h)',
-                            },
-                            {
-                              key: 'clockFaceDirections',
-                              label: 'Direcciones tipo reloj (a las 10 / 12 / 2)',
-                            },
-                            {
-                              key: 'stereoSonar',
-                              label: 'Sonar direccional (Izquierda / Centro / Derecha)',
-                            },
-                            {
-                              key: 'soundOnlyMode',
-                              label: 'Solo sonidos y vibración (sin voz)',
-                            },
-                            {
-                              key: 'handsFreeWakeWord',
-                              label: 'Comando manos libres ("Oye Avisia")',
-                            },
-                          ] as const
-                        ).map((item) => {
-                          const enabled = Boolean(streetFeatures[item.key]);
-                          return (
-                            <button
-                              key={item.key}
-                              type="button"
-                              role="switch"
-                              aria-checked={enabled}
-                              onClick={() =>
-                                setStreetFeatures((prev) => ({
-                                  ...prev,
-                                  [item.key]: !prev[item.key],
-                                }))
-                              }
-                              className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-[#0f131c] border border-[#3c494c]/40 text-left"
-                            >
-                              <span className="text-[11px] font-medium text-[#dfe2ee]">
-                                {item.label}
-                              </span>
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                                  enabled
-                                    ? 'bg-[#4edea3]/20 text-[#4edea3]'
-                                    : 'bg-[#262a33] text-[#859397]'
-                                }`}
-                              >
-                                {enabled ? 'ON' : 'OFF'}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Android Viewport (Zero Scroll on Main Vision Screen) */}
-            <div
-              className={`flex-1 min-h-0 px-3 py-2 ${
-                mobileTab === 'vision'
-                  ? 'flex flex-col overflow-hidden'
-                  : 'overflow-y-auto overflow-x-hidden space-y-2.5'
-              }`}
-            >
-              {mobileTab === 'vision' && (
-                <div className="flex-1 min-h-0 flex flex-col gap-2">
-                  {isMobileExperience && demoActive && (
-                    <div className="shrink-0 px-3 py-2 rounded-xl bg-[#22d3ee]/15 border border-[#22d3ee]/50 flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-[#8aebff] truncate">
-                        Demo Autónoma activa
-                      </span>
-                      <button
-                        type="button"
-                        onClick={stopGuidedDemo}
-                        className="shrink-0 px-3 py-1.5 rounded-lg bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-xs flex items-center gap-1.5 active:scale-95 transition-all"
-                      >
-                        <Square className="w-3.5 h-3.5 fill-current" />
-                        Detener Demo
-                      </button>
+                      )}
                     </div>
                   )}
-
-                  {evaluation.obstacleAlert && (
-                    <div
-                      role="alert"
-                      className={`shrink-0 px-3 py-2 rounded-xl border text-xs flex items-center gap-2 ${
-                        evaluation.obstacleAlert.zone === 'front_close'
-                          ? 'bg-[#93000a]/85 border-[#ffb4ab]/40 text-[#ffdad6]'
-                          : 'bg-amber-500/20 border-amber-400/50 text-amber-100'
-                      }`}
-                    >
-                      <ShieldAlert
-                        className={`w-4 h-4 shrink-0 ${
-                          evaluation.obstacleAlert.zone === 'front_close'
-                            ? 'text-[#ffb4ab]'
-                            : 'text-amber-300'
-                        }`}
-                      />
-                      <span className="font-semibold truncate">{evaluation.obstacleAlert.message}</span>
-                    </div>
-                  )}
-
-                  <div className="flex-1 min-h-0 flex flex-col">
-                    {renderEnvironmentContent()}
-                  </div>
-
-                  {/* Minimalist Accessible Voice Bar (TalkBack-safe: avoids double narration when AVISIA TTS is enabled) */}
-                  <div className="shrink-0 p-2.5 rounded-2xl bg-[#1c2028] border border-[#3c494c]/30 space-y-2">
-                    <div
-                      role="status"
-                      aria-live={speechSettings.enabled ? 'off' : 'polite'}
-                      className="px-2.5 py-2 rounded-xl bg-[#181c24] border border-[#3c494c]/25"
-                    >
-                      <p className="text-sm text-[#dfe2ee] font-medium leading-snug line-clamp-2">
-                        {evaluation.generatedMessage}
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          speechService.unlockAudio();
-                          if (typeof navigator !== 'undefined' && navigator.vibrate) {
-                            navigator.vibrate([80, 50, 80]);
-                          }
-                          handleSpeakCurrent();
-                        }}
-                        className="h-12 px-3 rounded-full bg-[#31353e] hover:bg-[#353942] text-[#dfe2ee] flex items-center justify-center gap-2 font-bold text-sm active:scale-95 transition-all"
-                      >
-                        <Volume2 className="w-5 h-5 text-[#8aebff]" />
-                        Repetir
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          speechService.unlockAudio();
-                          if (typeof navigator !== 'undefined' && navigator.vibrate) {
-                            navigator.vibrate(120);
-                          }
-                          setMobileTab('assistant');
-                        }}
-                        className="h-12 px-3 rounded-full bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] flex items-center justify-center gap-2 font-bold text-sm active:scale-95 transition-all shadow-md"
-                      >
-                        <MessageSquare className="w-5 h-5" />
-                        Consultar
-                      </button>
-                    </div>
-                  </div>
                 </div>
               )}
 
-              {mobileTab === 'assistant' && (
-                <VoiceAssistantPanel
-                  isSpeaking={isSpeaking}
-                  isListening={isListening}
-                  lastMessage={evaluation.generatedMessage}
-                  history={history}
-                  speechSettings={speechSettings}
-                  availableVoices={availableVoices}
-                  recognitionSupported={speechService.isRecognitionSupported()}
-                  onSpeakCurrent={handleSpeakCurrent}
-                  onRepeatLast={handleRepeatLast}
-                  onCancelSpeech={handleCancelSpeech}
-                  onToggleMute={() => {
-                    if (speechSettings.enabled) {
-                      speechService.cancel();
-                      setIsSpeaking(false);
-                    }
-                    setSpeechSettings((s) => ({ ...s, enabled: !s.enabled }));
-                  }}
-                  onChangeRate={(rate) => setSpeechSettings((s) => ({ ...s, rate }))}
-                  onChangeVoice={(voiceURI) =>
-                    setSpeechSettings((s) => ({ ...s, voiceURI: voiceURI || null }))
-                  }
-                  onSendQuestion={handleSendQuestion}
-                  onToggleListening={handleToggleListening}
-                />
-              )}
-
-              {mobileTab === 'analysis' && (
-                <ProcessingPanel
-                  mode={mode}
-                  detections={activeDetections}
-                  policy={policy}
-                  evaluation={evaluation}
-                  highlightedDetectionId={highlightedDetectionId}
-                  detectorModelName={detectorService.getStatus().modelName}
-                  onChangePolicy={setPolicy}
-                  onHighlightDetection={setHighlightedDetectionId}
-                />
-              )}
-
-              {mobileTab === 'map' && (
-                <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando mapa GPS...</div>}>
-                  <ManaguaWazeMobile
-                    scenario={activeScenario}
-                    realGps={realGps}
-                    gpsActive={gpsActive}
-                    gpsLoading={gpsLoading}
-                    gpsError={gpsError}
-                    onToggleGps={handleToggleGps}
-                    onSpeakText={(text) => {
-                      appendHistory({
-                        sender: 'avicia',
-                        text,
-                        source: 'simulated',
-                        spoken: true,
-                      });
-                      speakText(text);
-                    }}
-                  />
-                </Suspense>
-              )}
-            </div>
-
-            {/* Android Material 3 Bottom Navigation + Gesture Pill (Stitch Dark Mode) */}
-            <nav
-              aria-label="Navegación Android"
-              className="border-t border-[#3c494c]/30 bg-[#1c2028]/95 backdrop-blur-xl px-2 pt-1.5 pb-1"
-            >
-              <div className="grid grid-cols-4">
-                <button
-                  type="button"
-                  aria-current={mobileTab === 'vision' ? 'page' : undefined}
-                  onClick={() => {
-                    setMobileTab('vision');
-                    setAndroidMenuOpen(false);
-                  }}
-                  className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 py-0.5"
-                >
-                  <span
-                    className={`px-3.5 py-1 rounded-full transition-colors ${
-                      mobileTab === 'vision'
-                        ? 'bg-[#22d3ee] text-[#005763]'
-                        : 'text-[#bbc9cd]'
-                    }`}
-                  >
-                    <Eye className="w-4 h-4" />
-                  </span>
-                  <span
-                    className={`font-mono text-[10px] ${
-                      mobileTab === 'vision' ? 'text-[#8aebff] font-semibold' : 'text-[#bbc9cd]'
-                    }`}
-                  >
-                    Visión
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  aria-current={mobileTab === 'assistant' ? 'page' : undefined}
-                  onClick={() => {
-                    setMobileTab('assistant');
-                    setAndroidMenuOpen(false);
-                  }}
-                  className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 py-0.5"
-                >
-                  <span
-                    className={`px-3.5 py-1 rounded-full transition-colors ${
-                      mobileTab === 'assistant'
-                        ? 'bg-[#22d3ee] text-[#005763]'
-                        : 'text-[#bbc9cd]'
-                    }`}
-                  >
-                    <MessageSquare className="w-4 h-4" />
-                  </span>
-                  <span
-                    className={`font-mono text-[10px] ${
-                      mobileTab === 'assistant' ? 'text-[#8aebff] font-semibold' : 'text-[#bbc9cd]'
-                    }`}
-                  >
-                    Asistente
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  aria-current={mobileTab === 'analysis' ? 'page' : undefined}
-                  onClick={() => {
-                    setMobileTab('analysis');
-                    setAndroidMenuOpen(false);
-                  }}
-                  className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 py-0.5"
-                >
-                  <span
-                    className={`px-3.5 py-1 rounded-full transition-colors ${
-                      mobileTab === 'analysis'
-                        ? 'bg-[#22d3ee] text-[#005763]'
-                        : 'text-[#bbc9cd]'
-                    }`}
-                  >
-                    <Sparkles className="w-4 h-4" />
-                  </span>
-                  <span
-                    className={`font-mono text-[10px] ${
-                      mobileTab === 'analysis' ? 'text-[#8aebff] font-semibold' : 'text-[#bbc9cd]'
-                    }`}
-                  >
-                    Telemetría
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  aria-current={mobileTab === 'map' ? 'page' : undefined}
-                  onClick={() => {
-                    setMobileTab('map');
-                    setEcosystemTab('map');
-                    setAndroidMenuOpen(false);
-                    if (!gpsActive && locationService.isGeolocationSupported()) {
-                      handleToggleGps();
-                    }
-                  }}
-                  className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 py-0.5"
-                >
-                  <span
-                    className={`px-3.5 py-1 rounded-full transition-colors ${
-                      mobileTab === 'map'
-                        ? 'bg-[#22d3ee] text-[#005763]'
-                        : 'text-[#bbc9cd]'
-                    }`}
-                  >
-                    <MapPin className="w-4 h-4" />
-                  </span>
-                  <span
-                    className={`font-mono text-[10px] ${
-                      mobileTab === 'map' ? 'text-[#8aebff] font-semibold' : 'text-[#bbc9cd]'
-                    }`}
-                  >
-                    GPS Managua
-                  </span>
-                </button>
-              </div>
-              <div className="flex justify-center pt-1.5 pb-0.5">
-                <div className="w-24 h-1 rounded-full bg-[#3c494c]" />
-              </div>
-            </nav>
-            </div>
-          </div>
-        </aside>
-
-        {/* RIGHT 70%: DESKTOP TELEMETRY ECOSYSTEM (hidden on native Android app and mobile screens) */}
-        {!isNativeApp && (
-        <main className="hidden lg:flex w-full lg:w-[68%] xl:w-[70%] lg:h-full flex-col gap-3 min-h-0">
-          <div className="shrink-0">
-            <GuidedDemoBanner
-              active={demoActive}
-              paused={demoPaused}
-              completed={demoCompleted}
-              stepIndex={demoStepIndex}
-              onPauseToggle={() => setDemoPaused((p) => !p)}
-              onRestart={startGuidedDemo}
-              onExit={() => {
-                speechService.cancel();
-                setDemoActive(false);
-              }}
-            />
-          </div>
-
-          {/* Stitch Telemetry Console Mode & Ecosystem View Switcher */}
-          <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-[#181c24] border border-[#3c494c]/40 shadow-sm">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => handleModeChange('simulation')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${
-                  mode === 'simulation'
-                    ? 'bg-cyan-500/15 border-cyan-400/60 text-cyan-200'
-                    : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
-                }`}
+              {/* Android Viewport (Zero Scroll on Main Vision Screen) */}
+              <div
+                className={`flex-1 min-h-0 px-3 py-2 ${mobileTab === 'vision'
+                    ? 'flex flex-col overflow-hidden'
+                    : 'overflow-y-auto overflow-x-hidden space-y-2.5'
+                  }`}
               >
-                <Eye className="w-3.5 h-3.5" />
-                Escenas
-              </button>
-              <button
-                type="button"
-                onClick={() => handleModeChange('vision_lab')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${
-                  mode === 'vision_lab'
-                    ? 'bg-emerald-500/15 border-emerald-400/60 text-emerald-200'
-                    : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <FlaskConical className="w-3.5 h-3.5" />
-                Imagen IA
-              </button>
-              <button
-                type="button"
-                onClick={() => handleModeChange('video_lab')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${
-                  mode === 'video_lab'
-                    ? 'bg-cyan-500/15 border-cyan-400/60 text-cyan-200'
-                    : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <Film className="w-3.5 h-3.5" />
-                Video IA
-              </button>
-              <button
-                type="button"
-                onClick={() => handleModeChange('live_camera')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${
-                  mode === 'live_camera'
-                    ? 'bg-amber-500/15 border-amber-400/60 text-amber-200'
-                    : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <Video className="w-3.5 h-3.5" />
-                Cámara
-              </button>
-            </div>
+                {mobileTab === 'vision' && (
+                  <div className="flex-1 min-h-0 flex flex-col gap-2">
+                    {isMobileExperience && demoActive && (
+                      <div className="shrink-0 px-3 py-2 rounded-xl bg-[#22d3ee]/15 border border-[#22d3ee]/50 flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-[#8aebff] truncate">
+                          Demo Autónoma activa
+                        </span>
+                        <button
+                          type="button"
+                          onClick={stopGuidedDemo}
+                          className="shrink-0 px-3 py-1.5 rounded-lg bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-xs flex items-center gap-1.5 active:scale-95 transition-all"
+                        >
+                          <Square className="w-3.5 h-3.5 fill-current" />
+                          Detener Demo
+                        </button>
+                      </div>
+                    )}
 
-            <div className="flex flex-wrap items-center gap-1 bg-[#0a0e16] p-1 rounded-lg border border-[#3c494c]/40">
-              <button
-                type="button"
-                onClick={() => setEcosystemTab('core')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                  ecosystemTab === 'core'
-                    ? 'bg-cyan-500 text-slate-950 font-semibold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                Núcleo en Vivo
-              </button>
-              <button
-                type="button"
-                onClick={() => setEcosystemTab('pipeline')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                  ecosystemTab === 'pipeline'
-                    ? 'bg-cyan-500 text-slate-950 font-semibold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <GitBranch className="w-3.5 h-3.5" />
-                Cómo Piensa
-              </button>
-              <button
-                type="button"
-                onClick={() => setEcosystemTab('map')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                  ecosystemTab === 'map'
-                    ? 'bg-cyan-500 text-slate-950 font-semibold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <MapPin className="w-3.5 h-3.5" />
-                Mapa Managua
-              </button>
-              <button
-                type="button"
-                onClick={() => setEcosystemTab('tech')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                  ecosystemTab === 'tech'
-                    ? 'bg-cyan-500 text-slate-950 font-semibold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Cpu className="w-3.5 h-3.5" />
-                Técnico
-              </button>
-            </div>
-          </div>
+                    {evaluation.obstacleAlert && (
+                      <div
+                        role="alert"
+                        className={`shrink-0 px-3 py-2 rounded-xl border text-xs flex items-center gap-2 ${evaluation.obstacleAlert.zone === 'front_close'
+                            ? 'bg-[#93000a]/85 border-[#ffb4ab]/40 text-[#ffdad6]'
+                            : 'bg-amber-500/20 border-amber-400/50 text-amber-100'
+                          }`}
+                      >
+                        <ShieldAlert
+                          className={`w-4 h-4 shrink-0 ${evaluation.obstacleAlert.zone === 'front_close'
+                              ? 'text-[#ffb4ab]'
+                              : 'text-amber-300'
+                            }`}
+                        />
+                        <span className="font-semibold truncate">{evaluation.obstacleAlert.message}</span>
+                      </div>
+                    )}
 
-          {/* Active Ecosystem Panel */}
-          <div className="flex-1 min-h-0 overflow-y-auto pr-0.5">
-            {ecosystemTab === 'core' && (
-              <div className="grid grid-cols-1 xl:grid-cols-12 gap-3.5 h-full items-stretch">
-                <div className="xl:col-span-5 h-full min-h-0">
+                    <div className="flex-1 min-h-0 flex flex-col">
+                      {renderEnvironmentContent()}
+                    </div>
+
+                    {/* Minimalist Accessible Voice Bar (TalkBack-safe: avoids double narration when AVISIA TTS is enabled) */}
+                    <div className="shrink-0 p-2.5 rounded-2xl bg-[#1c2028] border border-[#3c494c]/30 space-y-2">
+                      <div
+                        role="status"
+                        aria-live={speechSettings.enabled ? 'off' : 'polite'}
+                        className="px-2.5 py-2 rounded-xl bg-[#181c24] border border-[#3c494c]/25"
+                      >
+                        <p className="text-sm text-[#dfe2ee] font-medium leading-snug line-clamp-2">
+                          {evaluation.generatedMessage}
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            speechService.unlockAudio();
+                            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                              navigator.vibrate([80, 50, 80]);
+                            }
+                            handleSpeakCurrent();
+                          }}
+                          className="h-12 px-3 rounded-full bg-[#31353e] hover:bg-[#353942] text-[#dfe2ee] flex items-center justify-center gap-2 font-bold text-sm active:scale-95 transition-all"
+                        >
+                          <Volume2 className="w-5 h-5 text-[#8aebff]" />
+                          Repetir
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            speechService.unlockAudio();
+                            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                              navigator.vibrate(120);
+                            }
+                            setMobileTab('assistant');
+                          }}
+                          className="h-12 px-3 rounded-full bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] flex items-center justify-center gap-2 font-bold text-sm active:scale-95 transition-all shadow-md"
+                        >
+                          <MessageSquare className="w-5 h-5" />
+                          Consultar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {mobileTab === 'assistant' && (
                   <VoiceAssistantPanel
                     isSpeaking={isSpeaking}
                     isListening={isListening}
@@ -2335,9 +2011,9 @@ export function App() {
                     onSendQuestion={handleSendQuestion}
                     onToggleListening={handleToggleListening}
                   />
-                </div>
+                )}
 
-                <div className="xl:col-span-7 h-full min-h-0">
+                {mobileTab === 'analysis' && (
                   <ProcessingPanel
                     mode={mode}
                     detections={activeDetections}
@@ -2348,51 +2024,352 @@ export function App() {
                     onChangePolicy={setPolicy}
                     onHighlightDetection={setHighlightedDetectionId}
                   />
-                </div>
+                )}
+
+                {mobileTab === 'map' && (
+                  <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando mapa GPS...</div>}>
+                    <ManaguaWazeMobile
+                      scenario={activeScenario}
+                      realGps={realGps}
+                      gpsActive={gpsActive}
+                      gpsLoading={gpsLoading}
+                      gpsError={gpsError}
+                      onToggleGps={handleToggleGps}
+                      onSpeakText={(text) => {
+                        appendHistory({
+                          sender: 'avicia',
+                          text,
+                          source: 'simulated',
+                          spoken: true,
+                        });
+                        speakText(text);
+                      }}
+                    />
+                  </Suspense>
+                )}
               </div>
-            )}
 
-            {ecosystemTab === 'pipeline' && (
-              <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando arquitectura...</div>}>
-                <PipelineSection mode={mode} />
-              </Suspense>
-            )}
+              {/* Android Material 3 Bottom Navigation + Gesture Pill (Stitch Dark Mode) */}
+              <nav
+                aria-label="Navegación Android"
+                className="border-t border-[#3c494c]/30 bg-[#1c2028]/95 backdrop-blur-xl px-2 pt-1.5 pb-1"
+              >
+                <div className="grid grid-cols-4">
+                  <button
+                    type="button"
+                    aria-current={mobileTab === 'vision' ? 'page' : undefined}
+                    onClick={() => {
+                      setMobileTab('vision');
+                      setAndroidMenuOpen(false);
+                    }}
+                    className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 py-0.5"
+                  >
+                    <span
+                      className={`px-3.5 py-1 rounded-full transition-colors ${mobileTab === 'vision'
+                          ? 'bg-[#22d3ee] text-[#005763]'
+                          : 'text-[#bbc9cd]'
+                        }`}
+                    >
+                      <Eye className="w-4 h-4" />
+                    </span>
+                    <span
+                      className={`font-mono text-[10px] ${mobileTab === 'vision' ? 'text-[#8aebff] font-semibold' : 'text-[#bbc9cd]'
+                        }`}
+                    >
+                      Visión
+                    </span>
+                  </button>
 
-            {ecosystemTab === 'map' && (
-              <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando mapa de Managua...</div>}>
-                <ManaguaMapSection
-                  scenario={activeScenario}
-                  realGps={realGps}
-                  gpsActive={gpsActive}
-                  gpsLoading={gpsLoading}
-                  gpsError={gpsError}
-                  onToggleGps={handleToggleGps}
-                  onSpeakText={(text) => {
-                    appendHistory({
-                      sender: 'avicia',
-                      text,
-                      source: 'simulated',
-                      spoken: true,
-                    });
-                    speakText(text);
-                  }}
-                />
-              </Suspense>
-            )}
+                  <button
+                    type="button"
+                    aria-current={mobileTab === 'assistant' ? 'page' : undefined}
+                    onClick={() => {
+                      setMobileTab('assistant');
+                      setAndroidMenuOpen(false);
+                    }}
+                    className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 py-0.5"
+                  >
+                    <span
+                      className={`px-3.5 py-1 rounded-full transition-colors ${mobileTab === 'assistant'
+                          ? 'bg-[#22d3ee] text-[#005763]'
+                          : 'text-[#bbc9cd]'
+                        }`}
+                    >
+                      <MessageSquare className="w-4 h-4" />
+                    </span>
+                    <span
+                      className={`font-mono text-[10px] ${mobileTab === 'assistant' ? 'text-[#8aebff] font-semibold' : 'text-[#bbc9cd]'
+                        }`}
+                    >
+                      Asistente
+                    </span>
+                  </button>
 
-            {ecosystemTab === 'tech' && (
-              <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando consola técnica y piloto...</div>}>
-                <TechnicalDetailsSection
-                  mode={mode}
-                  policy={policy}
-                  cameraActive={cameraActive}
-                  detectorStatus={detectorService.getStatus()}
-                  speechSupported={speechService.isSynthesisSupported()}
-                />
-              </Suspense>
-            )}
+                  <button
+                    type="button"
+                    aria-current={mobileTab === 'analysis' ? 'page' : undefined}
+                    onClick={() => {
+                      setMobileTab('analysis');
+                      setAndroidMenuOpen(false);
+                    }}
+                    className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 py-0.5"
+                  >
+                    <span
+                      className={`px-3.5 py-1 rounded-full transition-colors ${mobileTab === 'analysis'
+                          ? 'bg-[#22d3ee] text-[#005763]'
+                          : 'text-[#bbc9cd]'
+                        }`}
+                    >
+                      <Sparkles className="w-4 h-4" />
+                    </span>
+                    <span
+                      className={`font-mono text-[10px] ${mobileTab === 'analysis' ? 'text-[#8aebff] font-semibold' : 'text-[#bbc9cd]'
+                        }`}
+                    >
+                      Telemetría
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    aria-current={mobileTab === 'map' ? 'page' : undefined}
+                    onClick={() => {
+                      setMobileTab('map');
+                      setEcosystemTab('map');
+                      setAndroidMenuOpen(false);
+                      if (!gpsActive && locationService.isGeolocationSupported()) {
+                        handleToggleGps();
+                      }
+                    }}
+                    className="min-h-[48px] flex flex-col items-center justify-center gap-0.5 py-0.5"
+                  >
+                    <span
+                      className={`px-3.5 py-1 rounded-full transition-colors ${mobileTab === 'map'
+                          ? 'bg-[#22d3ee] text-[#005763]'
+                          : 'text-[#bbc9cd]'
+                        }`}
+                    >
+                      <MapPin className="w-4 h-4" />
+                    </span>
+                    <span
+                      className={`font-mono text-[10px] ${mobileTab === 'map' ? 'text-[#8aebff] font-semibold' : 'text-[#bbc9cd]'
+                        }`}
+                    >
+                      GPS Managua
+                    </span>
+                  </button>
+                </div>
+                <div className="flex justify-center pt-1.5 pb-0.5">
+                  <div className="w-24 h-1 rounded-full bg-[#3c494c]" />
+                </div>
+              </nav>
+            </div>
           </div>
-        </main>
+        </aside>
+
+        {/* RIGHT 70%: DESKTOP TELEMETRY ECOSYSTEM (hidden on native Android app and mobile screens) */}
+        {!isNativeApp && (
+          <main className="hidden lg:flex w-full lg:w-[68%] xl:w-[70%] lg:h-full flex-col gap-3 min-h-0">
+            <div className="shrink-0">
+              <GuidedDemoBanner
+                active={demoActive}
+                paused={demoPaused}
+                completed={demoCompleted}
+                stepIndex={demoStepIndex}
+                onPauseToggle={() => setDemoPaused((p) => !p)}
+                onRestart={startGuidedDemo}
+                onExit={() => {
+                  speechService.cancel();
+                  setDemoActive(false);
+                }}
+              />
+            </div>
+
+            {/* Stitch Telemetry Console Mode & Ecosystem View Switcher */}
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-[#181c24] border border-[#3c494c]/40 shadow-sm">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('simulation')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${mode === 'simulation'
+                      ? 'bg-cyan-500/15 border-cyan-400/60 text-cyan-200'
+                      : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  Escenas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('vision_lab')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${mode === 'vision_lab'
+                      ? 'bg-emerald-500/15 border-emerald-400/60 text-emerald-200'
+                      : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                >
+                  <FlaskConical className="w-3.5 h-3.5" />
+                  Imagen IA
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('video_lab')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${mode === 'video_lab'
+                      ? 'bg-cyan-500/15 border-cyan-400/60 text-cyan-200'
+                      : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                >
+                  <Film className="w-3.5 h-3.5" />
+                  Video IA
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('live_camera')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${mode === 'live_camera'
+                      ? 'bg-amber-500/15 border-amber-400/60 text-amber-200'
+                      : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                >
+                  <Video className="w-3.5 h-3.5" />
+                  Cámara
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1 bg-[#0a0e16] p-1 rounded-lg border border-[#3c494c]/40">
+                <button
+                  type="button"
+                  onClick={() => setEcosystemTab('core')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${ecosystemTab === 'core'
+                      ? 'bg-cyan-500 text-slate-950 font-semibold'
+                      : 'text-slate-400 hover:text-white'
+                    }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Núcleo en Vivo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEcosystemTab('pipeline')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${ecosystemTab === 'pipeline'
+                      ? 'bg-cyan-500 text-slate-950 font-semibold'
+                      : 'text-slate-400 hover:text-white'
+                    }`}
+                >
+                  <GitBranch className="w-3.5 h-3.5" />
+                  Cómo Piensa
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEcosystemTab('map')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${ecosystemTab === 'map'
+                      ? 'bg-cyan-500 text-slate-950 font-semibold'
+                      : 'text-slate-400 hover:text-white'
+                    }`}
+                >
+                  <MapPin className="w-3.5 h-3.5" />
+                  Mapa Managua
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEcosystemTab('tech')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${ecosystemTab === 'tech'
+                      ? 'bg-cyan-500 text-slate-950 font-semibold'
+                      : 'text-slate-400 hover:text-white'
+                    }`}
+                >
+                  <Cpu className="w-3.5 h-3.5" />
+                  Técnico
+                </button>
+              </div>
+            </div>
+
+            {/* Active Ecosystem Panel */}
+            <div className="flex-1 min-h-0 overflow-y-auto pr-0.5">
+              {ecosystemTab === 'core' && (
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-3.5 h-full items-stretch">
+                  <div className="xl:col-span-5 h-full min-h-0">
+                    <VoiceAssistantPanel
+                      isSpeaking={isSpeaking}
+                      isListening={isListening}
+                      lastMessage={evaluation.generatedMessage}
+                      history={history}
+                      speechSettings={speechSettings}
+                      availableVoices={availableVoices}
+                      recognitionSupported={speechService.isRecognitionSupported()}
+                      onSpeakCurrent={handleSpeakCurrent}
+                      onRepeatLast={handleRepeatLast}
+                      onCancelSpeech={handleCancelSpeech}
+                      onToggleMute={() => {
+                        if (speechSettings.enabled) {
+                          speechService.cancel();
+                          setIsSpeaking(false);
+                        }
+                        setSpeechSettings((s) => ({ ...s, enabled: !s.enabled }));
+                      }}
+                      onChangeRate={(rate) => setSpeechSettings((s) => ({ ...s, rate }))}
+                      onChangeVoice={(voiceURI) =>
+                        setSpeechSettings((s) => ({ ...s, voiceURI: voiceURI || null }))
+                      }
+                      onSendQuestion={handleSendQuestion}
+                      onToggleListening={handleToggleListening}
+                    />
+                  </div>
+
+                  <div className="xl:col-span-7 h-full min-h-0">
+                    <ProcessingPanel
+                      mode={mode}
+                      detections={activeDetections}
+                      policy={policy}
+                      evaluation={evaluation}
+                      highlightedDetectionId={highlightedDetectionId}
+                      detectorModelName={detectorService.getStatus().modelName}
+                      onChangePolicy={setPolicy}
+                      onHighlightDetection={setHighlightedDetectionId}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {ecosystemTab === 'pipeline' && (
+                <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando arquitectura...</div>}>
+                  <PipelineSection mode={mode} />
+                </Suspense>
+              )}
+
+              {ecosystemTab === 'map' && (
+                <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando mapa de Managua...</div>}>
+                  <ManaguaMapSection
+                    scenario={activeScenario}
+                    realGps={realGps}
+                    gpsActive={gpsActive}
+                    gpsLoading={gpsLoading}
+                    gpsError={gpsError}
+                    onToggleGps={handleToggleGps}
+                    onSpeakText={(text) => {
+                      appendHistory({
+                        sender: 'avicia',
+                        text,
+                        source: 'simulated',
+                        spoken: true,
+                      });
+                      speakText(text);
+                    }}
+                  />
+                </Suspense>
+              )}
+
+              {ecosystemTab === 'tech' && (
+                <Suspense fallback={<div className="p-6 text-center text-xs text-slate-400">Cargando consola técnica y piloto...</div>}>
+                  <TechnicalDetailsSection
+                    mode={mode}
+                    policy={policy}
+                    cameraActive={cameraActive}
+                    detectorStatus={detectorService.getStatus()}
+                    speechSupported={speechService.isSynthesisSupported()}
+                  />
+                </Suspense>
+              )}
+            </div>
+          </main>
         )}
       </div>
     </div>

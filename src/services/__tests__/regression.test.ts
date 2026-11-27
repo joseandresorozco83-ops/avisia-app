@@ -550,8 +550,15 @@ describe('AVISIA v5.1 Field-Test Regressions — Office Screenshots #1 to #10', 
 
     // Screenshot #3, #10: Phantom "person" strip at extreme bottom border (user's feet/shadow) -> REJECTED
     expect(isPlausibleDetection('person', 0.55, { x: 0, y: 80, width: 32, height: 20 })).toBe(false);
-    // Real person standing in corridor -> ACCEPTED
+    // Real person standing or sitting at desk -> ACCEPTED
     expect(isPlausibleDetection('person', 0.72, { x: 35, y: 20, width: 28, height: 68 })).toBe(true);
+
+    // Screenshot 4:09 #1 & #2: Objects365 wearable accessories ("Glasses", "Hat") filtered out, while Desk/Chair/Laptop at 0.29-0.64 pass
+    expect(isPlausibleDetection('Glasses', 0.59, { x: 45, y: 30, width: 8, height: 5 })).toBe(false);
+    expect(isPlausibleDetection('Hat', 0.45, { x: 42, y: 20, width: 12, height: 8 })).toBe(false);
+    expect(isPlausibleDetection('Desk', 0.30, { x: 20, y: 50, width: 60, height: 40 })).toBe(true);
+    expect(isPlausibleDetection('Chair', 0.29, { x: 40, y: 48, width: 25, height: 42 })).toBe(true);
+    expect(isPlausibleDetection('Laptop', 0.51, { x: 52, y: 45, width: 26, height: 24 })).toBe(true);
   });
 
   it('computes "Camino despejado" accurately even when SegFormer splits office carpet into "floor" + "rug" (Screenshot #3)', () => {

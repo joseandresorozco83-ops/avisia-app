@@ -237,7 +237,17 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     showStixelOverlayRef.current = showStixelOverlay;
   }, [showStixelOverlay]);
 
-  // Hot-switch detector engine when user changes setting
+  // Hot-switch detector engine when user changes setting & listen for background ONNX upgrade
+  useEffect(() => {
+    const unsub = detectorService.onStatusChange((st) => {
+      setModelBadge(st.modelName);
+      if (st.ready) {
+        setDetectorPendingNote(null);
+      }
+    });
+    return unsub;
+  }, []);
+
   useEffect(() => {
     if (detectorService.getEngine() !== detectorEngine) {
       setModelBadge(`Cargando ${detectorEngine}...`);
@@ -310,7 +320,10 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       }
     };
 
-    void initAndRun();
+    // Stagger Depth Anything V2 initialization by 3.2s so primary object detector loads first without contention
+    const initDelayTimer = window.setTimeout(() => {
+      if (!cancelled) void initAndRun();
+    }, 3200);
 
     const timer = window.setInterval(() => {
       if (cancelled || busy || !videoRef.current || videoRef.current.readyState < 2) return;
@@ -330,10 +343,11 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         .finally(() => {
           busy = false;
         });
-    }, 750);
+    }, 950);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(initDelayTimer);
       window.clearInterval(timer);
     };
   }, [depthAnythingEnabled, cameraActive]);
@@ -360,7 +374,10 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       }
     };
 
-    void initSeg();
+    // Stagger SegFormer initialization by 1.6s so primary object detector gets 100% bandwidth & worker priority first
+    const initSegTimer = window.setTimeout(() => {
+      if (!cancelled) void initSeg();
+    }, 1600);
 
     const timer = window.setInterval(() => {
       if (cancelled || busy || !videoRef.current || videoRef.current.readyState < 2) return;
@@ -383,6 +400,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
     return () => {
       cancelled = true;
+      window.clearTimeout(initSegTimer);
       window.clearInterval(timer);
     };
   }, [architecturalVisionEnabled, archModelVariant, cameraActive]);
@@ -444,8 +462,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     // 5-Sector Stixel Free-Space Corridor Visual Overlay (10h, 11h, 12h, 1h, 2h)
     if (showStixelOverlayRef.current && plan && channelRef.current === 'explore') {
       const sectorW = width / 5;
-      const maxBarH = height * 0.28;
-      const baseY = height - 6;
+      const maxBarH = height * 0.22;
+      const baseY = height - Math.max(24, Math.round(height * 0.14));
 
       ctx.save();
       for (const sec of plan.sectors) {
@@ -925,13 +943,21 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             return;
           }
 
-          const res = await detectorService.detectOnVideoFrame(videoRef.current, threshold);
+          let rawDetections: Detection[] = [];
+          let inferenceTimeMs = 0;
+          try {
+            const res = await detectorService.detectOnVideoFrame(videoRef.current, threshold);
+            rawDetections = res.detections;
+            inferenceTimeMs = res.inferenceTimeMs;
+          } catch {
+            rawDetections = [];
+          }
           if (!runningRef.current) return;
 
           // Unified multi-frame temporal stabilization + Depth/Pinhole distance fusion + clock hysteresis
           const nowTs = Date.now();
           const depthGrid = depthSummaryRef.current?.grid;
-          const stabilizedCoco = temporalTrackerService.update(res.detections, nowTs, depthGrid);
+          const stabilizedCoco = temporalTrackerService.update(rawDetections, nowTs, depthGrid);
 
           // Stabilize SegFormer ADE20K detections temporally too (eliminates 1-frame architectural flicker!)
           // Bidirectional 3D Ground-Plane Veto: when 3D depth confirms a flat floor, suppress SegFormer escalator/stair false alarms!
@@ -1168,7 +1194,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           telemetryService.record({
             timestamp: Date.now(),
             mode: fastMode ? 'street_fast' : 'live_camera',
-            inferenceMs: res.inferenceTimeMs,
+            inferenceMs: inferenceTimeMs,
             detectionsCount: combinedDetections.length,
             frontObstacle:
               combinedDetections.find((d) => d.isInanimateObstacle)?.labelEs ?? null,
@@ -1407,11 +1433,11 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           ref={videoRef}
           playsInline
           muted
-          className={`w-full h-full object-contain ${cameraActive ? 'block' : 'hidden'}`}
+          className={`w-full h-full object-cover ${cameraActive ? 'block' : 'hidden'}`}
         />
         <canvas
           ref={canvasRef}
-          className={`absolute inset-0 w-full h-full object-contain pointer-events-none ${
+          className={`absolute inset-0 w-full h-full object-cover pointer-events-none ${
             cameraActive ? 'block' : 'hidden'
           }`}
         />

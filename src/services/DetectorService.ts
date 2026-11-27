@@ -162,10 +162,33 @@ const RARE_OUTDOOR_ONLY_CLASSES = new Set([
   'skiboard',
 ]);
 
+// Wearable personal accessories in Objects365 that clutter indoor navigation without being obstacles
+const IGNORED_WEARABLE_CLUTTER = new Set([
+  'glasses',
+  'hat',
+  'earphone',
+  'head phone',
+  'watch',
+  'belt',
+  'tie',
+  'bow tie',
+  'necklace',
+  'ring',
+  'bracelet',
+  'slippers',
+  'sneakers',
+  'leather shoes',
+  'high heels',
+  'boots',
+  'sandals',
+  'socks',
+  'glove',
+]);
+
 /**
  * Context & geometric sanity gate to suppress classic COCO/Objects365 false positives
  * in indoor navigation (e.g., wooden door + carpet misclassified as "bed" at 40–49%,
- * or user's own shoes/shadow at bottom frame border misclassified as "person").
+ * wearable accessories like eyeglasses/hats, or user's own shoes at bottom frame border).
  */
 export function isPlausibleDetection(
   rawCategoryName: string,
@@ -174,6 +197,10 @@ export function isPlausibleDetection(
 ): boolean {
   const rawName = (rawCategoryName || '').toLowerCase().trim();
   if (!rawName) return false;
+
+  if (IGNORED_WEARABLE_CLUTTER.has(rawName)) {
+    return false;
+  }
 
   if (RARE_OUTDOOR_ONLY_CLASSES.has(rawName) && score < 0.78) {
     return false;
@@ -282,17 +309,38 @@ export class DetectorService {
   private onnxEngineLoaded: DetectorEngineId | null = null;
   private usingWorker = false;
   private onnxCanvas: HTMLCanvasElement | null = null;
-  private activeEngine: DetectorEngineId = 'dfine_n';
+  private activeEngine: DetectorEngineId = 'dfine_s_obj365';
   private currentRunningMode: 'IMAGE' | 'VIDEO' = 'IMAGE';
   private lastScoreThreshold = 0.36;
+  private initPromise: Promise<DetectorStatus> | null = null;
+  private bgOnnxUpgradeEngine: DetectorEngineId | null = null;
+  private statusListeners = new Set<(status: DetectorStatus) => void>();
   private status: DetectorStatus = {
     ready: false,
     loading: false,
     error: null,
-    modelName: MODEL_DISPLAY_NAMES.dfine_n,
-    engineId: 'dfine_n',
+    modelName: MODEL_DISPLAY_NAMES.dfine_s_obj365,
+    engineId: 'dfine_s_obj365',
     inferenceTimeMs: null,
   };
+
+  onStatusChange(listener: (status: DetectorStatus) => void): () => void {
+    this.statusListeners.add(listener);
+    return () => {
+      this.statusListeners.delete(listener);
+    };
+  }
+
+  private emitStatus(): void {
+    const snap = this.getStatus();
+    for (const fn of this.statusListeners) {
+      try {
+        fn(snap);
+      } catch {
+        // Ignore listener errors
+      }
+    }
+  }
 
   getStatus(): DetectorStatus {
     return { ...this.status };
@@ -303,31 +351,42 @@ export class DetectorService {
   }
 
   async setEngine(engine: DetectorEngineId, scoreThreshold = this.lastScoreThreshold): Promise<DetectorStatus> {
-    if (engine === this.activeEngine && this.status.ready) {
+    this.lastScoreThreshold = scoreThreshold;
+    const isTargetOnnx = Boolean(ONNX_DETECTOR_MODELS[engine]);
+    if (
+      engine === this.activeEngine &&
+      this.status.ready &&
+      (!isTargetOnnx || this.onnxEngineLoaded === engine || this.bgOnnxUpgradeEngine === engine)
+    ) {
       return this.getStatus();
     }
     this.activeEngine = engine;
-    if (this.detector) {
-      try {
-        this.detector.close();
-      } catch {
-        // Ignore close errors
+    if (!isTargetOnnx) {
+      this.onnxPipeline = null;
+      this.onnxEngineLoaded = null;
+      this.usingWorker = false;
+      this.bgOnnxUpgradeEngine = null;
+      if (this.detector) {
+        try {
+          this.detector.close();
+        } catch {
+          // Ignore close errors
+        }
+        this.detector = null;
       }
-      this.detector = null;
-    }
-    if (this.onnxEngineLoaded !== engine) {
+      this.status = {
+        ready: false,
+        loading: false,
+        error: null,
+        modelName: MODEL_DISPLAY_NAMES[engine],
+        engineId: engine,
+        inferenceTimeMs: null,
+      };
+    } else if (this.onnxEngineLoaded !== engine) {
       this.onnxPipeline = null;
       this.onnxEngineLoaded = null;
       this.usingWorker = false;
     }
-    this.status = {
-      ready: false,
-      loading: false,
-      error: null,
-      modelName: MODEL_DISPLAY_NAMES[engine],
-      engineId: engine,
-      inferenceTimeMs: null,
-    };
     return this.initialize(scoreThreshold);
   }
 
@@ -383,7 +442,7 @@ export class DetectorService {
 
       this.onnxPipeline = await createPipeline('object-detection', spec.repoId, {
         device: backend,
-        dtype: backend === 'webgpu' ? 'fp16' : 'q8',
+        dtype: 'q8',
       });
       this.usingWorker = false;
       this.onnxEngineLoaded = engine;
@@ -396,12 +455,39 @@ export class DetectorService {
         engineId: engine,
         inferenceTimeMs: null,
       };
+      this.emitStatus();
       return true;
     } catch {
       this.onnxPipeline = null;
       this.onnxEngineLoaded = null;
       return false;
     }
+  }
+
+  private promoteToOnnxInBackground(targetEngine: DetectorEngineId): void {
+    const spec = ONNX_DETECTOR_MODELS[targetEngine];
+    if (!spec) return;
+    if (this.bgOnnxUpgradeEngine === targetEngine || this.onnxEngineLoaded === targetEngine) {
+      return;
+    }
+    this.bgOnnxUpgradeEngine = targetEngine;
+
+    void (async () => {
+      try {
+        const ok = await this.initOnnxEngine(targetEngine);
+        if (ok) {
+          this.emitStatus();
+        } else if (targetEngine === 'dfine_s_obj365') {
+          // Try lighter dfine_n if dfine_s_obj365 couldn't download
+          const okNano = await this.initOnnxEngine('dfine_n');
+          if (okNano) this.emitStatus();
+        }
+      } finally {
+        if (this.bgOnnxUpgradeEngine === targetEngine) {
+          this.bgOnnxUpgradeEngine = null;
+        }
+      }
+    })();
   }
 
   private async initMediaPipeModel(
@@ -442,11 +528,12 @@ export class DetectorService {
 
   async initialize(scoreThreshold = 0.36): Promise<DetectorStatus> {
     this.lastScoreThreshold = scoreThreshold;
+    const targetEngine = this.activeEngine;
+    const isOnnxEngine = Boolean(ONNX_DETECTOR_MODELS[targetEngine]);
 
-    const isOnnxEngine = Boolean(ONNX_DETECTOR_MODELS[this.activeEngine]);
     if (
       isOnnxEngine &&
-      this.onnxEngineLoaded === this.activeEngine &&
+      this.onnxEngineLoaded === targetEngine &&
       (this.usingWorker || this.onnxPipeline)
     ) {
       return this.getStatus();
@@ -456,51 +543,84 @@ export class DetectorService {
       return this.getStatus();
     }
 
-    this.status = {
-      ...this.status,
-      loading: true,
-      error: null,
-      modelName: MODEL_DISPLAY_NAMES[this.activeEngine],
-      engineId: this.activeEngine,
-    };
-
-    // Smart graceful fallback chain: dfine_s_obj365 -> dfine_n -> efficientdet_lite2 -> efficientdet_lite0
-    const fallbackChain: DetectorEngineId[] =
-      this.activeEngine === 'dfine_s_obj365'
-        ? ['dfine_s_obj365', 'dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
-        : this.activeEngine === 'dfine_s'
-          ? ['dfine_s', 'dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
-          : this.activeEngine === 'dfine_n'
-            ? ['dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
-            : this.activeEngine === 'yolov10n'
-              ? ['yolov10n', 'dfine_n', 'efficientdet_lite2', 'efficientdet_lite0']
-              : this.activeEngine === 'efficientdet_lite2'
-                ? ['efficientdet_lite2', 'efficientdet_lite0']
-                : ['efficientdet_lite0'];
-
-    for (const candidate of fallbackChain) {
-      if (ONNX_DETECTOR_MODELS[candidate]) {
-        const ok = await this.initOnnxEngine(candidate);
-        if (ok) return this.getStatus();
-      } else {
-        const ok = await this.initMediaPipeModel(
-          candidate as 'efficientdet_lite2' | 'efficientdet_lite0',
-          scoreThreshold
-        );
-        if (ok) return this.getStatus();
-      }
+    // If an ONNX engine is requested and we already have a warm MediaPipe detector,
+    // return ready immediately and promote to ONNX in the background (zero cold-start wait!)
+    if (isOnnxEngine && this.detector) {
+      this.promoteToOnnxInBackground(targetEngine);
+      return this.getStatus();
     }
 
-    this.status = {
-      ready: false,
-      loading: false,
-      error:
-        'Sin conectividad para descargar pesos del modelo visual (D-FINE / EfficientDet WASM).',
-      modelName: MODEL_DISPLAY_NAMES[this.activeEngine],
-      engineId: this.activeEngine,
-      inferenceTimeMs: null,
-    };
-    return this.getStatus();
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+
+    this.initPromise = (async () => {
+      this.status = {
+        ...this.status,
+        loading: true,
+        error: null,
+        modelName: MODEL_DISPLAY_NAMES[targetEngine],
+        engineId: targetEngine,
+      };
+      this.emitStatus();
+
+      // Instant Warm-Start Architecture:
+      // 1) First bring up fast MediaPipe detector (~1s) so live camera detects objects immediately on 4G/mobile!
+      // 2) If target is ONNX (D-FINE-Obj365 / D-FINE-N), upgrade seamlessly in the background Web Worker!
+      const mpEngines: Array<'efficientdet_lite2' | 'efficientdet_lite0'> =
+        targetEngine === 'efficientdet_lite0'
+          ? ['efficientdet_lite0']
+          : ['efficientdet_lite2', 'efficientdet_lite0'];
+
+      for (const mpCandidate of mpEngines) {
+        const ok = await this.initMediaPipeModel(mpCandidate, scoreThreshold);
+        if (ok) {
+          if (isOnnxEngine) {
+            const spec = ONNX_DETECTOR_MODELS[targetEngine];
+            this.activeEngine = targetEngine;
+            this.status = {
+              ...this.status,
+              ready: true,
+              loading: false,
+              modelName: `${spec?.shortLabel ?? 'D-FINE'} (Activo · Cargando 366cl)`,
+              engineId: targetEngine,
+            };
+            this.emitStatus();
+            this.promoteToOnnxInBackground(targetEngine);
+          } else {
+            this.emitStatus();
+          }
+          return this.getStatus();
+        }
+      }
+
+      // If MediaPipe CDN wasn't reachable, load ONNX directly
+      if (isOnnxEngine) {
+        const ok = await this.initOnnxEngine(targetEngine);
+        if (ok) {
+          this.emitStatus();
+          return this.getStatus();
+        }
+      }
+
+      this.status = {
+        ready: false,
+        loading: false,
+        error:
+          'Sin conectividad para descargar pesos del modelo visual (D-FINE / EfficientDet WASM).',
+        modelName: MODEL_DISPLAY_NAMES[targetEngine],
+        engineId: targetEngine,
+        inferenceTimeMs: null,
+      };
+      this.emitStatus();
+      return this.getStatus();
+    })();
+
+    try {
+      return await this.initPromise;
+    } finally {
+      this.initPromise = null;
+    }
   }
 
   private async runOnnxOnSource(
@@ -508,10 +628,15 @@ export class DetectorService {
     scoreThreshold: number,
     sourceType: 'real_image' | 'real_video'
   ): Promise<{ detections: Detection[]; inferenceTimeMs: number }> {
-    const spec = ONNX_DETECTOR_MODELS[this.activeEngine];
+    const loadedOnnx = this.onnxEngineLoaded;
+    const spec = loadedOnnx ? ONNX_DETECTOR_MODELS[loadedOnnx] : null;
     if (!spec) {
-      throw new Error('Modelo ONNX no seleccionado.');
+      throw new Error('Modelo ONNX no cargado aún.');
     }
+
+    // Objects365 distributes probability across 366 classes, so valid indoor objects (Chair, Desk) score ~0.27..0.65
+    const effectiveThreshold =
+      loadedOnnx === 'dfine_s_obj365' ? Math.min(scoreThreshold, 0.27) : scoreThreshold;
 
     if (!this.onnxCanvas) {
       this.onnxCanvas = document.createElement('canvas');
@@ -526,7 +651,7 @@ export class DetectorService {
         : sourceEl.naturalHeight || sourceEl.height || 480;
 
     // Aspect-ratio-preserving downscale (never squashes portrait 9:16 mobile frames!)
-    const maxDim = this.activeEngine === 'dfine_s' ? 640 : 512;
+    const maxDim = loadedOnnx === 'dfine_s' || loadedOnnx === 'dfine_s_obj365' ? 576 : 512;
     const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
     this.onnxCanvas.width = Math.max(64, Math.round(srcW * scale));
     this.onnxCanvas.height = Math.max(64, Math.round(srcH * scale));
@@ -544,7 +669,7 @@ export class DetectorService {
         rgba,
         this.onnxCanvas.width,
         this.onnxCanvas.height,
-        scoreThreshold
+        effectiveThreshold
       );
       results = out.results ?? [];
       elapsed = out.elapsedMs;
@@ -553,7 +678,7 @@ export class DetectorService {
       const { RawImage } = await import('@huggingface/transformers');
       const rawImg = RawImage.fromCanvas(this.onnxCanvas);
       results = await this.onnxPipeline(rawImg, {
-        threshold: scoreThreshold,
+        threshold: effectiveThreshold,
         percentage: true,
       });
       elapsed = Math.round(performance.now() - start);
@@ -592,8 +717,14 @@ export class DetectorService {
       }
     }
 
-    if (ONNX_DETECTOR_MODELS[this.activeEngine] && (this.usingWorker || this.onnxPipeline)) {
-      return this.runOnnxOnSource(imageElement, scoreThreshold, 'real_image');
+    if (this.onnxEngineLoaded && (this.usingWorker || this.onnxPipeline)) {
+      try {
+        return await this.runOnnxOnSource(imageElement, scoreThreshold, 'real_image');
+      } catch {
+        // Fallback transparently to warm MediaPipe detector if ONNX frame fails
+        this.usingWorker = false;
+        this.onnxEngineLoaded = null;
+      }
     }
 
     if (!this.detector) {
@@ -626,8 +757,14 @@ export class DetectorService {
       throw new Error('El modelo visual no está inicializado.');
     }
 
-    if (ONNX_DETECTOR_MODELS[this.activeEngine] && (this.usingWorker || this.onnxPipeline)) {
-      return this.runOnnxOnSource(videoElement, scoreThreshold, 'real_video');
+    if (this.onnxEngineLoaded && (this.usingWorker || this.onnxPipeline)) {
+      try {
+        return await this.runOnnxOnSource(videoElement, scoreThreshold, 'real_video');
+      } catch {
+        // Fallback transparently to warm MediaPipe detector if ONNX frame fails
+        this.usingWorker = false;
+        this.onnxEngineLoaded = null;
+      }
     }
 
     if (!this.detector) {

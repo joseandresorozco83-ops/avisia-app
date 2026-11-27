@@ -214,18 +214,19 @@ export class MessagePolicy {
     streetMode = false,
     useClockFace = false
   ): ObstacleAlert | null {
-    // Prefer front_close inanimate hazards first; only alert on front_mid if within 3 steps (<= 2.6m)
+    // Prefer front_close inanimate hazards or people directly in the user's path; only alert on front_mid if within 3 steps (<= 2.4m)
+    const isPathBlocker = (d: Detection) => d.isInanimateObstacle || d.category === 'person';
     const frontObstacle =
       detections.find(
         (d) =>
-          d.isInanimateObstacle &&
+          isPathBlocker(d) &&
           d.confirmationStatus === 'confirmed' &&
           d.proximityZone === 'front_close' &&
           (d.estimatedMeters === undefined || d.estimatedMeters === null || d.estimatedMeters <= 2.6)
       ) ??
       detections.find(
         (d) =>
-          d.isInanimateObstacle &&
+          isPathBlocker(d) &&
           d.confirmationStatus === 'confirmed' &&
           d.proximityZone === 'front_mid' &&
           (d.estimatedMeters === undefined || d.estimatedMeters === null || d.estimatedMeters <= 2.4)

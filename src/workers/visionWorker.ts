@@ -53,6 +53,13 @@ type GenericPipelineFn = (
 const detectPipelines = new Map<string, { fn: GenericPipelineFn; backend: 'webgpu' | 'wasm' }>();
 const segmentPipelines = new Map<string, { fn: GenericPipelineFn; backend: 'webgpu' | 'wasm' }>();
 const depthPipelines = new Map<string, { fn: GenericPipelineFn; backend: 'webgpu' | 'wasm' }>();
+const inFlightPipelines = new Map<
+  string,
+  Promise<{ fn: GenericPipelineFn; backend: 'webgpu' | 'wasm' }>
+>();
+
+// Serialized execution queue: prevents concurrent session.run() / InferenceSession.create() collisions in ONNX Runtime Web
+let workerTaskQueue: Promise<void> = Promise.resolve();
 
 let smolVlmState: {
   kind: 'smolvlm';
@@ -85,36 +92,55 @@ async function getOrInitPipeline(
   task: string,
   modelId: string,
   webgpuDtype: string,
-  wasmDtype: string
+  wasmDtype: string,
+  preferWasm = false
 ): Promise<{ fn: GenericPipelineFn; backend: 'webgpu' | 'wasm' }> {
   const existing = cache.get(modelId);
   if (existing) return existing;
 
-  const preferred = await detectBackend();
-  const backends: Array<'webgpu' | 'wasm'> =
-    preferred === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
+  const inflightKey = `${task}:${modelId}`;
+  const pending = inFlightPipelines.get(inflightKey);
+  if (pending) return pending;
 
-  let lastErr: unknown = null;
-  const createPipe = pipeline as unknown as (
-    t: string,
-    m: string,
-    opts?: Record<string, unknown>
-  ) => Promise<GenericPipelineFn>;
+  const initPromise = (async () => {
+    const preferred = preferWasm ? 'wasm' : await detectBackend();
+    const backends: Array<'webgpu' | 'wasm'> =
+      preferred === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
 
-  for (const backend of backends) {
-    try {
-      const fn = await createPipe(task, modelId, {
-        device: backend,
-        dtype: backend === 'webgpu' ? webgpuDtype : wasmDtype,
-      });
-      const entry = { fn, backend };
-      cache.set(modelId, entry);
-      return entry;
-    } catch (err) {
-      lastErr = err;
+    let lastErr: unknown = null;
+    const createPipe = pipeline as unknown as (
+      t: string,
+      m: string,
+      opts?: Record<string, unknown>
+    ) => Promise<GenericPipelineFn>;
+
+    for (const backend of backends) {
+      try {
+        const fn = await createPipe(task, modelId, {
+          device: backend,
+          dtype: backend === 'webgpu' ? webgpuDtype : wasmDtype,
+        });
+        // Verify graph execution with a tiny 32x32 warmup image so broken mobile WebGPU shaders fall back to WASM immediately
+        if (task === 'object-detection') {
+          const dummy = new RawImage(new Uint8ClampedArray(32 * 32 * 4), 32, 32, 4);
+          await fn(dummy, { threshold: 0.5, percentage: true });
+        }
+        const entry = { fn, backend };
+        cache.set(modelId, entry);
+        return entry;
+      } catch (err) {
+        lastErr = err;
+      }
     }
+    throw lastErr instanceof Error ? lastErr : new Error(`Failed to initialize ${modelId}`);
+  })();
+
+  inFlightPipelines.set(inflightKey, initPromise);
+  try {
+    return await initPromise;
+  } finally {
+    inFlightPipelines.delete(inflightKey);
   }
-  throw lastErr instanceof Error ? lastErr : new Error(`Failed to initialize ${modelId}`);
 }
 
 async function runOfflineVlm(rawImg: RawImage, prompt: string): Promise<{ text: string; model: string }> {
@@ -188,16 +214,17 @@ async function runOfflineVlm(rawImg: RawImage, prompt: string): Promise<{ text: 
   return { text: rawCaption, model: 'ViT-GPT2 (WASM Offline)' };
 }
 
-self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
-  const req = event.data;
+async function handleWorkerRequest(req: WorkerRequest): Promise<void> {
   try {
     if (req.kind === 'init_detect') {
+      // Use compact q8 (10.8MB instead of 20.3MB fp16) and WASM SIMD for deterministic mobile D-FINE execution
       const entry = await getOrInitPipeline(
         detectPipelines,
         'object-detection',
         req.modelId,
-        'fp16',
-        'q8'
+        'q8',
+        'q8',
+        true
       );
       self.postMessage({ id: req.id, ok: true, backend: entry.backend });
       return;
@@ -208,14 +235,15 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         detectPipelines,
         'object-detection',
         req.modelId,
-        'fp16',
-        'q8'
+        'q8',
+        'q8',
+        true
       );
       const pixels = new Uint8ClampedArray(req.rgba!);
       const rawImg = new RawImage(pixels, req.width!, req.height!, 4);
       const start = performance.now();
       const results = await entry.fn(rawImg, {
-        threshold: req.threshold ?? 0.36,
+        threshold: req.threshold ?? 0.3,
         percentage: true,
       });
       const elapsedMs = Math.round(performance.now() - start);
@@ -235,7 +263,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         'image-segmentation',
         req.modelId,
         'q8',
-        'q8'
+        'q8',
+        true
       );
       self.postMessage({ id: req.id, ok: true, backend: entry.backend });
       return;
@@ -247,7 +276,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         'image-segmentation',
         req.modelId,
         'q8',
-        'q8'
+        'q8',
+        true
       );
       const pixels = new Uint8ClampedArray(req.rgba!);
       const rawImg = new RawImage(pixels, req.width!, req.height!, 4);
@@ -287,8 +317,9 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         depthPipelines,
         'depth-estimation',
         req.modelId,
-        'fp16',
-        'q8'
+        'q8',
+        'q8',
+        true
       );
       self.postMessage({ id: req.id, ok: true, backend: entry.backend });
       return;
@@ -299,8 +330,9 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         depthPipelines,
         'depth-estimation',
         req.modelId,
-        'fp16',
-        'q8'
+        'q8',
+        'q8',
+        true
       );
       const pixels = new Uint8ClampedArray(req.rgba!);
       const rawImg = new RawImage(pixels, req.width!, req.height!, 4);
@@ -380,4 +412,13 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       error: err instanceof Error ? err.message : 'Worker inference error',
     });
   }
+}
+
+self.onmessage = (event: MessageEvent<WorkerRequest>) => {
+  const req = event.data;
+  workerTaskQueue = workerTaskQueue
+    .then(() => handleWorkerRequest(req))
+    .catch(() => {
+      // Handled inside handleWorkerRequest
+    });
 };
