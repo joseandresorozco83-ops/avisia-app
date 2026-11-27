@@ -1,4 +1,5 @@
 import type { Detection } from '../types/avicia';
+import { cameraCalibrationService } from './CameraCalibrationService';
 
 export type ProximityLevel = 'clear' | 'caution' | 'danger';
 
@@ -273,13 +274,17 @@ export class DepthProximityService {
     let redExtinguisherPixels = 0;
     let centralSampledPixels = 0;
 
-    if (avgLuma >= 24) {
+    const poseCal = cameraCalibrationService.getCalibration();
+    const cameraTiltedUpAtWall = poseCal.pitchDownDeg < -2;
+
+    if (avgLuma >= 24 && !cameraTiltedUpAtWall) {
+      const floorStartFrac = Math.max(0.52, Math.min(0.74, poseCal.floorZoneStartPct / 100));
       for (let s = 0; s < 5; s++) {
         const sx1 = Math.floor((s * w) / 5) + 1;
         const sx2 = Math.floor(((s + 1) * w) / 5) - 1;
         const upperY1 = Math.floor(h * 0.24);
-        const upperY2 = Math.floor(h * 0.54);
-        const lowerY1 = Math.floor(h * 0.56);
+        const upperY2 = Math.floor(h * (floorStartFrac - 0.02));
+        const lowerY1 = Math.floor(h * floorStartFrac);
         const lowerY2 = Math.floor(h * 0.86);
 
         let uSum = 0;

@@ -34,7 +34,7 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       activePreset: 'indoor',
       detectorEngine: 'dfine_s_obj365',
       architecturalVisionEnabled: true,
-      archModelVariant: 'segformer_b1',
+      archModelVariant: 'segformer_b0',
       depthAnythingEnabled: true,
       audioVerbosity: 'essential',
       streetMode: false,

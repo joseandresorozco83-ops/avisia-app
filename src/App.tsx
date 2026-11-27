@@ -477,8 +477,11 @@ export function App() {
       normLabel.includes('escalera');
 
     const now = Date.now();
-    const perLabelCooldownMs = streetFeatures.audioVerbosity === 'essential' ? 8000 : 6500;
-    const globalMinGapMs = isCriticalHazard ? 2400 : 3800;
+    const prevBaseLabel = lastChimedObstacleRef.current?.split('-')[0] ?? '';
+    const isNewObjectClass = normLabel !== prevBaseLabel;
+    const perLabelCooldownMs = streetFeatures.audioVerbosity === 'essential' ? 5200 : 4500;
+    // Speak brand-new objects within 0.9s (no 3-second pause needed between steps!)
+    const globalMinGapMs = isNewObjectClass ? 900 : isCriticalHazard ? 1250 : 1800;
 
     // Resolve live distance & clock for Parsimonious Delta Narration
     const matchedDet = realDetections.find(
@@ -584,17 +587,19 @@ export function App() {
     }
 
     const now = Date.now();
-    const cooldownMs =
-      streetFeatures.audioVerbosity === 'essential'
-        ? 7000
-        : streetFeatures.streetMode
-          ? 4200
-          : 6000;
-    if (now - lastAutoSpokenAtRef.current < cooldownMs) return;
-
     const topLabel = realDetections[0]?.labelEs.toLowerCase().trim() ?? '';
     const lastForLabel = topLabel ? (lastSpokenLabelMapRef.current.get(topLabel) ?? 0) : 0;
-    if (topLabel && now - lastForLabel < 12000) return;
+    const isBrandNewLabel = Boolean(topLabel) && now - lastForLabel >= 7500;
+    const cooldownMs = isBrandNewLabel
+      ? 1100
+      : streetFeatures.audioVerbosity === 'essential'
+        ? 4200
+        : streetFeatures.streetMode
+          ? 2600
+          : 3500;
+    if (now - lastAutoSpokenAtRef.current < cooldownMs) return;
+
+    if (topLabel && now - lastForLabel < 6500) return;
 
     const lastMsg = lastSpokenLiveMsgRef.current;
     if (lastMsg && lastMsg.text === evaluation.generatedMessage && now - lastMsg.at < 12000) {
@@ -1266,7 +1271,7 @@ export function App() {
                       AVISIA
                     </h1>
                     <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                      v5.1.0 Neuronal
+                      v5.2.0 Neuronal
                     </span>
                   </div>
                   <p className="text-[11px] text-[#bbc9cd] leading-none mt-0.5">
@@ -1425,7 +1430,7 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-bold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[9px] font-bold text-[#8aebff]">
-                          v5.1.0
+                          v5.2.0
                         </span>
                         {!isOnline && (
                           <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 font-mono text-[9px] font-bold text-amber-300">

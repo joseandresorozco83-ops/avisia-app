@@ -24,7 +24,12 @@ import {
   TemporalTrackerService,
 } from '../TemporalTrackerService';
 import { MessagePolicy, shouldSpeakDeltaHazard } from '../MessagePolicy';
-import { CATEGORY_MAP, isPlausibleDetection } from '../DetectorService';
+import {
+  CATEGORY_MAP,
+  disambiguateIndoorClass,
+  isPlausibleDetection,
+} from '../DetectorService';
+import { CameraCalibrationService } from '../CameraCalibrationService';
 import { parseArchitecturalSegments } from '../ArchitecturalSegmenterService';
 import { computeStixelCorridor } from '../DoorAndStixelService';
 import { conversationService } from '../ConversationService';
@@ -706,5 +711,63 @@ describe('AVISIA v5.1 Field-Test Regressions — Office Screenshots #1 to #10', 
     policy.resetHistory();
     const evalFar = policy.evaluateRealDetections([distantTable], 'C01', 9000, false, true);
     expect(evalFar.obstacleAlert).toBeNull();
+  });
+
+  it('self-calibrates 3D camera height, orientation, pitch tilt, and forward heading and disambiguates Pizarra/Refrigerador, Cortina/Puerta, and Mesa/Mueble (v5.2)', () => {
+    const calSvc = new CameraCalibrationService();
+
+    // 1. Upright vertical phone pointing slightly down (+12 deg -> beta = 78 deg) along heading 90 deg
+    const upright = calSvc.updateFromDeviceOrientation(90, 78, 2);
+    expect(upright.posture).toBe('vertical');
+    expect(upright.pitchDownDeg).toBeCloseTo(12, 0);
+    expect(upright.aimingForward).toBe(true);
+    expect(upright.autoRegulated).toBe(true);
+    expect(upright.correctionPrompt).toBeNull();
+
+    // 2. Self-calibrates camera height above floor (H_cam) from a reference chair/person on the floor
+    const afterVisual = calSvc.updateFromVisualScene({
+      videoWidth: 720,
+      videoHeight: 1280,
+      referenceObjects: [
+        {
+          bbox: { x: 35, y: 38, width: 28, height: 42 },
+          typicalHeightMeters: 0.85,
+          confidence: 0.78,
+          isFloorContact: true,
+        },
+      ],
+    });
+    expect(afterVisual.cameraHeightMeters).toBeGreaterThanOrEqual(0.85);
+    expect(afterVisual.cameraHeightMeters).toBeLessThanOrEqual(1.75);
+
+    // 3. Tilted excessively toward ceiling (beta = 120 -> pitchDown = -30 deg) -> requests user to lower camera
+    for (let i = 0; i < 6; i++) {
+      calSvc.updateFromDeviceOrientation(90, 125, 0);
+    }
+    const ceilingCal = calSvc.getCalibration();
+    expect(ceilingCal.autoRegulated).toBe(false);
+    expect(ceilingCal.correctionPrompt).toContain('arriba');
+
+    // 4. Disambiguates wall-mounted whiteboard ("refrigerator" above floor / wide board) as "blackboard/whiteboard" ("Pizarra")
+    calSvc.reset();
+    expect(
+      disambiguateIndoorClass('refrigerator', 0.58, { x: 20, y: 12, width: 55, height: 38 })
+    ).toBe('blackboard/whiteboard');
+
+    // 5. Disambiguates horizontal waist-high "cabinet/shelf" as "desk" ("Escritorio") instead of "Mueble"
+    expect(
+      disambiguateIndoorClass('cabinet/shelf', 0.52, { x: 18, y: 42, width: 56, height: 38 })
+    ).toBe('desk');
+
+    // 6. Disambiguates "Cortina" vs "Puerta" in SegFormer when both fire on a curtained opening
+    const w = 40;
+    const h = 40;
+    const curtainVsDoor = parseArchitecturalSegments([
+      { label: 'curtain', mask: makeRectMask(w, h, 10, 4, 30, 34) },
+      { label: 'door', mask: makeRectMask(w, h, 12, 6, 28, 32) },
+      { label: 'floor', mask: makeRectMask(w, h, 4, 30, 36, 39) },
+    ]);
+    expect(curtainVsDoor.detectedLabelsEs).toContain('Cortina');
+    expect(curtainVsDoor.detectedLabelsEs).not.toContain('Puerta');
   });
 });

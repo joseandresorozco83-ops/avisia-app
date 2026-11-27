@@ -58,9 +58,6 @@ const inFlightPipelines = new Map<
   Promise<{ fn: GenericPipelineFn; backend: 'webgpu' | 'wasm' }>
 >();
 
-// Serialized execution queue: prevents concurrent session.run() / InferenceSession.create() collisions in ONNX Runtime Web
-let workerTaskQueue: Promise<void> = Promise.resolve();
-
 let smolVlmState: {
   kind: 'smolvlm';
   processor: unknown;
@@ -414,11 +411,74 @@ async function handleWorkerRequest(req: WorkerRequest): Promise<void> {
   }
 }
 
+// Priority Latest-Slot Scheduler:
+// - Object detection (detect / init_detect) ALWAYS runs with highest priority (Priority 1)
+// - Stale queued segment/depth frames are overwritten by newer frames so backlog NEVER exceeds 1 frame!
+let workerBusy = false;
+let pendingDetectReq: WorkerRequest | null = null;
+let pendingDepthReq: WorkerRequest | null = null;
+let pendingSegmentReq: WorkerRequest | null = null;
+const pendingInitReqs: WorkerRequest[] = [];
+
+function pumpWorkerScheduler(): void {
+  if (workerBusy) return;
+  const nextReq =
+    pendingDetectReq ??
+    pendingInitReqs.shift() ??
+    pendingDepthReq ??
+    pendingSegmentReq ??
+    null;
+  if (!nextReq) return;
+
+  if (nextReq === pendingDetectReq) pendingDetectReq = null;
+  else if (nextReq === pendingDepthReq) pendingDepthReq = null;
+  else if (nextReq === pendingSegmentReq) pendingSegmentReq = null;
+
+  workerBusy = true;
+  void handleWorkerRequest(nextReq).finally(() => {
+    workerBusy = false;
+    pumpWorkerScheduler();
+  });
+}
+
 self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const req = event.data;
-  workerTaskQueue = workerTaskQueue
-    .then(() => handleWorkerRequest(req))
-    .catch(() => {
-      // Handled inside handleWorkerRequest
-    });
+  if (req.kind === 'detect') {
+    if (pendingDetectReq) {
+      // Drop superseded detect frame cleanly so caller doesn't wait on old frame
+      self.postMessage({
+        id: pendingDetectReq.id,
+        ok: true,
+        backend: 'wasm',
+        elapsedMs: 0,
+        results: [],
+      });
+    }
+    pendingDetectReq = req;
+  } else if (req.kind === 'depth') {
+    if (pendingDepthReq) {
+      self.postMessage({
+        id: pendingDepthReq.id,
+        ok: true,
+        backend: 'wasm',
+        elapsedMs: 0,
+        grid: null,
+      });
+    }
+    pendingDepthReq = req;
+  } else if (req.kind === 'segment') {
+    if (pendingSegmentReq) {
+      self.postMessage({
+        id: pendingSegmentReq.id,
+        ok: true,
+        backend: 'wasm',
+        elapsedMs: 0,
+        segments: [],
+      });
+    }
+    pendingSegmentReq = req;
+  } else {
+    pendingInitReqs.push(req);
+  }
+  pumpWorkerScheduler();
 };

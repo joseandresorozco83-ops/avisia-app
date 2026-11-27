@@ -44,8 +44,8 @@ export function shouldSpeakDeltaHazard(
   if (
     prev.meters !== null &&
     next.meters !== null &&
-    prev.meters - next.meters >= 0.6 &&
-    now - prev.spokenAt >= 2600
+    prev.meters - next.meters >= 0.45 &&
+    now - prev.spokenAt >= 1200
   ) {
     return true;
   }

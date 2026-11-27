@@ -372,7 +372,7 @@ describe('AVISIA v3.0 Assistive Vision & Anti-False-Alarm Suite', () => {
     };
 
     const indoor = applyAppPreset(base, 'indoor');
-    expect(indoor.archModelVariant).toBe('segformer_b1');
+    expect(indoor.archModelVariant).toBe('segformer_b0');
     expect(indoor.audioVerbosity).toBe('essential');
     expect(indoor.detectorEngine).toBe('dfine_s_obj365');
     expect(indoor.soundOnlyMode).toBe(false);

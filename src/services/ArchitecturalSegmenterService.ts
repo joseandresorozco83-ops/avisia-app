@@ -82,10 +82,18 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
   curtain: {
     labelEs: 'Cortina',
     category: 'obstacle',
-    priority: 89,
+    priority: 95,
     isInanimateObstacle: true,
-    minAreaPct: 4.0,
+    minAreaPct: 3.2,
     typicalHeightMeters: 2.1,
+  },
+  blind: {
+    labelEs: 'Cortina',
+    category: 'obstacle',
+    priority: 95,
+    isInanimateObstacle: true,
+    minAreaPct: 3.2,
+    typicalHeightMeters: 1.85,
   },
   stairs: {
     labelEs: 'Escaleras',
@@ -426,7 +434,6 @@ const ARCH_CLASS_MAP: Record<string, ArchClassConfig> = {
 };
 
 const BACKGROUND_LANDMARK_LABELS = new Set([
-  'curtain',
   'cabinet',
   'wardrobe',
   'chest of drawers',
@@ -577,14 +584,27 @@ export function parseArchitecturalSegments(
 
     const cfg = ARCH_CLASS_MAP[labelRaw];
     if (!cfg || areaPct < cfg.minAreaPct) continue;
-    if (seenLabels.has(cfg.labelEs)) continue;
-    seenLabels.add(cfg.labelEs);
+
+    // Disambiguate "Mesa / Escritorio" vs "Mueble": a wide horizontal cabinet/drawers region in the lower half is a table/desk
+    let resolvedLabelEs = cfg.labelEs;
+    let resolvedPriority = cfg.priority;
+    if (
+      (labelRaw === 'cabinet' || labelRaw === 'chest of drawers') &&
+      bw >= bh * 1.05 &&
+      by >= 30
+    ) {
+      resolvedLabelEs = 'Escritorio';
+      resolvedPriority = 90;
+    }
+
+    if (seenLabels.has(resolvedLabelEs)) continue;
+    seenLabels.add(resolvedLabelEs);
 
     const centerX = bx + bw / 2;
     const clockPosition = computeClockPosition(centerX);
-    const estimatedMeters = estimatePinholeMeters(bh, cfg.typicalHeightMeters);
-    const centerOverlapWidth = Math.max(0, Math.min(bx + bw, 66) - Math.max(bx, 34));
-    const isCentered = (centerX >= 30 && centerX <= 70) || centerOverlapWidth >= 14;
+    const estimatedMeters = estimatePinholeMeters(bh, cfg.typicalHeightMeters, bw, by + bh);
+    const centerOverlapWidth = Math.max(0, Math.min(bx + bw, 68) - Math.max(bx, 32));
+    const isCentered = (centerX >= 28 && centerX <= 72) || centerOverlapWidth >= 12;
 
     let proximityZone: Detection['proximityZone'] = 'side';
     if (isCentered) {
@@ -595,10 +615,12 @@ export function parseArchitecturalSegments(
       }
     }
 
-    // Background wall/room items (curtains, shelves, cabinets) are only urgent obstacles when very close
+    // Background wall/room items (shelves, cabinets) are only urgent obstacles when very close; curtains/doors are always active
     const effectiveObstacle =
       cfg.isInanimateObstacle &&
-      (!BACKGROUND_LANDMARK_LABELS.has(labelRaw) || proximityZone === 'front_close');
+      (resolvedLabelEs === 'Escritorio' ||
+        !BACKGROUND_LANDMARK_LABELS.has(labelRaw) ||
+        proximityZone === 'front_close');
 
     if (effectiveObstacle && corrPct >= 22 && isCentered) {
       corridorBlockedByArch = true;
@@ -607,12 +629,12 @@ export function parseArchitecturalSegments(
     detections.push({
       id: `arch-${labelRaw.replace(/\s+/g, '_')}-${sIdx}-${now}`,
       category: cfg.category,
-      labelEs: cfg.labelEs,
+      labelEs: resolvedLabelEs,
       source: 'real_video',
       confidence: Math.min(0.95, Math.max(0.62, 0.58 + areaPct / 60)),
       bbox: { x: bx, y: by, width: bw, height: bh },
       confirmationStatus: 'confirmed',
-      priority: cfg.priority,
+      priority: resolvedPriority,
       firstSeenAt: now,
       lastSeenAt: now,
       isNew: true,
@@ -622,6 +644,25 @@ export function parseArchitecturalSegments(
       clockPosition,
       doorState: labelRaw === 'door' || labelRaw === 'screen door' ? 'unknown' : undefined,
     });
+  }
+
+  // Disambiguate "Cortina" vs "Puerta": when SegFormer segments a window/doorway curtain ("curtain"/"blind")
+  // and also fires a spurious "door" mask on the same vertical frame, keep "Cortina" and suppress the duplicate "Puerta"!
+  const curtainDets = detections.filter((d) => d.labelEs === 'Cortina');
+  if (curtainDets.length > 0) {
+    for (let i = detections.length - 1; i >= 0; i--) {
+      const d = detections[i];
+      if (!d.labelEs.startsWith('Puerta')) continue;
+      const dCx = d.bbox.x + d.bbox.width / 2;
+      const overlapsCurtain = curtainDets.some((c) => {
+        const cCx = c.bbox.x + c.bbox.width / 2;
+        return Math.abs(cCx - dCx) <= 24 && (c.confidence ?? 0) + 0.05 >= (d.confidence ?? 0);
+      });
+      if (overlapsCurtain) {
+        detections.splice(i, 1);
+        seenLabels.delete(d.labelEs);
+      }
+    }
   }
 
   // Compute bottom-to-top continuous floor reach & mid-band wall/door-flank occupancy per sector (0..4)
@@ -673,7 +714,14 @@ export function parseArchitecturalSegments(
   // while BOTH left and right flanking sectors have wall OR open door-leaf structure (>= 30%)!
   let openDoorwayDetected = false;
   let openDoorwaySectorIdx: number | null = null;
+  // Never hallucinate an open doorway if a curtain is hanging across the center corridor
+  const centerBlockedByCurtain = curtainDets.some((c) => {
+    const cx = c.bbox.x + c.bbox.width / 2;
+    return cx >= 26 && cx <= 74;
+  });
+
   for (const s of [2, 1, 3]) {
+    if (centerBlockedByCurtain) break;
     const leftFlank = Math.max(sectorFlankPct[s - 1], s >= 2 ? sectorFlankPct[0] : 0);
     const rightFlank = Math.max(sectorFlankPct[s + 1], s <= 2 ? sectorFlankPct[4] : 0);
     const hasAtLeastOneWall =
@@ -921,7 +969,7 @@ export class ArchitecturalSegmenterService {
         : source.naturalHeight || source.height || 480;
     if (!srcW || !srcH) return null;
 
-    const maxDim = 320;
+    const maxDim = 256;
     const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
     const w = Math.max(96, Math.round(srcW * scale));
     const h = Math.max(96, Math.round(srcH * scale));

@@ -1,5 +1,6 @@
 import { FilesetResolver, ObjectDetector, type Detection as MpDetection } from '@mediapipe/tasks-vision';
 import type { Detection, DetectorEngineId, DetectorStatus, ObjectCategory } from '../types/avicia';
+import { cameraCalibrationService } from './CameraCalibrationService';
 import { visionWorkerClient, type WorkerDetectionItem } from './VisionWorkerClient';
 
 export interface ClassMeta {
@@ -234,6 +235,47 @@ export function isPlausibleDetection(
   }
 
   return true;
+}
+
+/**
+ * Resolves systematic indoor class confusions using 3D camera calibration (horizon & floor contact)
+ * and aspect ratio geometry:
+ * 1) "Pizarra" vs "Refrigerador": COCO has no whiteboard class and misclassifies wall-mounted
+ *    whiteboards as "refrigerator". Any "refrigerator" mounted above the floor contact zone
+ *    (bottomY < floorZone) or with wide horizontal/square aspect ratio (width >= height * 0.82)
+ *    is reclassified as "blackboard/whiteboard" ("Pizarra").
+ * 2) "Mesa / Escritorio" vs "Mueble": horizontal waist-level surfaces classified as "cabinet/shelf"
+ *    (width >= height * 0.95 and y >= 32%) are reclassified as "desk" ("Escritorio").
+ */
+export function disambiguateIndoorClass(
+  rawCategoryName: string,
+  score: number,
+  bbox: { x: number; y: number; width: number; height: number }
+): string | null {
+  const rawName = (rawCategoryName || '').toLowerCase().trim();
+  if (!rawName) return null;
+
+  if (rawName === 'refrigerator') {
+    const isWallMounted = cameraCalibrationService.isWallMountedAboveFloor(bbox);
+    const isWideBoardShape = bbox.width >= bbox.height * 0.82;
+    if (isWallMounted || isWideBoardShape) {
+      // Wall-mounted white panel or wide rectangle in indoor scene is a Pizarra (whiteboard), not a fridge!
+      return score >= 0.36 ? 'blackboard/whiteboard' : null;
+    }
+    // Even for tall floor-standing shapes, require strong confidence for refrigerator
+    if (score < 0.66) {
+      return 'blackboard/whiteboard';
+    }
+  }
+
+  if (rawName === 'cabinet/shelf') {
+    // A wide waist-high object in the lower half of the frame is a table/desk ("Escritorio"), not a tall wall cabinet ("Mueble")
+    if (bbox.width >= bbox.height * 0.95 && bbox.y >= 30) {
+      return 'desk';
+    }
+  }
+
+  return rawName;
 }
 
 const MEDIAPIPE_WASM_URL =
@@ -818,6 +860,7 @@ export class DetectorService {
 
       // Fuse fresh background Objects365 detections (<= 1350ms old) with instant MediaPipe detections
       const now = Date.now();
+      let combinedList = fastDetections;
       if (this.latestOnnxDetections.length > 0 && now - this.latestOnnxAt <= 1350) {
         const merged = [...this.latestOnnxDetections];
         for (const mpDet of fastDetections) {
@@ -830,16 +873,60 @@ export class DetectorService {
             if (inter <= 0) return false;
             const areaA = Math.max(1, ox.bbox.width * ox.bbox.height);
             const areaB = Math.max(1, mpDet.bbox.width * mpDet.bbox.height);
-            return inter / (areaA + areaB - inter) >= 0.32;
+            return inter / (areaA + areaB - inter) >= 0.3;
           });
           if (!overlapsExisting) {
             merged.push(mpDet);
           }
         }
-        return { detections: merged.slice(0, 12), inferenceTimeMs: elapsed };
+
+        // Cross-class semantic disambiguation:
+        // - If "Mesa" or "Escritorio" is present, suppress overlapping "Mueble o estante"
+        // - If "Pizarra" is present, suppress overlapping "Refrigerador"
+        const tables = merged.filter(
+          (d) => d.labelEs === 'Mesa' || d.labelEs === 'Escritorio' || d.labelEs === 'Mesa baja'
+        );
+        const whiteboards = merged.filter((d) => d.labelEs === 'Pizarra');
+        combinedList = merged
+          .filter((d) => {
+            if (d.labelEs.startsWith('Mueble') && tables.length > 0) {
+              const cx = d.bbox.x + d.bbox.width / 2;
+              if (
+                tables.some(
+                  (t) => Math.abs(t.bbox.x + t.bbox.width / 2 - cx) <= 24
+                )
+              ) {
+                return false;
+              }
+            }
+            if (d.labelEs === 'Refrigerador' && whiteboards.length > 0) {
+              return false;
+            }
+            return true;
+          })
+          .slice(0, 12);
       }
 
-      return { detections: fastDetections, inferenceTimeMs: elapsed };
+      // Self-calibrate camera height above floor (H_cam) & vertical/horizontal orientation from confirmed floor objects
+      cameraCalibrationService.updateFromVisualScene({
+        videoWidth: width,
+        videoHeight: height,
+        referenceObjects: combinedList.map((d) => {
+          const meta = Object.values(CATEGORY_MAP).find((m) => m.labelEs === d.labelEs);
+          return {
+            bbox: d.bbox,
+            typicalHeightMeters: meta?.typicalHeightMeters ?? 0.85,
+            confidence: d.confidence,
+            isFloorContact:
+              d.category === 'person' ||
+              d.category === 'chair' ||
+              d.labelEs === 'Escritorio' ||
+              d.labelEs === 'Mesa',
+          };
+        }),
+      });
+
+      return { detections: combinedList, inferenceTimeMs: elapsed };
     }
 
     if (this.onnxEngineLoaded && (this.usingWorker || this.onnxPipeline)) {
@@ -857,7 +944,8 @@ export class DetectorService {
     now: number,
     source: 'real_image' | 'real_video'
   ): Detection {
-    const rawName = (rawCategoryName || '').toLowerCase().trim();
+    const disambiguated = disambiguateIndoorClass(rawCategoryName, score, bbox);
+    const rawName = (disambiguated ?? rawCategoryName ?? '').toLowerCase().trim();
     const known = CATEGORY_MAP[rawName];
     const labelEs = known ? known.labelEs : rawName;
     const category: ObjectCategory = known ? known.category : 'unknown';
@@ -873,11 +961,12 @@ export class DetectorService {
     const coversCenterPath = centerOverlapWidth >= 10;
     const isCentered = (centerX >= 25 && centerX <= 75) || coversCenterPath;
 
-    const estimatedMeters = estimatePinholeMeters(
-      bbox.height,
+    const isFloorContact =
+      Boolean(known?.isInanimateObstacle) || category === 'person' || category === 'chair';
+    const estimatedMeters = cameraCalibrationService.estimateCalibratedMeters(
+      bbox,
       typicalHeight,
-      bbox.width,
-      bottomY
+      isFloorContact
     );
     const clockPosition = computeClockPosition(centerX);
 

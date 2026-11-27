@@ -15,6 +15,10 @@ import {
   Banknote,
 } from 'lucide-react';
 import { cameraService, type CameraDeviceInfo } from '../services/CameraService';
+import {
+  cameraCalibrationService,
+  type CameraPoseCalibration,
+} from '../services/CameraCalibrationService';
 import { detectorService } from '../services/DetectorService';
 import {
   archTemporalTrackerService,
@@ -140,6 +144,9 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
   const [findMatchedText, setFindMatchedText] = useState<string>('Mueve la cámara despacio para buscar.');
   const [lightToneOn, setLightToneOn] = useState<boolean>(false);
   const [tiltWarning, setTiltWarning] = useState<string | null>(null);
+  const [poseCalibration, setPoseCalibration] = useState<CameraPoseCalibration>(() =>
+    cameraCalibrationService.getCalibration()
+  );
 
   const depthSummaryRef = useRef<DepthMapSummary | null>(null);
   const archSummaryRef = useRef<ArchitecturalAnalysis | null>(null);
@@ -262,7 +269,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     }
   }, [detectorEngine, threshold]);
 
-  // Device orientation tilt ergonomics guard for blind users
+  // Self-regulating 3D camera pose calibration (height above floor, vertical/horizontal, pitch tilt & forward heading)
   useEffect(() => {
     if (!cameraActive || typeof window === 'undefined') {
       setTiltWarning(null);
@@ -270,24 +277,20 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     }
 
     const onOrientation = (event: DeviceOrientationEvent) => {
-      const beta = event.beta;
-      if (beta === null || beta === undefined || !Number.isFinite(beta)) return;
-      // Upright forward-facing phone has beta ~ 60..115 degrees
-      if (beta > 125) {
-        const msg = 'Teléfono muy inclinado hacia arriba. Bájalo un poco para ver el camino.';
-        setTiltWarning(msg);
+      const cal = cameraCalibrationService.updateFromDeviceOrientation(
+        event.alpha,
+        event.beta,
+        event.gamma
+      );
+      setPoseCalibration(cal);
+
+      if (cal.correctionPrompt) {
+        setTiltWarning(cal.correctionPrompt);
         const now = Date.now();
-        if (now - lastTiltWarnAtRef.current > 14000) {
+        if (now - lastTiltWarnAtRef.current > 15000) {
           lastTiltWarnAtRef.current = now;
           speechService.vibratePattern('caution');
-        }
-      } else if (beta < 26 && beta > -20) {
-        const msg = 'Teléfono apuntando muy al suelo. Levántalo un poco hacia el frente.';
-        setTiltWarning(msg);
-        const now = Date.now();
-        if (now - lastTiltWarnAtRef.current > 14000) {
-          lastTiltWarnAtRef.current = now;
-          speechService.vibratePattern('caution');
+          speakFeedback(cal.correctionPrompt);
         }
       } else {
         setTiltWarning(null);
@@ -1003,11 +1006,44 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               existingLabels.add(ad.labelEs.toLowerCase());
             }
           }
+
+          // Cross-modal semantic disambiguation:
+          // 1) "Cortina" vs "Puerta": when a curtain is present, suppress overlapping door labels
+          // 2) "Mesa / Escritorio" vs "Mueble": when a table/desk is present, suppress overlapping "Mueble" / "Armario o mueble"
+          // 3) "Pizarra" vs "Refrigerador": when a whiteboard is present, suppress "Refrigerador"
+          const hasCurtain = rawMerged.some((d) => d.labelEs === 'Cortina');
+          const hasTableOrDesk = rawMerged.some(
+            (d) => d.labelEs === 'Mesa' || d.labelEs === 'Escritorio' || d.labelEs === 'Mesa baja'
+          );
+          const hasWhiteboard = rawMerged.some((d) => d.labelEs === 'Pizarra');
+          const disambiguatedMerged = rawMerged.filter((d) => {
+            if (hasCurtain && d.labelEs.startsWith('Puerta')) return false;
+            if (
+              hasTableOrDesk &&
+              (d.labelEs === 'Mueble' ||
+                d.labelEs === 'Mueble o estante' ||
+                d.labelEs === 'Armario o mueble')
+            ) {
+              return false;
+            }
+            if (hasWhiteboard && d.labelEs === 'Refrigerador') return false;
+            return true;
+          });
+
           const mergedBaseDetections = enrichDoorsWithDepth(
-            rawMerged,
+            disambiguatedMerged,
             archSummaryRef.current,
             depthSummaryRef.current
           );
+
+          // Update self-regulated camera height & visual horizon calibration
+          const updatedCal = cameraCalibrationService.updateFromVisualScene({
+            videoWidth: videoRef.current.videoWidth || 640,
+            videoHeight: videoRef.current.videoHeight || 480,
+            walkableCorridorPct: archSummaryRef.current?.walkableCorridorPct ?? null,
+            sectorFloorReachPct: archSummaryRef.current?.sectorFloorReachPct ?? null,
+          });
+          setPoseCalibration(updatedCal);
 
           const prox = corridorSensorOn
             ? depthProximityService.analyzeVideoCorridor(videoRef.current, mergedBaseDetections)
@@ -1192,7 +1228,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           } else {
             clearPathStreakRef.current = 0;
           }
-          const isClearConfirmed = clearPathStreakRef.current >= 3;
+          const isClearConfirmed = clearPathStreakRef.current >= 2;
           setPathClearConfirmed(isClearConfirmed);
           onPathClearChange?.(isClearConfirmed);
 
@@ -1232,14 +1268,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       };
 
       void runFrame();
-      const intervalMs =
-        detectorEngine === 'dfine_s'
-          ? 460
-          : detectorEngine === 'dfine_n' || detectorEngine === 'yolov10n'
-            ? 380
-            : fastMode
-              ? 240
-              : 460;
+      // Fast 200ms (~5 FPS) real-time cadence so the user can walk naturally without pausing 3s per step
+      const intervalMs = fastMode ? 180 : 210;
       loopRef.current = window.setInterval(() => {
         void runFrame();
       }, intervalMs);
@@ -1464,7 +1494,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v5.1.0 · Cámara Asistiva
+              AVISIA v5.2.0 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.
@@ -1476,13 +1506,16 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         )}
 
         {cameraActive && (
-          <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none gap-1.5">
-            <span className="px-2 py-0.5 rounded-full bg-slate-950/80 border border-emerald-400/40 text-[10px] font-semibold text-emerald-300 flex items-center gap-1 truncate max-w-[65%]">
+          <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none gap-1">
+            <span className="px-2 py-0.5 rounded-full bg-slate-950/80 border border-emerald-400/40 text-[10px] font-semibold text-emerald-300 flex items-center gap-1 truncate max-w-[42%]">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
               <span className="truncate">{modelBadge.split(' ')[0]}</span>
             </span>
+            <span className="px-2 py-0.5 rounded-full bg-slate-950/80 border border-cyan-400/35 text-[9px] font-mono text-cyan-200 truncate">
+              {poseCalibration.statusBadge}
+            </span>
             <span className="px-2 py-0.5 rounded-full bg-slate-950/80 border border-white/15 text-[10px] font-medium text-slate-200 shrink-0">
-              {liveCount} {liveCount === 1 ? 'objeto' : 'objetos'}
+              {liveCount} {liveCount === 1 ? 'obj' : 'objs'}
             </span>
           </div>
         )}
