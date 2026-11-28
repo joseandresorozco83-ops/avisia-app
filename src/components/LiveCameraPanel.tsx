@@ -14,7 +14,11 @@ import {
   Loader2,
   Banknote,
 } from 'lucide-react';
-import { cameraService, type CameraDeviceInfo } from '../services/CameraService';
+import {
+  cameraService,
+  isMobileSmartphoneDevice,
+  type CameraDeviceInfo,
+} from '../services/CameraService';
 import {
   cameraCalibrationService,
   type CameraPoseCalibration,
@@ -468,7 +472,9 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     try {
       const list = await cameraService.listCameras();
       setDevices(list);
-      if (list.length > 0 && !selectedDeviceId) {
+      // On a physical smartphone, leave selectedDeviceId empty on initial mount so getUserMedia
+      // uses facingMode: { ideal: 'environment' } (rear camera) instead of picking devices[0] (front selfie camera)!
+      if (list.length > 0 && !selectedDeviceId && !isMobileSmartphoneDevice()) {
         const preferred = cameraService.findPreferredCamera(list);
         if (preferred) {
           setSelectedDeviceId(preferred.deviceId);
@@ -1608,7 +1614,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v5.6.0 · Cámara Asistiva
+              AVISIA v5.7.0 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.

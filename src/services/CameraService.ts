@@ -33,6 +33,27 @@ export function isMobileBridgeCameraLabel(label: string): boolean {
 }
 
 /**
+ * Detects whether a camera label corresponds to a smartphone's rear/environment camera.
+ */
+export function isRearEnvironmentCameraLabel(label: string): boolean {
+  return /back|rear|trasera|posterior|environment|0,\s*facing\s*back/i.test((label || '').trim());
+}
+
+/**
+ * Detects whether the current browser is running directly on a physical smartphone/tablet
+ * (either inside the native Android APK or via Mobile Chrome / Safari on the phone).
+ */
+export function isMobileSmartphoneDevice(): boolean {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) return true;
+  return (
+    window.innerWidth < 1024 &&
+    ('ontouchstart' in window || (navigator.maxTouchPoints ?? 0) > 0)
+  );
+}
+
+/**
  * Pure, unit-testable pillarbox/letterbox viewport detector from a downsampled RGBA probe grid.
  * When Iriun Webcam streams a vertical (9:16) smartphone camera inside a 1280x720 (16:9) desktop
  * video container, it pads the left and right sides with solid black pillarbox bars.
@@ -181,12 +202,16 @@ export class CameraService {
 
   /**
    * Selects the best default camera for the live demo:
-   * automatically prioritizes Iriun Webcam / DroidCam / smartphone virtual cameras over built-in laptop webcams.
+   * 1) On a laptop/PC: automatically prioritizes Iriun Webcam / DroidCam over built-in laptop webcams.
+   * 2) On a smartphone (Mobile Web or APK): automatically prioritizes the rear/environment camera over `devices[0]` (front selfie camera).
    */
   findPreferredCamera(devices: CameraDeviceInfo[]): CameraDeviceInfo | null {
     if (!devices || devices.length === 0) return null;
     const mobileBridge = devices.find((d) => isMobileBridgeCameraLabel(d.label));
-    return mobileBridge ?? devices[0];
+    if (mobileBridge) return mobileBridge;
+    const rearCam = devices.find((d) => isRearEnvironmentCameraLabel(d.label));
+    if (rearCam) return rearCam;
+    return devices[0];
   }
 
   async listCameras(): Promise<CameraDeviceInfo[]> {
@@ -212,8 +237,9 @@ export class CameraService {
       throw new Error('La API de cámara (getUserMedia) no es compatible con este navegador.');
     }
 
+    const onPhysicalPhone = isMobileSmartphoneDevice();
     let targetDeviceId = deviceId;
-    if (!targetDeviceId) {
+    if (!targetDeviceId && !onPhysicalPhone) {
       try {
         const list = await this.listCameras();
         const preferred = this.findPreferredCamera(list);
@@ -234,7 +260,7 @@ export class CameraService {
             frameRate: { ideal: 30 },
           }
         : {
-            facingMode: 'environment',
+            facingMode: { ideal: 'environment' },
             width: { ideal: 1280 },
             height: { ideal: 720 },
             frameRate: { ideal: 30 },
@@ -245,7 +271,7 @@ export class CameraService {
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     this.stream = stream;
 
-    // Inspect active video track label to detect Iriun Webcam even on initial start
+    // Inspect active video track label to detect Iriun Webcam or native mobile rear camera
     const track = stream.getVideoTracks?.()[0];
     let trackLabel = track?.label || '';
     if (!trackLabel && targetDeviceId) {
@@ -253,8 +279,8 @@ export class CameraService {
       trackLabel = list.find((d) => d.deviceId === targetDeviceId)?.label || '';
     }
 
-    // If user didn't force a specific webcam and Iriun Webcam became visible after permission grant, auto-switch to Iriun!
-    if (!deviceId && !isMobileBridgeCameraLabel(trackLabel)) {
+    // On a desktop PC without an explicit deviceId, if Iriun Webcam became visible after permission grant, auto-switch to Iriun!
+    if (!onPhysicalPhone && !deviceId && !isMobileBridgeCameraLabel(trackLabel)) {
       const unlockedList = await this.listCameras().catch(() => []);
       const iriunCam = unlockedList.find((d) => isMobileBridgeCameraLabel(d.label));
       if (iriunCam && iriunCam.deviceId) {
@@ -274,7 +300,8 @@ export class CameraService {
     }
 
     this.activeDeviceLabel = trackLabel;
-    this.activeIsMobileBridge = isMobileBridgeCameraLabel(trackLabel);
+    // Treat both a physical smartphone (Mobile Web or APK) AND Iriun Webcam on PC as an active mobile camera feed!
+    this.activeIsMobileBridge = onPhysicalPhone || isMobileBridgeCameraLabel(trackLabel);
 
     videoElement.srcObject = this.stream;
     await videoElement.play();

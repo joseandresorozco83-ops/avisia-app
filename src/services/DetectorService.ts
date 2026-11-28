@@ -482,7 +482,6 @@ export class DetectorService {
   private onnxBusy = false;
   private latestOnnxDetections: Detection[] = [];
   private latestOnnxAt = 0;
-  private latestOnnxEpoch = 0;
   private statusListeners = new Set<(status: DetectorStatus) => void>();
 
   setActivePreset(preset: AppPresetId): void {
@@ -499,7 +498,6 @@ export class DetectorService {
   clearTransientCache(): void {
     this.latestOnnxDetections = [];
     this.latestOnnxAt = 0;
-    this.latestOnnxEpoch = 0;
   }
   private status: DetectorStatus = {
     ready: false,
@@ -842,8 +840,14 @@ export class DetectorService {
     const srcW = Math.max(64, viewport.width);
     const srcH = Math.max(64, viewport.height);
 
-    // Aspect-ratio-preserving downscale of the active non-pillarboxed phone viewport (never squashes portrait 9:16 mobile frames!)
-    const maxDim = loadedOnnx === 'dfine_s' || loadedOnnx === 'dfine_s_obj365' ? 576 : 512;
+    // Aspect-ratio-preserving downscale of the active non-pillarboxed phone viewport:
+    // Use 448px for real-time video (40% fewer transformer FLOPs => ~2x faster D-FINE inference!) and 576px for static photos
+    const maxDim =
+      sourceType === 'real_video'
+        ? 448
+        : loadedOnnx === 'dfine_s' || loadedOnnx === 'dfine_s_obj365'
+          ? 576
+          : 512;
     const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
     this.onnxCanvas.width = Math.max(64, Math.round(srcW * scale));
     this.onnxCanvas.height = Math.max(64, Math.round(srcH * scale));
@@ -1075,17 +1079,14 @@ export class DetectorService {
         const capturedAt = Date.now();
         void this.runOnnxOnSource(videoElement, scoreThreshold, 'real_video')
           .then((onnxRes) => {
-            if (
-              pedestrianNavigationService.isNotificationStillUseful(
-                capturedEpoch,
-                capturedAt,
-                Date.now(),
-                950
-              )
-            ) {
+            const nowDone = Date.now();
+            const navNow = pedestrianNavigationService.getState(nowDone);
+            // Never discard a completed D-FINE-Obj365 pass unless it took >3.5s or the user made a sharp compass turn!
+            const invalidatedByTurn =
+              navNow.lastTrigger === 'turn' && navNow.movementEpoch !== capturedEpoch;
+            if (!invalidatedByTurn && nowDone - capturedAt <= 3500) {
               this.latestOnnxDetections = onnxRes.detections;
-              this.latestOnnxAt = Date.now();
-              this.latestOnnxEpoch = capturedEpoch;
+              this.latestOnnxAt = nowDone;
             }
           })
           .catch(() => {
@@ -1096,14 +1097,13 @@ export class DetectorService {
           });
       }
 
-      // Fuse fresh background Objects365 detections (<= 680ms old and same movementEpoch) with instant MediaPipe detections
+      // Fuse fresh background Objects365 detections (<= 2400ms old) with instant MediaPipe detections
+      // so 366-class detections (Escritorio, Pizarra, Monitor, Puerta, Extintor) NEVER drop out between worker cycles!
       const now = Date.now();
-      const currentEpoch = pedestrianNavigationService.getMovementEpoch();
       let combinedList = fastDetections;
       if (
         this.latestOnnxDetections.length > 0 &&
-        this.latestOnnxEpoch === currentEpoch &&
-        now - this.latestOnnxAt <= 680
+        now - this.latestOnnxAt <= 2400
       ) {
         const merged = [...this.latestOnnxDetections];
         for (const mpDet of fastDetections) {

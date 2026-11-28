@@ -34,6 +34,7 @@ import {
   CameraService,
   computeActiveViewportFromRgba,
   isMobileBridgeCameraLabel,
+  isRearEnvironmentCameraLabel,
   remapViewportBboxToFullFrame,
 } from '../CameraService';
 import {
@@ -967,5 +968,15 @@ describe('AVISIA v5.1 Field-Test Regressions — Office Screenshots #1 to #10', 
     expect(() => speechService.getSpanishVoices()).not.toThrow();
     expect(speechService.getSpanishVoices()).toEqual([]);
     expect(() => speechService.cancel()).not.toThrow();
+
+    // 8. Mobile Web camera selection prioritizes rear environment camera over devices[0] (front selfie camera)
+    expect(isRearEnvironmentCameraLabel('camera2 0, facing back')).toBe(true);
+    expect(isRearEnvironmentCameraLabel('Cámara trasera')).toBe(true);
+    expect(isRearEnvironmentCameraLabel('camera2 1, facing front')).toBe(false);
+    const mobilePreferred = camSvc.findPreferredCamera([
+      { deviceId: 'front-cam', label: 'camera2 1, facing front' },
+      { deviceId: 'back-cam', label: 'camera2 0, facing back' },
+    ]);
+    expect(mobilePreferred?.deviceId).toBe('back-cam');
   });
 });

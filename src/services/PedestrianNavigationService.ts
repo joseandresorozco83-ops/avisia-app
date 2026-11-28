@@ -145,11 +145,40 @@ export class PedestrianNavigationService {
   }
 
   /**
+   * Requests mobile browser permissions for DeviceMotionEvent & DeviceOrientationEvent
+   * when required by the mobile OS/browser (e.g., iOS Safari / mobile WebViews).
+   */
+  async requestSensorPermissions(): Promise<void> {
+    if (typeof window === 'undefined') return;
+    try {
+      const MotionCtor = (window as unknown as {
+        DeviceMotionEvent?: { requestPermission?: () => Promise<string> };
+      }).DeviceMotionEvent;
+      if (MotionCtor && typeof MotionCtor.requestPermission === 'function') {
+        await MotionCtor.requestPermission();
+      }
+    } catch {
+      // Ignore permission rejection
+    }
+    try {
+      const OrientCtor = (window as unknown as {
+        DeviceOrientationEvent?: { requestPermission?: () => Promise<string> };
+      }).DeviceOrientationEvent;
+      if (OrientCtor && typeof OrientCtor.requestPermission === 'function') {
+        await OrientCtor.requestPermission();
+      }
+    } catch {
+      // Ignore permission rejection
+    }
+  }
+
+  /**
    * Starts real-time GPS watch (`enableHighAccuracy: true`) and inertial step/turn sensors.
    */
   startTracking(): void {
     if (this.trackingActive || typeof window === 'undefined') return;
     this.trackingActive = true;
+    void this.requestSensorPermissions();
 
     window.addEventListener('devicemotion', this.boundOnDeviceMotion);
     window.addEventListener('deviceorientation', this.boundOnDeviceOrientation);

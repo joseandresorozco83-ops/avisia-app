@@ -1,7 +1,7 @@
 {
   "name": "avisia-app",
   "private": true,
-  "version": "5.6.0",
+  "version": "5.7.0",
   "type": "module",
   "description": "AVISIA — Asistente visual inteligente accesible para movilidad y reconocimiento de billetes (UAM Managua)",
   "scripts": {

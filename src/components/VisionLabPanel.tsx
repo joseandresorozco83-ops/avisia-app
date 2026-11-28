@@ -480,7 +480,7 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
 
         <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 pointer-events-none">
           <span className="px-2.5 py-0.5 rounded-full bg-slate-950/85 border border-emerald-500/40 text-[10px] font-semibold text-emerald-200 truncate">
-            {status.modelName.split(' ')[0]} · v5.6.0
+            {status.modelName.split(' ')[0]} · v5.7.0
           </span>
           <span className="px-2.5 py-0.5 rounded-full bg-slate-950/85 border border-cyan-400/40 text-[10px] font-mono text-cyan-200 truncate">
             {poseCal.statusBadge}

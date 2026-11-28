@@ -43,6 +43,8 @@ import type {
   StreetAssistFeatures,
 } from './types/avicia';
 import type { StixelNavigationPlan } from './services/DoorAndStixelService';
+import { cameraCalibrationService } from './services/CameraCalibrationService';
+import { isMobileSmartphoneDevice } from './services/CameraService';
 import { pedestrianNavigationService } from './services/PedestrianNavigationService';
 import { scenarioManager } from './services/ScenarioManager';
 import { simulationEngine } from './services/SimulationEngine';
@@ -89,7 +91,7 @@ const TechnicalDetailsSection = lazy(() =>
 );
 
 const SETTINGS_STORAGE_KEY = 'avicia_simulator_settings_v1';
-const STREET_FEATURES_STORAGE_KEY = 'avicia_street_features_v5_4';
+const STREET_FEATURES_STORAGE_KEY = 'avicia_street_features_v5_7';
 const CONSENT_STORAGE_KEY = 'avisia_safety_consent_v1';
 
 const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
@@ -98,7 +100,7 @@ const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
   soundOnlyMode: false,
   handsFreeWakeWord: false,
   headsetButton: false,
-  depthAnythingEnabled: true,
+  depthAnythingEnabled: false,
   architecturalVisionEnabled: true,
   archModelVariant: 'segformer_b0',
   showStixelOverlay: true,
@@ -115,8 +117,9 @@ type EcosystemTab = 'core' | 'voice' | 'pipeline' | 'map' | 'tech';
 
 export function App() {
   const isNativeApp = Capacitor.isNativePlatform();
+  const isMobileWeb = !isNativeApp && isMobileSmartphoneDevice();
   const isMobileExperience =
-    isNativeApp || (typeof window !== 'undefined' && window.innerWidth < 1024);
+    isNativeApp || isMobileWeb || (typeof window !== 'undefined' && window.innerWidth < 1024);
   const scenarios = useMemo(() => scenarioManager.getAllScenarios(), []);
 
   const [mobileTab, setMobileTab] = useState<MobileTab>('vision');
@@ -139,7 +142,7 @@ export function App() {
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [pathClearConfirmed, setPathClearConfirmed] = useState<boolean>(false);
   const stixelPlanRef = useRef<StixelNavigationPlan | null>(null);
-  const [autoStartCamera, setAutoStartCamera] = useState<boolean>(false);
+  const [autoStartCamera, setAutoStartCamera] = useState<boolean>(isMobileExperience);
   const [banknoteTriggerCount, setBanknoteTriggerCount] = useState<number>(0);
   const [presetSyncKey, setPresetSyncKey] = useState<number>(0);
   const [isOnline, setIsOnline] = useState<boolean>(() =>
@@ -165,7 +168,13 @@ export function App() {
     telemetryService.configureSession({
       platform: isNativeApp ? 'android' : 'web',
     });
-  }, [isNativeApp]);
+    // When opening the Web from a smartphone browser (Mobile Chrome/Safari) OR native APK,
+    // automatically configure 3D calibration and step/sensor fusion to the native Mobile App profile!
+    if (isMobileExperience) {
+      cameraCalibrationService.setMobileBridgeProfile(true);
+      pedestrianNavigationService.setMobileBridgeActive(true);
+    }
+  }, [isNativeApp, isMobileExperience]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1224,7 +1233,7 @@ export function App() {
           architecturalVisionEnabled={streetFeatures.architecturalVisionEnabled}
           archModelVariant={streetFeatures.archModelVariant}
           showStixelOverlay={streetFeatures.showStixelOverlay}
-          simplifiedControls={isNativeApp}
+          simplifiedControls={isMobileExperience}
           detectorEngine={streetFeatures.detectorEngine}
           offlineVlmEnabled={Boolean(streetFeatures.offlineVlmEnabled)}
           preferredChannel={streetFeatures.activePreset === 'currency' ? 'currency' : 'explore'}
@@ -1274,7 +1283,7 @@ export function App() {
           className="fixed inset-0 z-[100] flex flex-col items-center justify-between px-6 py-10 bg-gradient-to-b from-[#0a0e16] via-[#101a29] to-[#0a0e16] text-[#dfe2ee] cursor-pointer select-none animate-fade-in"
         >
           <div className="px-3.5 py-1 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-xs font-extrabold text-[#8aebff] tracking-wider uppercase">
-            Sistema Asistivo Neuronal · v5.6.0
+            Sistema Asistivo Neuronal · v5.7.0
           </div>
 
           <div className="flex flex-col items-center text-center max-w-md">
@@ -1326,8 +1335,8 @@ export function App() {
           speakText(text);
         }}
       />
-      {/* Desktop Telemetry Header (legible typography & logos, zero page scroll) */}
-      {!isNativeApp && (
+      {/* Desktop Telemetry Header (only rendered on desktop screens, never on Mobile Web or Android APK) */}
+      {!isMobileExperience && (
         <header className="hidden lg:block shrink-0 z-30 border-b border-[#3c494c]/50 bg-[#0a0e16]/95 backdrop-blur-xl">
           <div className="max-w-[1840px] mx-auto px-4 py-2 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3.5">
@@ -1346,7 +1355,7 @@ export function App() {
                       AVISIA
                     </h1>
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[#8aebff]/15 text-[#8aebff] border border-[#8aebff]/35 font-mono text-xs font-extrabold">
-                      v5.6.0 Neuronal
+                      v5.7.0 Neuronal
                     </span>
                   </div>
                   <p className="text-xs font-medium text-[#dfe2ee] leading-tight">
@@ -1454,16 +1463,16 @@ export function App() {
         </header>
       )}
 
-      {/* SPLIT-SCREEN ON DESKTOP (ZERO SCROLL, IMAGE >70% DOMINANT), FULL-SCREEN NATIVE APP ON ANDROID/MOBILE */}
+      {/* SPLIT-SCREEN ON DESKTOP (ZERO SCROLL, IMAGE >70% DOMINANT), FULL-SCREEN NATIVE APP ON ANDROID/MOBILE WEB */}
       <div
-        className={`flex-1 min-h-0 h-full w-full mx-auto flex flex-col lg:flex-row items-stretch overflow-hidden ${isNativeApp ? 'p-0' : 'max-w-[1820px] lg:px-2.5 lg:py-1.5 lg:gap-2.5'
+        className={`flex-1 min-h-0 h-full w-full mx-auto flex flex-col lg:flex-row items-stretch overflow-hidden ${isMobileExperience ? 'p-0' : 'max-w-[1820px] lg:px-2.5 lg:py-1.5 lg:gap-2.5'
           }`}
       >
-        {/* LEFT PHONE EMULATOR ON DESKTOP / FULL-SCREEN ON ANDROID APP */}
+        {/* LEFT PHONE EMULATOR ON DESKTOP / FULL-SCREEN ON ANDROID APP & MOBILE WEB */}
         <aside
           aria-label="Vista móvil AVISIA"
           className={`w-full h-full min-h-0 flex flex-col items-center justify-center relative transition-all duration-300 ${
-            isNativeApp
+            isMobileExperience
               ? ''
               : emulatorProminent
                 ? 'lg:w-[62%] xl:w-[64%] shrink-0'
@@ -1471,13 +1480,13 @@ export function App() {
           }`}
         >
           <div
-            className={`w-full h-full min-h-0 flex flex-col relative ${isNativeApp
+            className={`w-full h-full min-h-0 flex flex-col relative ${isMobileExperience
                 ? ''
                 : 'lg:rounded-[32px] lg:bg-slate-900 lg:p-[6px] lg:ring-1 lg:ring-white/15 lg:shadow-[0_20px_50px_-15px_rgba(0,0,0,0.85)]'
               }`}
           >
             {/* Physical side hardware button accents (desktop simulator only) */}
-            {!isNativeApp && (
+            {!isMobileExperience && (
               <>
                 <div className="hidden lg:block absolute -left-[3px] top-20 w-[3px] h-8 bg-slate-700/70 rounded-l" />
                 <div className="hidden lg:block absolute -left-[3px] top-32 w-[3px] h-10 bg-slate-700/70 rounded-l" />
@@ -1486,11 +1495,11 @@ export function App() {
             )}
 
             <div
-              className={`w-full h-full min-h-0 flex flex-col bg-[#0f131c] text-[#dfe2ee] overflow-hidden relative ${isNativeApp ? '' : 'lg:rounded-[26px]'
+              className={`w-full h-full min-h-0 flex flex-col bg-[#0f131c] text-[#dfe2ee] overflow-hidden relative ${isMobileExperience ? '' : 'lg:rounded-[26px]'
                 }`}
             >
               {/* Simulated Android Status Bar (desktop simulator only, never on real phone) */}
-              {!isNativeApp && (
+              {!isMobileExperience && (
                 <div className="hidden lg:flex shrink-0 items-center justify-between px-4 py-0.5 text-[10px] font-mono font-semibold text-[#bbc9cd] bg-[#0a0e16] select-none">
                   <span>10:42</span>
                   <div className="w-3 h-3 rounded-full bg-black border border-[#3c494c]/50 flex items-center justify-center" aria-hidden="true">
@@ -1524,7 +1533,7 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-extrabold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[10px] font-bold text-[#8aebff]">
-                          v5.6.0
+                          v5.7.0
                         </span>
                         {!isOnline && (
                           <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 font-mono text-[10px] font-bold text-amber-300">
@@ -1869,13 +1878,13 @@ export function App() {
                     </div>
 
                     <a
-                      href="https://github.com/joseandresorozco83-ops/avisia-app/releases/download/v5.6.0/AVISIA-v5.6.0.apk"
+                      href="https://github.com/joseandresorozco83-ops/avisia-app/releases/download/v5.7.0/AVISIA-v5.7.0.apk"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="w-full min-h-[44px] py-2.5 px-3 rounded-xl bg-[#4edea3] hover:bg-[#6ffbbe] text-[#003824] font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition-colors"
                     >
                       <Smartphone className="w-4 h-4 shrink-0" />
-                      Descargar App Android (AVISIA-v5.6.0.apk)
+                      Descargar App Android (AVISIA-v5.7.0.apk)
                     </a>
 
                     <button
@@ -2334,8 +2343,8 @@ export function App() {
           </div>
         </aside>
 
-        {/* RIGHT CONSOLE: BUTTONS & SINGLE ZERO-SCROLL WINDOW VIEWER */}
-        {!isNativeApp && (
+        {/* RIGHT CONSOLE: BUTTONS & SINGLE ZERO-SCROLL WINDOW VIEWER (Unmounted on Mobile Web & Android APK so phone CPU goes 100% to vision!) */}
+        {!isMobileExperience && (
           <main
             className={`hidden lg:flex w-full lg:h-full flex-col gap-2 min-h-0 overflow-hidden transition-all duration-300 ${
               emulatorProminent ? 'lg:w-[38%] xl:w-[36%]' : 'lg:w-[54%] xl:w-[54%]'
