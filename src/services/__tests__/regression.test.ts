@@ -605,7 +605,7 @@ describe('AVISIA v5.1 Field-Test Regressions — Office Screenshots #1 to #10', 
     const stixel = computeStixelCorridor([], arch, null, null);
     expect(stixel.centerClear).toBe(true);
     expect(stixel.centerFreeSteps).toBeGreaterThanOrEqual(3);
-    expect(stixel.guidanceText).toContain('Camino despejado a las 12');
+    expect(stixel.guidanceText).toContain('Camino despejado al frente');
   });
 
   it('detects frontal walls when some carpet is still visible at bottom and reports ~0.6–0.8m ("a un paso") instead of 2.3m ("a tres pasos") (Screenshot #9)', () => {
@@ -747,9 +747,11 @@ describe('AVISIA v5.1 Field-Test Regressions — Office Screenshots #1 to #10', 
     expect(afterVisual.cameraHeightMeters).toBeGreaterThanOrEqual(0.85);
     expect(afterVisual.cameraHeightMeters).toBeLessThanOrEqual(1.75);
 
-    // 3. Tilted excessively toward ceiling (beta = 120 -> pitchDown = -30 deg) -> requests user to lower camera
-    for (let i = 0; i < 6; i++) {
-      calSvc.updateFromDeviceOrientation(90, 125, 0);
+    // 3. Normal 25-degree tilt stays silently auto-regulated; only extreme >=45 deg ceiling tilt triggers prompt
+    calSvc.updateFromDeviceOrientation(90, 115, 0);
+    expect(calSvc.getCalibration().correctionPrompt).toBeNull();
+    for (let i = 0; i < 8; i++) {
+      calSvc.updateFromDeviceOrientation(90, 145, 0);
     }
     const ceilingCal = calSvc.getCalibration();
     expect(ceilingCal.autoRegulated).toBe(false);
@@ -758,8 +760,19 @@ describe('AVISIA v5.1 Field-Test Regressions — Office Screenshots #1 to #10', 
     // 4. Disambiguates wall-mounted whiteboard ("refrigerator" above floor / wide board) as "blackboard/whiteboard" ("Pizarra")
     calSvc.reset();
     expect(
-      disambiguateIndoorClass('refrigerator', 0.58, { x: 20, y: 12, width: 55, height: 38 })
+      disambiguateIndoorClass('refrigerator', 0.58, { x: 20, y: 12, width: 55, height: 38 }, 'indoor')
     ).toBe('blackboard/whiteboard');
+
+    // 4b. Mode-regulated object filtering: "oven" (Estufa) is blocked in Office ("indoor") & Street ("street") modes, but allowed in Home ("home") mode when confident
+    expect(
+      isPlausibleDetection('oven', 0.65, { x: 20, y: 30, width: 30, height: 45 }, 'indoor')
+    ).toBe(false);
+    expect(
+      isPlausibleDetection('oven', 0.65, { x: 20, y: 30, width: 30, height: 45 }, 'street')
+    ).toBe(false);
+    expect(
+      isPlausibleDetection('oven', 0.65, { x: 20, y: 30, width: 30, height: 45 }, 'home')
+    ).toBe(true);
 
     // 5. Disambiguates horizontal waist-high "cabinet/shelf" as "desk" ("Escritorio") instead of "Mueble"
     expect(

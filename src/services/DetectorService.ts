@@ -1,5 +1,5 @@
 import { FilesetResolver, ObjectDetector, type Detection as MpDetection } from '@mediapipe/tasks-vision';
-import type { Detection, DetectorEngineId, DetectorStatus, ObjectCategory } from '../types/avicia';
+import type { AppPresetId, Detection, DetectorEngineId, DetectorStatus, ObjectCategory } from '../types/avicia';
 import { cameraCalibrationService } from './CameraCalibrationService';
 import { pedestrianNavigationService } from './PedestrianNavigationService';
 import { visionWorkerClient, type WorkerDetectionItem } from './VisionWorkerClient';
@@ -143,10 +143,62 @@ export const CATEGORY_MAP: Record<string, ClassMeta> = {
   printer: { category: 'unknown', labelEs: 'Impresora', priority: 72, typicalHeightMeters: 0.35 },
   'computer box': { category: 'unknown', labelEs: 'Computadora', priority: 72, typicalHeightMeters: 0.42 },
   fan: { category: 'obstacle', labelEs: 'Ventilador', priority: 84, isInanimateObstacle: true, typicalHeightMeters: 1.10 },
+  'gas stove': { category: 'obstacle', labelEs: 'Estufa', priority: 86, isInanimateObstacle: true, typicalHeightMeters: 0.90 },
   mirror: { category: 'obstacle', labelEs: 'Espejo', priority: 85, isInanimateObstacle: true, typicalHeightMeters: 1.25 },
   lamp: { category: 'obstacle', labelEs: 'Lámpara', priority: 80, isInanimateObstacle: true, typicalHeightMeters: 1.30 },
   radiator: { category: 'obstacle', labelEs: 'Radiador', priority: 85, isInanimateObstacle: true, typicalHeightMeters: 0.70 },
 };
+
+// Domestic kitchen/bedroom/bathroom appliances that should ONLY be allowed in "home" (Casa y Hogar) mode
+const DOMESTIC_KITCHEN_BEDROOM_CLASSES = new Set([
+  'oven',
+  'gas stove',
+  'microwave',
+  'toaster',
+  'refrigerator',
+  'sink',
+  'toilet',
+  'bed',
+  'bathtub',
+  'washing machine/drying machine',
+  'dishwasher',
+  'induction cooker',
+  'rice cooker',
+  'hair drier',
+  'hair dryer',
+  'toothbrush',
+]);
+
+// Indoor-only furniture & electronics that should NEVER fire in "street" (Calle y Exterior) mode
+const INDOOR_ONLY_CLASSES = new Set([
+  ...DOMESTIC_KITCHEN_BEDROOM_CLASSES,
+  'blackboard/whiteboard',
+  'desk',
+  'cabinet/shelf',
+  'nightstand',
+  'coffee table',
+  'side table',
+  'dining table',
+  'dinning table',
+  'table',
+  'table tennis',
+  'couch',
+  'tv',
+  'monitor/tv',
+  'laptop',
+  'computer box',
+  'printer',
+  'keyboard',
+  'mouse',
+  'remote',
+  'book',
+  'mirror',
+  'lamp',
+  'radiator',
+  'fan',
+  'curtain',
+  'blinds',
+]);
 
 const RARE_OUTDOOR_ONLY_CLASSES = new Set([
   'airplane',
@@ -200,7 +252,8 @@ const IGNORED_WEARABLE_CLUTTER = new Set([
 export function isPlausibleDetection(
   rawCategoryName: string,
   score: number,
-  bbox: { x: number; y: number; width: number; height: number }
+  bbox: { x: number; y: number; width: number; height: number },
+  activePreset: AppPresetId = 'indoor'
 ): boolean {
   const rawName = (rawCategoryName || '').toLowerCase().trim();
   if (!rawName) return false;
@@ -213,10 +266,16 @@ export function isPlausibleDetection(
     return false;
   }
 
+  // Street Mode ("Calle y Exterior"): block all indoor furniture, kitchen appliances, and office electronics
+  if (activePreset === 'street' && INDOOR_ONLY_CLASSES.has(rawName)) {
+    return false;
+  }
+
   // Suppress "bed" hallucinations on wooden doors / carpet floors
   if (rawName === 'bed') {
+    if (activePreset === 'street') return false;
+    if (activePreset !== 'home' && score < 0.78) return false;
     if (score < 0.64) return false;
-    // A wide box spanning the lower frame or vertical door with <0.78 confidence is a false door/floor match
     if (bbox.width >= 55 && bbox.height >= 40 && score < 0.78) return false;
   }
 
@@ -240,7 +299,7 @@ export function isPlausibleDetection(
     }
   }
 
-  if (disambiguateIndoorClass(rawCategoryName, score, bbox) === null) {
+  if (disambiguateIndoorClass(rawCategoryName, score, bbox, activePreset) === null) {
     return false;
   }
 
@@ -248,32 +307,66 @@ export function isPlausibleDetection(
 }
 
 /**
- * Resolves systematic indoor class confusions using 3D camera calibration (horizon & floor contact)
- * and portrait/landscape aspect ratio geometry:
- * 1) "Pizarra" vs "Refrigerador": COCO has no whiteboard class and misclassifies wall-mounted
- *    whiteboards as "refrigerator". Any "refrigerator" mounted above the floor contact zone
- *    (bottomY < 86%), starting in the upper/mid frame (y <= 52%), with portrait-adjusted horizontal
- *    aspect ratio (width >= height * 0.52), or score < 0.84 is reclassified as "blackboard/whiteboard" ("Pizarra").
- * 2) "Mesa / Escritorio" vs "Mueble": waist-level surfaces classified as "cabinet/shelf"
- *    (y >= 20% and (width >= height * 0.55 or y >= 32%)) are reclassified as "desk" ("Escritorio").
+ * Resolves systematic indoor class confusions using the active usage mode ("indoor" Office, "home" House, "street" Street),
+ * 3D camera calibration (horizon & floor contact), and aspect ratio geometry:
+ * 1) Mode-Based Appliance Filtering:
+ *    - In Office ("indoor"), Precision, or Silent mode: "oven" ("Estufa"), "gas stove", "microwave", "sink",
+ *      "toilet", and "toaster" are blocked or reclassified as "desk" ("Escritorio") when waist-high.
+ *    - In Home ("home") mode: "oven" ("Estufa") and "refrigerator" ("Refrigerador") are allowed when confidence >= 0.56.
+ * 2) "Pizarra" vs "Refrigerador": In Office mode, any "refrigerator" mounted on a wall or upper/mid frame
+ *    is reclassified as "blackboard/whiteboard" ("Pizarra"), and low-confidence refrigerators are suppressed.
+ * 3) "Mesa / Escritorio" vs "Mueble": waist-level surfaces classified as "cabinet/shelf"
+ *    are reclassified as "desk" ("Escritorio").
  */
 export function disambiguateIndoorClass(
   rawCategoryName: string,
   score: number,
-  bbox: { x: number; y: number; width: number; height: number }
+  bbox: { x: number; y: number; width: number; height: number },
+  activePreset: AppPresetId = 'indoor'
 ): string | null {
   const rawName = (rawCategoryName || '').toLowerCase().trim();
   if (!rawName) return null;
+
+  if (activePreset === 'street' && INDOOR_ONLY_CLASSES.has(rawName)) {
+    return null;
+  }
+
+  // Handle "Estufa" (oven / gas stove), "Microondas", "Lavabo", "Inodoro", "Tostadora":
+  // Strictly allowed ONLY in "home" (Casa y Hogar) mode with solid confidence (>= 56%); blocked in Office & Street modes!
+  if (
+    rawName === 'oven' ||
+    rawName === 'gas stove' ||
+    rawName === 'microwave' ||
+    rawName === 'sink' ||
+    rawName === 'toaster' ||
+    rawName === 'toilet'
+  ) {
+    if (activePreset === 'home') {
+      return score >= 0.56 ? rawName : null;
+    }
+    return null;
+  }
 
   if (rawName === 'refrigerator') {
     const isWallMounted =
       cameraCalibrationService.isWallMountedAboveFloor(bbox) ||
       (bbox.y <= 52 && bbox.y + bbox.height < 86);
     const isWideBoardShape = bbox.width >= bbox.height * 0.52;
-    if (isWallMounted || isWideBoardShape || score < 0.84) {
-      // Wall-mounted white panel or board in indoor scene is a Pizarra (whiteboard), not a fridge!
-      return score >= 0.25 ? 'blackboard/whiteboard' : null;
+
+    if (activePreset === 'home') {
+      // In Home mode, wall-mounted wide rectangles are still whiteboards/frames, but tall floor-standing boxes >= 56% are Refrigerators
+      if (isWallMounted && isWideBoardShape) {
+        return score >= 0.36 ? 'blackboard/whiteboard' : null;
+      }
+      return score >= 0.56 ? 'refrigerator' : null;
     }
+
+    // In Office / Classroom mode ("indoor"), never announce "Refrigerador" unless >= 88% confidence and floor-standing;
+    // wall-mounted or wide white panels are Whiteboards ("Pizarra")
+    if (isWallMounted || isWideBoardShape) {
+      return score >= 0.32 ? 'blackboard/whiteboard' : null;
+    }
+    return score >= 0.88 ? 'refrigerator' : 'blackboard/whiteboard';
   }
 
   if (rawName === 'cabinet/shelf') {
@@ -375,6 +468,7 @@ export class DetectorService {
   private usingWorker = false;
   private onnxCanvas: HTMLCanvasElement | null = null;
   private activeEngine: DetectorEngineId = 'dfine_s_obj365';
+  private activePreset: AppPresetId = 'indoor';
   private currentRunningMode: 'IMAGE' | 'VIDEO' = 'IMAGE';
   private lastScoreThreshold = 0.36;
   private initPromise: Promise<DetectorStatus> | null = null;
@@ -385,6 +479,17 @@ export class DetectorService {
   private latestOnnxAt = 0;
   private latestOnnxEpoch = 0;
   private statusListeners = new Set<(status: DetectorStatus) => void>();
+
+  setActivePreset(preset: AppPresetId): void {
+    if (this.activePreset !== preset) {
+      this.activePreset = preset;
+      this.clearTransientCache();
+    }
+  }
+
+  getActivePreset(): AppPresetId {
+    return this.activePreset;
+  }
 
   clearTransientCache(): void {
     this.latestOnnxDetections = [];
@@ -716,9 +821,11 @@ export class DetectorService {
       throw new Error('Modelo ONNX no cargado aún.');
     }
 
-    // Objects365 distributes probability across 366 classes, so valid indoor objects (Chair, Desk) score ~0.27..0.65
+    // Unified Web & App threshold (0.35 floor prevents low-confidence 27% kitchen/appliance hallucinations on Web!)
     const effectiveThreshold =
-      loadedOnnx === 'dfine_s_obj365' ? Math.min(scoreThreshold, 0.27) : scoreThreshold;
+      loadedOnnx === 'dfine_s_obj365'
+        ? Math.max(0.35, Math.min(scoreThreshold, 0.36))
+        : scoreThreshold;
 
     if (!this.onnxCanvas) {
       this.onnxCanvas = document.createElement('canvas');
@@ -781,7 +888,7 @@ export class DetectorService {
       const width = Math.max(1, Math.min(100 - x, (item.box.xmax - item.box.xmin) * wScale));
       const height = Math.max(1, Math.min(100 - y, (item.box.ymax - item.box.ymin) * hScale));
       const bbox = { x, y, width, height };
-      if (!isPlausibleDetection(item.label, item.score, bbox)) continue;
+      if (!isPlausibleDetection(item.label, item.score, bbox, this.activePreset)) continue;
       mapped.push(this.buildDetection(item.label, item.score, bbox, idx, now, sourceType));
     }
 
@@ -1057,7 +1164,12 @@ export class DetectorService {
     now: number,
     source: 'real_image' | 'real_video'
   ): Detection {
-    const disambiguated = disambiguateIndoorClass(rawCategoryName, score, bbox);
+    const disambiguated = disambiguateIndoorClass(
+      rawCategoryName,
+      score,
+      bbox,
+      this.activePreset
+    );
     const rawName = (disambiguated ?? rawCategoryName ?? '').toLowerCase().trim();
     const known = CATEGORY_MAP[rawName];
     const labelEs = known ? known.labelEs : rawName;
@@ -1126,7 +1238,9 @@ export class DetectorService {
       const width = Math.min(100 - x, (det.boundingBox.width / imgWidth) * 100);
       const height = Math.min(100 - y, (det.boundingBox.height / imgHeight) * 100);
       const bbox = { x, y, width, height };
-      if (!isPlausibleDetection(topCat.categoryName || '', topCat.score, bbox)) return;
+      if (!isPlausibleDetection(topCat.categoryName || '', topCat.score, bbox, this.activePreset)) {
+        return;
+      }
 
       mapped.push(
         this.buildDetection(

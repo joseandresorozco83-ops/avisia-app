@@ -14,7 +14,7 @@ export type DoorState = 'open' | 'closed' | 'semi_open' | 'unknown';
 
 export type AudioVerbosity = 'essential' | 'detailed';
 
-export type AppPresetId = 'indoor' | 'street' | 'currency' | 'precision' | 'silent';
+export type AppPresetId = 'indoor' | 'home' | 'street' | 'currency' | 'precision' | 'silent';
 
 export type AssistiveChannel =
   | 'explore'

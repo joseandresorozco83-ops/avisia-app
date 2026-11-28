@@ -283,6 +283,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       return;
     }
 
+    let extremeTiltStreak = 0;
+
     const onOrientation = (event: DeviceOrientationEvent) => {
       const cal = cameraCalibrationService.updateFromDeviceOrientation(
         event.alpha,
@@ -291,15 +293,20 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       );
       setPoseCalibration(cal);
 
+      // Only warn when tilt exceeds ~45° continuously for >= 10 samples, with a 45-second voice cooldown
       if (cal.correctionPrompt) {
-        setTiltWarning(cal.correctionPrompt);
-        const now = Date.now();
-        if (now - lastTiltWarnAtRef.current > 15000) {
-          lastTiltWarnAtRef.current = now;
-          speechService.vibratePattern('caution');
-          speakFeedback(cal.correctionPrompt);
+        extremeTiltStreak++;
+        if (extremeTiltStreak >= 10) {
+          setTiltWarning(cal.correctionPrompt);
+          const now = Date.now();
+          if (now - lastTiltWarnAtRef.current > 45000) {
+            lastTiltWarnAtRef.current = now;
+            speechService.vibratePattern('caution');
+            speakFeedback(cal.correctionPrompt);
+          }
         }
       } else {
+        extremeTiltStreak = 0;
         setTiltWarning(null);
       }
     };
@@ -1540,7 +1547,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v5.3.0 · Cámara Asistiva
+              AVISIA v5.4.0 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.
@@ -1571,8 +1578,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             {pathClearConfirmed && (
               <span className="px-3 py-1 rounded-full bg-emerald-500/90 text-slate-950 font-extrabold text-xs shadow-md">
                 {stixelPlan?.openDoorwayAhead
-                  ? `✓ Puerta abierta ${stixelPlan.openDoorwayAhead.clockLabel} · paso libre`
-                  : `✓ Despejado a las 12 · ${
+                  ? `✓ Puerta abierta al frente · paso libre`
+                  : `✓ Camino despejado al frente · ${
                       stixelPlan && stixelPlan.centerFreeSteps >= 4
                         ? '3+ pasos'
                         : `${stixelPlan?.centerFreeSteps ?? 2} pasos`

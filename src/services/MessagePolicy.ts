@@ -23,7 +23,8 @@ export function formatDistanceSteps(meters?: number | null): string {
   if (meters <= 0.9) return 'muy cerca, a un paso';
   if (meters <= 1.7) return 'a dos pasos';
   if (meters <= 2.6) return 'a tres pasos';
-  return `a unos ${Math.round(meters)} metros`;
+  if (meters <= 3.6) return 'a cuatro pasos';
+  return 'más adelante';
 }
 
 /**
@@ -120,7 +121,7 @@ export class MessagePolicy {
     policy: PolicyType,
     now: number = Date.now(),
     streetMode = false,
-    useClockFace = true
+    useClockFace = false
   ): PolicyEvaluation {
     const confirmedOnly = detections.filter((d) => d.confirmationStatus === 'confirmed');
 

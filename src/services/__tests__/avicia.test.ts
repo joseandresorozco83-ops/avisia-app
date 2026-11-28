@@ -353,8 +353,8 @@ describe('AVISIA v3.0 Assistive Vision & Anti-False-Alarm Suite', () => {
     expect(plan.guidanceText.toLowerCase()).toContain('derecha');
   });
 
-  it('applies the 5 simplified Android general presets cleanly', () => {
-    expect(APP_PRESETS.length).toBe(5);
+  it('applies the 6 simplified general presets cleanly (including Oficina and Casa modes)', () => {
+    expect(APP_PRESETS.length).toBe(6);
     const base: StreetAssistFeatures = {
       streetMode: false,
       stereoSonar: false,

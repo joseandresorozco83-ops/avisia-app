@@ -461,12 +461,12 @@ export function computeStixelCorridor(
   if (cameraBad) {
     guidanceText = 'Sin visibilidad clara: revisa la luz o que el lente no esté cubierto.';
   } else if (openDoorwayAhead && center.freeSteps >= 2) {
-    guidanceText = `Puerta abierta ${openDoorwayAhead.clockLabel}, paso libre.`;
+    guidanceText = `Puerta abierta al frente, paso libre.`;
   } else if (centerClear) {
-    guidanceText = `Camino despejado a las 12, ${stepsPhrase(center.freeSteps)}.`;
+    guidanceText = `Camino despejado al frente, ${stepsPhrase(center.freeSteps)}.`;
   } else if (recommendedDetour) {
-    shortDetourHint = `Espacio libre ${recommendedDetour.clockLabel} (${recommendedDetour.sideLabel})`;
-    guidanceText = `Frente reducido; espacio despejado ${recommendedDetour.clockLabel} (${recommendedDetour.sideLabel}), ${stepsPhrase(recommendedDetour.freeSteps)}.`;
+    shortDetourHint = `Espacio libre a tu ${recommendedDetour.sideLabel}`;
+    guidanceText = `Frente reducido; espacio despejado a tu ${recommendedDetour.sideLabel}, ${stepsPhrase(recommendedDetour.freeSteps)}.`;
   } else {
     guidanceText = 'Espacio muy reducido al frente; detente y verifica con tu bastón.';
   }

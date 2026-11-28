@@ -83,7 +83,7 @@ export class CameraCalibrationService {
         this.rollDeg = Math.round(beta);
       } else {
         this.rollDeg = gamma !== null && Number.isFinite(gamma) ? Math.round(gamma) : 0;
-        this.posture = Math.abs(this.rollDeg) >= 34 ? 'diagonal' : 'vertical';
+        this.posture = Math.abs(this.rollDeg) >= 48 ? 'diagonal' : 'vertical';
         // beta=90 -> 0° pitch; beta=78 -> +12° downward pitch; beta=105 -> -15° upward pitch
         const clampedBeta = Math.max(-20, Math.min(150, beta));
         const rawPitchDown = 90 - clampedBeta;
@@ -181,13 +181,12 @@ export class CameraCalibrationService {
   }
 
   getCalibration(): CameraPoseCalibration {
-    const focalLengthY = this.posture === 'horizontal' ? 1.16 : 0.72;
+    // Unify Web webcam (horizontal without IMU) and mobile portrait focal length so distances match 1:1
+    const focalLengthY =
+      this.posture === 'horizontal' ? (this.hasImuSample ? 0.92 : 0.76) : 0.72;
     const pitchRad = (this.pitchDownDeg * Math.PI) / 180;
 
     // Projective horizon row v_h = 50% - 100% * f_y * tan(pitchDown)
-    // When pitchDown = +12° (tilted slightly down), v_h ≈ 35%
-    // When pitchDown = 0° (level), v_h = 50%
-    // When pitchDown = -12° (pointing up), v_h ≈ 65%
     const horizonRowPct = Math.round(
       Math.max(12, Math.min(82, 50 - 100 * focalLengthY * Math.tan(pitchRad)))
     );
@@ -197,22 +196,23 @@ export class CameraCalibrationService {
       Math.max(40, Math.min(78, horizonRowPct + 18))
     );
 
-    const pitchInAutoBand = this.pitchDownDeg >= -8 && this.pitchDownDeg <= 36;
-    const rollInAutoBand = this.posture !== 'diagonal' && Math.abs(this.rollDeg) < 34;
+    // Wide silent self-regulation band: only warn when camera tilt exceeds ~45° (severely degrading view)
+    const pitchInAutoBand = this.pitchDownDeg >= -32 && this.pitchDownDeg <= 50;
+    const rollInAutoBand = this.posture !== 'diagonal' && Math.abs(this.rollDeg) < 48;
     const autoRegulated = pitchInAutoBand && rollInAutoBand;
     const aimingForward =
-      autoRegulated && this.headingDeviationDeg <= 32;
+      autoRegulated && this.headingDeviationDeg <= 38;
 
     let correctionPrompt: string | null = null;
-    if (this.pitchDownDeg < -10) {
+    if (this.pitchDownDeg < -32) {
       correctionPrompt =
-        'Cámara apuntando muy arriba. Bájala un poco hacia el frente para ver tu camino.';
-    } else if (this.pitchDownDeg > 38) {
+        'Cámara inclinada muy hacia arriba (>45°). Bájala hacia el frente para ver el camino.';
+    } else if (this.pitchDownDeg > 52) {
       correctionPrompt =
-        'Cámara apuntando muy al suelo. Levántala un poco hacia el frente.';
+        'Cámara inclinada muy hacia el suelo (>45°). Levántala hacia el frente.';
     } else if (this.posture === 'diagonal') {
       correctionPrompt =
-        'Teléfono inclinado de lado. Enderézalo en posición vertical para mayor precisión.';
+        'Teléfono muy inclinado de lado (>45°). Enderézalo para mayor precisión.';
     }
 
     const postureLabel =
@@ -223,7 +223,7 @@ export class CameraCalibrationService {
           : 'Inclinado';
     const aimLabel =
       !pitchInAutoBand
-        ? this.pitchDownDeg < -10
+        ? this.pitchDownDeg < -32
           ? 'Mirando arriba'
           : 'Mirando al suelo'
         : aimingForward
@@ -250,9 +250,9 @@ export class CameraCalibrationService {
 
   /**
    * Computes self-calibrated distance in meters fusing:
-   * 1) Pitch- and orientation-compensated pinhole size: Z_pin = H_obj * f_y * cos(pitch) / h_frac
-   * 2) Trigonometric ground-plane contact distance from self-calibrated camera height H_cam:
-   *    Z_ground = H_cam / tan(pitch_down + atan((v_bottom - 0.5) / f_y))
+   * 1) Occlusion-resistant pitch-compensated pinhole size
+   * 2) Trigonometric ground-plane contact distance from self-calibrated camera height H_cam
+   * 3) Foreground floor-contact anchors so partially occluded chairs/tables right in front never jump to 7–8m
    */
   estimateCalibratedMeters(
     bbox: BoundingBox,
@@ -261,30 +261,41 @@ export class CameraCalibrationService {
   ): number {
     const cal = this.getCalibration();
     const bottomY = bbox.y + bbox.height;
-    const pitchRad = (Math.max(-15, Math.min(40, cal.pitchDownDeg)) * Math.PI) / 180;
-    const cosPitch = Math.max(0.78, Math.cos(pitchRad));
+    const pitchRad = (Math.max(-20, Math.min(45, cal.pitchDownDeg)) * Math.PI) / 180;
+    const cosPitch = Math.max(0.75, Math.cos(pitchRad));
 
-    // 1. Pitch-compensated pinhole estimate (accounts for width on angled chairs/desks)
+    // 1. Occlusion-resistant effective apparent size (considers width on angled/partially occluded chairs & desks)
     const effectivePct = Math.max(
       bbox.height,
-      Math.min(bbox.height * 1.45, bbox.width * 0.78)
+      Math.min(bbox.height * 1.55, bbox.width * 0.85)
     );
-    const heightFrac = Math.max(0.08, effectivePct / 100);
-    let pinholeMeters = (typicalHeightMeters * cal.focalLengthY * cosPitch) / heightFrac;
+    const rawFrac = Math.max(0.11, effectivePct / 100);
+    // Sub-linear compression prevents partially visible backrest/tabletop boxes from exploding to 7–9m
+    const dampenedFrac = rawFrac < 0.24 ? Math.pow(rawFrac, 0.78) : rawFrac;
+    let pinholeMeters = (typicalHeightMeters * cal.focalLengthY * cosPitch) / dampenedFrac;
 
     // 2. Trigonometric ground-contact distance from self-calibrated camera height H_cam
-    if (isFloorContactObstacle && bottomY > cal.horizonRowPct + 8 && typicalHeightMeters <= 2.15) {
+    if (isFloorContactObstacle && bottomY > cal.horizonRowPct + 6 && typicalHeightMeters <= 2.15) {
       const vNorm = bottomY / 100;
       const rayAngleRad = Math.atan((vNorm - 0.5) / cal.focalLengthY);
-      const totalDepressionRad = Math.max(0.14, Math.min(1.15, pitchRad + rayAngleRad));
+      const totalDepressionRad = Math.max(0.18, Math.min(1.15, pitchRad + rayAngleRad));
       const groundMeters = cal.cameraHeightMeters / Math.tan(totalDepressionRad);
 
-      // Blend pinhole with ground-plane trigonometry (prevents partial chair/desk boxes from jumping to 8m!)
-      const groundWeight = bbox.height < 24 ? 0.58 : 0.35;
+      const groundWeight = bbox.height < 26 ? 0.65 : 0.42;
       pinholeMeters = (1 - groundWeight) * pinholeMeters + groundWeight * groundMeters;
+
+      // Foreground floor-zone physical caps: if an object touches the bottom of the screen, it is 1–2 steps away!
+      if (bottomY >= 84) {
+        pinholeMeters = Math.min(pinholeMeters, 1.25);
+      } else if (bottomY >= 70) {
+        pinholeMeters = Math.min(pinholeMeters, 1.95);
+      } else if (bottomY >= 56) {
+        pinholeMeters = Math.min(pinholeMeters, 2.75);
+      }
     }
 
-    return Number(Math.min(6.0, Math.max(0.4, pinholeMeters)).toFixed(1));
+    const maxCap = typicalHeightMeters >= 2.4 ? 5.5 : 3.8;
+    return Number(Math.min(maxCap, Math.max(0.45, pinholeMeters)).toFixed(1));
   }
 
   /**

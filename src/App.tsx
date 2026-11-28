@@ -43,7 +43,6 @@ import type {
 } from './types/avicia';
 import type { StixelNavigationPlan } from './services/DoorAndStixelService';
 import { pedestrianNavigationService } from './services/PedestrianNavigationService';
-import { cameraCalibrationService } from './services/CameraCalibrationService';
 import { scenarioManager } from './services/ScenarioManager';
 import { simulationEngine } from './services/SimulationEngine';
 import {
@@ -89,7 +88,7 @@ const TechnicalDetailsSection = lazy(() =>
 );
 
 const SETTINGS_STORAGE_KEY = 'avicia_simulator_settings_v1';
-const STREET_FEATURES_STORAGE_KEY = 'avicia_street_features_v5_3';
+const STREET_FEATURES_STORAGE_KEY = 'avicia_street_features_v5_4';
 const CONSENT_STORAGE_KEY = 'avisia_safety_consent_v1';
 
 const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
@@ -105,7 +104,7 @@ const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
   audioVerbosity: 'essential',
   activePreset: 'indoor',
   detectorEngine: 'dfine_s_obj365',
-  clockFaceDirections: true,
+  clockFaceDirections: false,
   offlineVlmEnabled: false,
   autoEscalateLowConfVlm: true,
 };
@@ -199,6 +198,7 @@ export function App() {
   });
 
   useEffect(() => {
+    detectorService.setActivePreset(streetFeatures.activePreset ?? 'indoor');
     try {
       localStorage.setItem(STREET_FEATURES_STORAGE_KEY, JSON.stringify(streetFeatures));
     } catch {
@@ -1245,59 +1245,59 @@ export function App() {
           speakText(text);
         }}
       />
-      {/* Desktop Telemetry Header (compact 44px height so zero page scroll ever occurs) */}
+      {/* Desktop Telemetry Header (legible typography & logos, zero page scroll) */}
       {!isNativeApp && (
-        <header className="hidden lg:block shrink-0 z-30 border-b border-[#3c494c]/40 bg-[#0a0e16]/95 backdrop-blur-xl">
-          <div className="max-w-[1820px] mx-auto px-3 py-1.5 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5">
-              <div className="flex items-center gap-2">
-                <div className="flex items-center justify-center p-0.5 rounded-full bg-white border border-[#8aebff]/50 shrink-0">
-                  <AvisiaLogo className="w-8 h-8" variant="dark" />
+        <header className="hidden lg:block shrink-0 z-30 border-b border-[#3c494c]/50 bg-[#0a0e16]/95 backdrop-blur-xl">
+          <div className="max-w-[1840px] mx-auto px-4 py-2 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3.5">
+              <div className="flex items-center gap-2.5">
+                <div className="flex items-center justify-center p-1 rounded-full bg-white border border-[#8aebff]/60 shadow-[0_0_12px_rgba(138,235,255,0.25)] shrink-0">
+                  <AvisiaLogo className="w-9 h-9" variant="dark" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-1.5">
-                    <h1 className="text-sm font-extrabold tracking-tight text-[#8aebff] uppercase">
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-base sm:text-lg font-black tracking-tight text-[#8aebff] uppercase">
                       AVISIA
                     </h1>
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-[#8aebff]/10 text-[#8aebff] border border-[#8aebff]/25 font-mono text-[10px] font-semibold">
-                      v5.3.0 Neuronal
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[#8aebff]/15 text-[#8aebff] border border-[#8aebff]/35 font-mono text-xs font-extrabold">
+                      v5.4.0 Neuronal
                     </span>
                   </div>
-                  <p className="text-[10px] text-[#bbc9cd] leading-none">
+                  <p className="text-xs font-medium text-[#dfe2ee] leading-tight">
                     Asistencia Visual Inteligente para Movilidad
                   </p>
                 </div>
               </div>
 
-              <div className="hidden lg:flex items-center gap-2 pl-2.5 border-l border-[#3c494c]/50">
-                <div className="bg-white/95 px-2 py-0.5 rounded-md shadow-sm flex items-center">
+              <div className="hidden lg:flex items-center gap-2.5 pl-3.5 border-l border-[#3c494c]/60">
+                <div className="bg-white px-2.5 py-1 rounded-lg shadow-sm flex items-center">
                   <img
                     src="/uam-logo.png"
                     alt="Universidad Americana UAM"
-                    className="h-5 w-auto object-contain"
+                    className="h-6 w-auto object-contain"
                   />
                 </div>
-                <span className="font-mono text-[10px] text-[#bbc9cd] uppercase tracking-wider">
+                <span className="font-mono text-xs font-bold text-[#dfe2ee] uppercase tracking-wider">
                   UAM Managua
                 </span>
               </div>
 
               <div
-                className={`hidden md:flex items-center gap-1.5 ml-1 px-2 py-0.5 rounded-full bg-[#181c24] border ${isOnline
-                    ? 'border-[#4edea3]/25'
-                    : 'border-amber-400/40'
+                className={`hidden md:flex items-center gap-2 ml-1 px-3 py-1 rounded-full bg-[#181c24] border ${isOnline
+                    ? 'border-[#4edea3]/35'
+                    : 'border-amber-400/50'
                   }`}
               >
                 {isOnline ? (
-                  <span className="relative flex h-2 w-2">
+                  <span className="relative flex h-2.5 w-2.5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4edea3] opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#4edea3]" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#4edea3]" />
                   </span>
                 ) : (
-                  <WifiOff className="w-3 h-3 text-amber-300" aria-hidden="true" />
+                  <WifiOff className="w-3.5 h-3.5 text-amber-300" aria-hidden="true" />
                 )}
                 <span
-                  className={`font-mono text-[10px] font-semibold tracking-wide uppercase ${isOnline ? 'text-[#4edea3]' : 'text-amber-300'
+                  className={`font-mono text-xs font-bold tracking-wide uppercase ${isOnline ? 'text-[#4edea3]' : 'text-amber-300'
                     }`}
                 >
                   {!isOnline
@@ -1315,23 +1315,23 @@ export function App() {
               <button
                 type="button"
                 onClick={() => setEmulatorProminent((p) => !p)}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[10px] font-bold border transition-colors ${
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-colors ${
                   emulatorProminent
                     ? 'bg-[#4edea3]/20 border-[#4edea3] text-[#4edea3]'
-                    : 'bg-[#262a33] hover:bg-[#31353e] border-[#3c494c]/50 text-[#8aebff]'
+                    : 'bg-[#262a33] hover:bg-[#31353e] border-[#3c494c]/60 text-[#8aebff]'
                 }`}
                 title="Alternar ancho del emulador entre vista balanceada (46%) y vista predominante (64%)"
               >
-                <Eye className="w-3.5 h-3.5" />
+                <Eye className="w-4 h-4" />
                 <span>{emulatorProminent ? 'Emulador: 65% (Ampliado)' : 'Ampliar Emulador'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setConsentModalOpen(true)}
-                className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#262a33] hover:bg-[#31353e] text-[#bbc9cd] hover:text-white font-mono text-[10px] border border-[#3c494c]/40 transition-colors"
+                className="hidden xl:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#262a33] hover:bg-[#31353e] text-[#dfe2ee] hover:text-white font-mono text-xs font-semibold border border-[#3c494c]/50 transition-colors"
               >
-                <ShieldCheck className="w-3.5 h-3.5 text-[#4edea3] shrink-0" />
+                <ShieldCheck className="w-4 h-4 text-[#4edea3] shrink-0" />
                 <span>Seguridad y Privacidad · UAM</span>
               </button>
 
@@ -1346,7 +1346,7 @@ export function App() {
                 }}
                 aria-label={speechSettings.enabled ? 'Silenciar audio' : 'Activar audio'}
                 title={speechSettings.enabled ? 'Silenciar audio' : 'Activar audio'}
-                className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#262a33] hover:bg-[#31353e] text-[#bbc9cd] hover:text-white border border-[#3c494c]/40 transition-colors"
+                className="flex items-center justify-center w-9 h-9 rounded-lg bg-[#262a33] hover:bg-[#31353e] text-[#bbc9cd] hover:text-white border border-[#3c494c]/50 transition-colors"
               >
                 {speechSettings.enabled ? (
                   <Volume2 className="w-4 h-4 text-[#8aebff]" />
@@ -1358,9 +1358,9 @@ export function App() {
               <button
                 type="button"
                 onClick={startGuidedDemo}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#22d3ee] hover:bg-[#8aebff] active:scale-95 text-[#00363e] font-bold text-xs transition-all shadow-[0_0_15px_rgba(34,211,238,0.3)]"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#22d3ee] hover:bg-[#8aebff] active:scale-95 text-[#00363e] font-extrabold text-xs sm:text-sm transition-all shadow-[0_0_15px_rgba(34,211,238,0.35)]"
               >
-                <Play className="w-3.5 h-3.5 fill-current" />
+                <Play className="w-4 h-4 fill-current" />
                 Iniciar Demo Autónoma
               </button>
             </div>
@@ -1436,12 +1436,12 @@ export function App() {
                     </div>
                     <div className="flex flex-col leading-none min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-bold text-[#8aebff] tracking-tight">AVISIA</span>
-                        <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[9px] font-bold text-[#8aebff]">
-                          v5.3.0
+                        <span className="text-base font-extrabold text-[#8aebff] tracking-tight">AVISIA</span>
+                        <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[10px] font-bold text-[#8aebff]">
+                          v5.4.0
                         </span>
                         {!isOnline && (
-                          <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 font-mono text-[9px] font-bold text-amber-300">
+                          <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 font-mono text-[10px] font-bold text-amber-300">
                             Offline
                           </span>
                         )}
@@ -1449,7 +1449,7 @@ export function App() {
                       <button
                         type="button"
                         onClick={() => setAndroidMenuOpen((o) => !o)}
-                        className="text-left font-mono text-[10px] text-[#4edea3] font-semibold truncate pt-0.5"
+                        className="text-left font-mono text-xs text-[#4edea3] font-bold truncate pt-0.5"
                       >
                         {mode === 'live_camera'
                           ? `Modo: ${getPresetById(streetFeatures.activePreset).shortTitle} ▾`
@@ -2198,61 +2198,60 @@ export function App() {
               </div>
             )}
 
-            {/* Compact Control Buttons & Window Selector Card */}
-            <div className="shrink-0 flex flex-col gap-1.5 p-2 rounded-xl bg-[#181c24] border border-[#3c494c]/40 shadow-sm">
-              {/* Row 1: Vision Input Sources + 1-Tap Presets */}
-              <div className="flex flex-wrap items-center justify-between gap-1.5">
-                <div className="flex flex-wrap items-center gap-1">
+            {/* Legible Control Buttons & Window Selector Card */}
+            <div className="shrink-0 flex flex-col gap-2 p-2.5 rounded-xl bg-[#181c24] border border-[#3c494c]/50 shadow-sm">
+              {/* Row 1: Vision Input Sources + 1-Tap Context Modes */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
                     onClick={() => handleModeChange('simulation')}
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold border ${mode === 'simulation'
-                        ? 'bg-cyan-500/20 border-cyan-400/70 text-cyan-200'
-                        : 'bg-[#0f131c] border-[#3c494c]/40 text-slate-300 hover:text-white'
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold border ${mode === 'simulation'
+                        ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
+                        : 'bg-[#0f131c] border-[#3c494c]/50 text-slate-300 hover:text-white'
                       }`}
                   >
-                    <Eye className="w-3.5 h-3.5" />
+                    <Eye className="w-4 h-4" />
                     Escenas
                   </button>
                   <button
                     type="button"
                     onClick={() => handleModeChange('vision_lab')}
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold border ${mode === 'vision_lab'
-                        ? 'bg-emerald-500/20 border-emerald-400/70 text-emerald-200'
-                        : 'bg-[#0f131c] border-[#3c494c]/40 text-slate-300 hover:text-white'
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold border ${mode === 'vision_lab'
+                        ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
+                        : 'bg-[#0f131c] border-[#3c494c]/50 text-slate-300 hover:text-white'
                       }`}
                   >
-                    <FlaskConical className="w-3.5 h-3.5" />
+                    <FlaskConical className="w-4 h-4" />
                     Subir Foto
                   </button>
                   <button
                     type="button"
                     onClick={() => handleModeChange('video_lab')}
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold border ${mode === 'video_lab'
-                        ? 'bg-cyan-500/20 border-cyan-400/70 text-cyan-200'
-                        : 'bg-[#0f131c] border-[#3c494c]/40 text-slate-300 hover:text-white'
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold border ${mode === 'video_lab'
+                        ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
+                        : 'bg-[#0f131c] border-[#3c494c]/50 text-slate-300 hover:text-white'
                       }`}
                   >
-                    <Film className="w-3.5 h-3.5" />
+                    <Film className="w-4 h-4" />
                     Subir Video
                   </button>
                   <button
                     type="button"
                     onClick={() => handleModeChange('live_camera')}
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold border ${mode === 'live_camera'
-                        ? 'bg-amber-500/20 border-amber-400/70 text-amber-200'
-                        : 'bg-[#0f131c] border-[#3c494c]/40 text-slate-300 hover:text-white'
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold border ${mode === 'live_camera'
+                        ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+                        : 'bg-[#0f131c] border-[#3c494c]/50 text-slate-300 hover:text-white'
                       }`}
                   >
-                    <Video className="w-3.5 h-3.5" />
+                    <Video className="w-4 h-4" />
                     Cámara
                   </button>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-1">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {APP_PRESETS.map((preset) => {
                     const isSelected =
-                      mode === 'live_camera' &&
                       (streetFeatures.activePreset ?? 'indoor') === preset.id;
                     return (
                       <button
@@ -2270,10 +2269,10 @@ export function App() {
                           setAutoStartCamera(true);
                           speakText(preset.spokenConfirm);
                         }}
-                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-extrabold border transition-colors ${
                           isSelected
-                            ? 'bg-[#22d3ee] text-[#00363e] border-[#22d3ee]'
-                            : 'bg-[#0f131c] text-[#bbc9cd] border-[#3c494c]/40 hover:border-[#8aebff]/50'
+                            ? 'bg-[#22d3ee] text-[#00363e] border-[#22d3ee] shadow-sm'
+                            : 'bg-[#0f131c] text-[#dfe2ee] border-[#3c494c]/50 hover:border-[#8aebff]/60'
                         }`}
                       >
                         {preset.shortTitle}
@@ -2283,73 +2282,64 @@ export function App() {
                 </div>
               </div>
 
-              {/* Row 2: Window Selector Tabs (shows ONE clean window at a time with zero scroll) + 3D/Step Badges */}
-              <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-[#3c494c]/30">
-                <div className="flex flex-wrap items-center gap-1 bg-[#0a0e16] p-1 rounded-lg border border-[#3c494c]/40">
+              {/* Row 2: Window Selector Tabs (shows ONE clean window at a time with large legible text) */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#3c494c]/40">
+                <div className="flex flex-wrap items-center gap-1.5 bg-[#0a0e16] p-1 rounded-xl border border-[#3c494c]/50">
                   <button
                     type="button"
                     onClick={() => setEcosystemTab('core')}
-                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${ecosystemTab === 'core'
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${ecosystemTab === 'core'
                         ? 'bg-cyan-500 text-slate-950'
                         : 'text-slate-300 hover:text-white'
                       }`}
                   >
-                    <Sparkles className="w-3.5 h-3.5" />
+                    <Sparkles className="w-4 h-4" />
                     Detecciones ({activeDetections.length})
                   </button>
                   <button
                     type="button"
                     onClick={() => setEcosystemTab('voice')}
-                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${ecosystemTab === 'voice'
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${ecosystemTab === 'voice'
                         ? 'bg-cyan-500 text-slate-950'
                         : 'text-slate-300 hover:text-white'
                       }`}
                   >
-                    <MessageSquare className="w-3.5 h-3.5" />
+                    <MessageSquare className="w-4 h-4" />
                     Asistente Voz
                   </button>
                   <button
                     type="button"
                     onClick={() => setEcosystemTab('pipeline')}
-                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${ecosystemTab === 'pipeline'
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${ecosystemTab === 'pipeline'
                         ? 'bg-cyan-500 text-slate-950'
                         : 'text-slate-300 hover:text-white'
                       }`}
                   >
-                    <GitBranch className="w-3.5 h-3.5" />
+                    <GitBranch className="w-4 h-4" />
                     Cómo Piensa
                   </button>
                   <button
                     type="button"
                     onClick={() => setEcosystemTab('map')}
-                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${ecosystemTab === 'map'
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${ecosystemTab === 'map'
                         ? 'bg-cyan-500 text-slate-950'
                         : 'text-slate-300 hover:text-white'
                       }`}
                   >
-                    <MapPin className="w-3.5 h-3.5" />
+                    <MapPin className="w-4 h-4" />
                     Mapa GPS
                   </button>
                   <button
                     type="button"
                     onClick={() => setEcosystemTab('tech')}
-                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${ecosystemTab === 'tech'
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${ecosystemTab === 'tech'
                         ? 'bg-cyan-500 text-slate-950'
                         : 'text-slate-300 hover:text-white'
                       }`}
                   >
-                    <Cpu className="w-3.5 h-3.5" />
+                    <Cpu className="w-4 h-4" />
                     Ficha Técnica
                   </button>
-                </div>
-
-                <div className="hidden xl:flex items-center gap-1 text-[10px] font-mono">
-                  <span className="px-2 py-0.5 rounded-md bg-[#0a0e16] border border-cyan-500/30 text-cyan-200">
-                    3D: {cameraCalibrationService.getCalibration().statusBadge}
-                  </span>
-                  <span className="px-2 py-0.5 rounded-md bg-[#0a0e16] border border-emerald-500/30 text-emerald-300">
-                    {pedestrianNavigationService.getState().statusBadge}
-                  </span>
                 </div>
               </div>
             </div>
@@ -2364,6 +2354,7 @@ export function App() {
                   evaluation={evaluation}
                   highlightedDetectionId={highlightedDetectionId}
                   detectorModelName={detectorService.getStatus().modelName}
+                  activePreset={streetFeatures.activePreset}
                   onChangePolicy={setPolicy}
                   onHighlightDetection={setHighlightedDetectionId}
                 />

@@ -10,9 +10,22 @@ import {
   ShieldCheck,
   Gauge,
   Download,
+  Compass,
+  Footprints,
+  Filter,
 } from 'lucide-react';
-import type { Detection, OperationMode, PolicyEvaluation, PolicyType } from '../types/avicia';
+import type {
+  AppPresetId,
+  Detection,
+  OperationMode,
+  PolicyEvaluation,
+  PolicyType,
+} from '../types/avicia';
 import { telemetryService } from '../services/TelemetryService';
+import { cameraCalibrationService } from '../services/CameraCalibrationService';
+import { pedestrianNavigationService } from '../services/PedestrianNavigationService';
+import { getPresetById } from '../services/AppPresets';
+import { formatDistanceSteps } from '../services/MessagePolicy';
 
 interface ProcessingPanelProps {
   mode: OperationMode;
@@ -21,6 +34,7 @@ interface ProcessingPanelProps {
   evaluation: PolicyEvaluation | null;
   highlightedDetectionId: string | null;
   detectorModelName?: string;
+  activePreset?: AppPresetId;
   onChangePolicy: (policy: PolicyType) => void;
   onHighlightDetection: (id: string | null) => void;
 }
@@ -32,6 +46,7 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
   evaluation,
   highlightedDetectionId,
   detectorModelName,
+  activePreset = 'indoor',
   onChangePolicy,
   onHighlightDetection,
 }) => {
@@ -45,6 +60,10 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
 
   const isAlert = Boolean(evaluation?.obstacleAlert);
   const telemetryStats = telemetryService.getStats();
+  const cal = cameraCalibrationService.getCalibration();
+  const nav = pedestrianNavigationService.getState();
+  const presetInfo = getPresetById(activePreset);
+
   const shortModelLabel =
     mode === 'simulation'
       ? 'Simulado'
@@ -59,6 +78,13 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
               : detectorModelName?.includes('Lite2')
                 ? 'Lite2'
                 : 'Lite0';
+
+  const getDirectOrientationLabel = (det: Detection): string => {
+    const cx = det.bbox.x + det.bbox.width / 2;
+    if (cx < 36) return 'A tu izquierda';
+    if (cx > 64) return 'A tu derecha';
+    return 'Al frente';
+  };
 
   const handleExportCsv = () => {
     const csv = telemetryService.exportCsv();
@@ -85,22 +111,22 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
   return (
     <section
       aria-label="Procesamiento inteligente"
-      className="flex flex-col h-full min-h-0 gap-2 overflow-hidden"
+      className="flex flex-col h-full min-h-0 gap-2.5 overflow-hidden"
     >
-      {/* 1. Stitch Safety Protocol & Policy Banner (C00 / C01) */}
+      {/* 1. Prominent Policy & Active Vocalization Banner */}
       <div
-        className={`p-2.5 rounded-xl border flex flex-wrap items-center justify-between gap-2 shrink-0 shadow-sm ${
+        className={`p-3 rounded-xl border flex flex-wrap items-center justify-between gap-3 shrink-0 shadow-sm ${
           isAlert
-            ? 'bg-gradient-to-r from-[#ffb147]/15 via-[#1c2028] to-[#1c2028] border-[#ffb147]/45'
-            : 'bg-gradient-to-r from-[#22d3ee]/12 via-[#1c2028] to-[#1c2028] border-[#3c494c]/50'
+            ? 'bg-gradient-to-r from-[#ffb147]/20 via-[#1c2028] to-[#1c2028] border-[#ffb147]/50'
+            : 'bg-gradient-to-r from-[#22d3ee]/15 via-[#1c2028] to-[#1c2028] border-[#3c494c]/60'
         }`}
       >
-        <div className="flex items-start gap-2.5 min-w-0 flex-1">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           <div
-            className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
               isAlert
-                ? 'bg-[#ffb147]/20 text-[#ffddb8]'
-                : 'bg-[#22d3ee]/15 text-[#8aebff]'
+                ? 'bg-[#ffb147]/25 text-[#ffddb8]'
+                : 'bg-[#22d3ee]/20 text-[#8aebff]'
             }`}
           >
             {isAlert ? (
@@ -112,34 +138,33 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span
-                className={`font-mono text-xs font-bold uppercase tracking-wide ${
+                className={`font-mono text-xs sm:text-sm font-extrabold uppercase tracking-wide ${
                   isAlert ? 'text-[#ffb147]' : 'text-[#8aebff]'
                 }`}
               >
-                POLÍTICA {policy} ACTIVADA:{' '}
-                {policy === 'C01' ? 'Prioridad y Novedad' : 'Orden de Llegada'}
+                POLÍTICA {policy}: {policy === 'C01' ? 'PRIORIDAD Y NOVEDAD' : 'ORDEN DE LLEGADA'}
               </span>
               <span
-                className={`px-1.5 py-0.5 rounded font-mono text-[9px] font-black uppercase ${
+                className={`px-2 py-0.5 rounded-md font-mono text-[11px] font-black uppercase ${
                   isAlert
                     ? 'bg-[#ffb147] text-[#2a1700]'
-                    : 'bg-[#4edea3]/20 text-[#4edea3]'
+                    : 'bg-[#4edea3]/20 text-[#4edea3] border border-[#4edea3]/40'
                 }`}
               >
                 {isAlert ? 'Obstáculo Frontal' : mode === 'simulation' ? 'Simulado' : 'En Vivo'}
               </span>
             </div>
-            <p className="text-xs text-[#dfe2ee] mt-1 leading-relaxed">
+            <p className="text-sm sm:text-base font-semibold text-white mt-0.5 leading-snug truncate">
               {evaluation?.obstacleAlert
                 ? evaluation.obstacleAlert.message
-                : evaluation?.reason ?? 'Evaluando contexto espacial.'}
+                : evaluation?.generatedMessage ?? evaluation?.reason ?? 'Evaluando contexto espacial.'}
             </p>
           </div>
         </div>
 
         {/* Policy Switcher Pills (C00 / C01) */}
         <div
-          className="flex items-center gap-1 bg-[#0a0e16] p-1 rounded-lg border border-[#3c494c]/40 shrink-0"
+          className="flex items-center gap-1.5 bg-[#0a0e16] p-1 rounded-xl border border-[#3c494c]/50 shrink-0"
           role="radiogroup"
           aria-label="Política de selección"
         >
@@ -148,7 +173,7 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
             role="radio"
             aria-checked={policy === 'C00'}
             onClick={() => onChangePolicy('C00')}
-            className={`px-2.5 py-1 rounded-md font-mono text-[11px] font-semibold transition-colors ${
+            className={`px-3 py-1.5 rounded-lg font-mono text-xs font-extrabold transition-colors ${
               policy === 'C00'
                 ? 'bg-[#22d3ee] text-[#00363e]'
                 : 'text-[#bbc9cd] hover:text-white'
@@ -161,7 +186,7 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
             role="radio"
             aria-checked={policy === 'C01'}
             onClick={() => onChangePolicy('C01')}
-            className={`px-2.5 py-1 rounded-md font-mono text-[11px] font-semibold transition-colors ${
+            className={`px-3 py-1.5 rounded-lg font-mono text-xs font-extrabold transition-colors ${
               policy === 'C01'
                 ? 'bg-[#22d3ee] text-[#00363e]'
                 : 'text-[#bbc9cd] hover:text-white'
@@ -172,128 +197,186 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
         </div>
       </div>
 
-      {/* 2. Stitch Real-Time Spatial Detections Table */}
-      <div className="flex-1 min-h-0 bg-[#181c24] rounded-xl border border-[#3c494c]/40 flex flex-col overflow-hidden shadow-md">
-        <div className="px-3 py-2 bg-[#1c2028] border-b border-[#3c494c]/30 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[#8aebff]" />
-            <span className="text-xs sm:text-sm font-semibold text-[#dfe2ee]">
-              Registro de Detecciones Espaciales
+      {/* 2. Spatial Detections Table + Live Sensor/Mode Context Grid (Fills 100% height with zero empty void!) */}
+      <div className="flex-1 min-h-0 bg-[#181c24] rounded-xl border border-[#3c494c]/50 flex flex-col justify-between overflow-hidden shadow-md">
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="px-4 py-2.5 bg-[#1c2028] border-b border-[#3c494c]/40 flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-[#8aebff]" />
+              <span className="text-sm sm:text-base font-extrabold text-white">
+                Registro de Detecciones Espaciales
+              </span>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full bg-[#4edea3]/15 border border-[#4edea3]/40 font-mono text-xs font-bold text-[#4edea3]">
+              {detections.length} {detections.length === 1 ? 'Entidad Detectada' : 'Entidades Detectadas'}
             </span>
           </div>
-          <span className="font-mono text-[11px] text-[#4edea3]">
-            {detections.length} {detections.length === 1 ? 'Entidad' : 'Entidades'}
-          </span>
+
+          <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto">
+            {detections.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center p-6 text-center">
+                <ShieldCheck className="w-8 h-8 text-[#4edea3] mb-2" />
+                <p className="text-base font-bold text-slate-100">
+                  Corredor frontal despejado · Sin obstáculos críticos
+                </p>
+                <p className="text-xs sm:text-sm text-[#bbc9cd] mt-1">
+                  El filtro contextual ({presetInfo.title}) está activo y monitoreando el camino.
+                </p>
+              </div>
+            ) : (
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-[#0a0e16]/90 text-[#8aebff] font-mono text-xs uppercase border-b border-[#3c494c]/40">
+                    <th className="py-2.5 px-4 font-bold">Objeto Detectado</th>
+                    <th className="py-2.5 px-3 font-bold">Orientación Directa</th>
+                    <th className="py-2.5 px-3 font-bold">Distancia / Pasos</th>
+                    <th className="py-2.5 px-3 font-bold">Confianza</th>
+                    <th className="py-2.5 px-4 font-bold text-right">Estado Audio</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#3c494c]/25 text-sm text-[#dfe2ee]">
+                  {detections.map((det) => {
+                    const isSelected = evaluation?.selectedDetectionIds.includes(det.id) ?? false;
+                    const isHighlighted = highlightedDetectionId === det.id;
+                    const isObstacle = det.isInanimateObstacle && det.proximityZone !== 'side';
+                    const stepDesc = formatDistanceSteps(det.estimatedMeters);
+
+                    return (
+                      <tr
+                        key={det.id}
+                        onMouseEnter={() => onHighlightDetection(det.id)}
+                        onMouseLeave={() => onHighlightDetection(null)}
+                        className={`transition-colors cursor-pointer ${
+                          isHighlighted
+                            ? 'bg-[#22d3ee]/20'
+                            : isObstacle
+                              ? 'bg-[#ffb147]/10 hover:bg-[#ffb147]/18'
+                              : 'hover:bg-[#1c2028]'
+                        }`}
+                      >
+                        <td className="py-3 px-4 font-extrabold text-sm sm:text-base flex items-center gap-2.5">
+                          <span
+                            className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                              isObstacle
+                                ? 'bg-[#ffb147] animate-ping'
+                                : isSelected
+                                  ? 'bg-[#4edea3]'
+                                  : 'bg-[#8aebff]'
+                            }`}
+                          />
+                          <span className={isObstacle ? 'text-[#ffd6a7]' : 'text-white'}>
+                            {det.labelEs}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 font-semibold text-xs sm:text-sm text-[#8aebff]">
+                          {getDirectOrientationLabel(det)}
+                        </td>
+                        <td className="py-3 px-3 font-mono text-xs sm:text-sm text-slate-200">
+                          {typeof det.estimatedMeters === 'number'
+                            ? `${det.estimatedMeters} m (${stepDesc})`
+                            : det.proximityZone === 'front_close'
+                              ? 'Cerca (1–2 pasos)'
+                              : 'Escena'}
+                        </td>
+                        <td className="py-3 px-3 font-mono text-xs sm:text-sm font-bold text-[#4edea3]">
+                          {typeof det.confidence === 'number'
+                            ? `${Math.round(det.confidence * 100)}%`
+                            : 'Escena POV'}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {isObstacle ? (
+                            <span className="px-2.5 py-1 rounded-md bg-[#ffb147] text-[#2a1700] font-mono text-xs font-extrabold">
+                              ALERTA FRONTAL
+                            </span>
+                          ) : isSelected ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[#4edea3]/20 text-[#4edea3] border border-[#4edea3]/40 font-mono text-xs font-bold">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              VOCALIZADO
+                            </span>
+                          ) : det.confirmationStatus === 'pending' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[#262a33] text-[#ffb147] font-mono text-xs font-semibold">
+                              <Clock className="w-3.5 h-3.5" />
+                              CONFIRMANDO
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-1 rounded-md bg-[#262a33] text-[#bbc9cd] font-mono text-xs font-semibold">
+                              EN ESCENA
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
 
-        <div className="flex-1 overflow-x-auto overflow-y-auto">
-          {detections.length === 0 ? (
-            <div className="p-6 text-center text-xs text-[#bbc9cd]">
-              No hay detecciones registradas en este momento.
+        {/* Live Context, Calibration & Odometry Strip inside the card (eliminates empty black void!) */}
+        <div className="shrink-0 grid grid-cols-1 md:grid-cols-3 gap-2.5 p-3 bg-[#12161f] border-t border-[#3c494c]/40">
+          <div className="p-2.5 rounded-xl bg-[#181c24] border border-cyan-500/30 flex items-start gap-2.5">
+            <Filter className="w-5 h-5 text-[#22d3ee] shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="text-xs font-extrabold text-[#8aebff] uppercase">
+                Filtro Contextual: {presetInfo.shortTitle}
+              </div>
+              <p className="text-xs text-slate-300 mt-0.5 leading-snug line-clamp-2">
+                {activePreset === 'indoor'
+                  ? 'Prioriza escritorios, sillas, puertas, cortinas y pizarras. Bloquea estufas y refrigeradores.'
+                  : activePreset === 'home'
+                    ? 'Habilita muebles del hogar, cocina (estufa, refrigerador) y dormitorios.'
+                    : activePreset === 'street'
+                      ? 'Exclusivo para calle: vehículos, peatones, postes y gradas.'
+                      : presetInfo.subtitle}
+              </p>
             </div>
-          ) : (
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#0a0e16]/80 text-[#bbc9cd] font-mono text-[10px] uppercase border-b border-[#3c494c]/30">
-                  <th className="py-2 px-3 font-semibold">Entidad / Objeto</th>
-                  <th className="py-2 px-3 font-semibold">Categoría</th>
-                  <th className="py-2 px-3 font-semibold">Zona</th>
-                  <th className="py-2 px-3 font-semibold">Confianza</th>
-                  <th className="py-2 px-3 font-semibold text-right">Prioridad Audio</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#3c494c]/20 text-xs text-[#dfe2ee]">
-                {detections.map((det) => {
-                  const isSelected = evaluation?.selectedDetectionIds.includes(det.id) ?? false;
-                  const isHighlighted = highlightedDetectionId === det.id;
-                  const isObstacle = det.isInanimateObstacle && det.proximityZone !== 'side';
+          </div>
 
-                  return (
-                    <tr
-                      key={det.id}
-                      onMouseEnter={() => onHighlightDetection(det.id)}
-                      onMouseLeave={() => onHighlightDetection(null)}
-                      className={`transition-colors cursor-pointer ${
-                        isHighlighted
-                          ? 'bg-[#22d3ee]/15'
-                          : isObstacle
-                            ? 'bg-[#ffb147]/8 hover:bg-[#ffb147]/15'
-                            : 'hover:bg-[#1c2028]'
-                      }`}
-                    >
-                      <td className="py-2.5 px-3 font-semibold flex items-center gap-2">
-                        <span
-                          className={`w-2 h-2 rounded-full shrink-0 ${
-                            isObstacle
-                              ? 'bg-[#ffb147] animate-ping'
-                              : isSelected
-                                ? 'bg-[#4edea3]'
-                                : 'bg-[#8aebff]'
-                          }`}
-                        />
-                        <span className={isObstacle ? 'text-[#ffd6a7]' : 'text-[#dfe2ee]'}>
-                          {det.labelEs}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 font-mono text-[11px] text-[#bbc9cd]">
-                        {det.category}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono text-[11px] text-[#bbc9cd]">
-                        {det.proximityZone === 'front_close'
-                          ? 'Frontal cerca'
-                          : det.proximityZone === 'front_mid'
-                            ? 'Frontal medio'
-                            : det.proximityZone === 'side'
-                              ? 'Lateral'
-                              : 'Escena'}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono text-[11px] text-[#4edea3]">
-                        {typeof det.confidence === 'number'
-                          ? `${Math.round(det.confidence * 100)}%`
-                          : 'Simulado'}
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        {isObstacle ? (
-                          <span className="px-2 py-0.5 rounded bg-[#ffb147] text-[#2a1700] font-mono text-[10px] font-bold">
-                            ALTA / ALERTA
-                          </span>
-                        ) : isSelected ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#4edea3]/15 text-[#4edea3] font-mono text-[10px] font-semibold">
-                            <CheckCircle2 className="w-3 h-3" />
-                            VOCALIZADO
-                          </span>
-                        ) : det.confirmationStatus === 'pending' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#262a33] text-[#ffb147] font-mono text-[10px]">
-                            <Clock className="w-3 h-3" />
-                            PENDIENTE
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded bg-[#262a33] text-[#bbc9cd] font-mono text-[10px]">
-                            SECUNDARIA
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
+          <div className="p-2.5 rounded-xl bg-[#181c24] border border-emerald-500/30 flex items-start gap-2.5">
+            <Compass className="w-5 h-5 text-[#4edea3] shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="text-xs font-extrabold text-[#4edea3] uppercase">
+                Calibración 3D (±45° Auto)
+              </div>
+              <p className="text-xs text-slate-200 font-semibold mt-0.5">
+                {cal.statusBadge} · Inclinación {cal.pitchDownDeg > 0 ? `+${cal.pitchDownDeg}°` : `${cal.pitchDownDeg}°`}
+              </p>
+              <p className="text-[11px] text-slate-400">
+                Horizonte dinámico al {cal.horizonRowPct}% · Autorregulado sin alarmas
+              </p>
+            </div>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-[#181c24] border border-amber-500/30 flex items-start gap-2.5">
+            <Footprints className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="text-xs font-extrabold text-amber-300 uppercase">
+                Odometría GPS + Podómetro
+              </div>
+              <p className="text-xs text-slate-200 font-semibold mt-0.5">
+                {nav.totalSteps} pasos ({nav.estimatedMetersMoved} m) · Época #{nav.movementEpoch}
+              </p>
+              <p className="text-[11px] text-slate-400">
+                Descarta audios e inferencias de la posición previa en &lt;60 ms
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* 3. Stitch 4 Hardware & Pipeline KPI Cards */}
+      {/* 3. Large, High-Contrast 4 Hardware & Pipeline KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 shrink-0">
-        <div className="p-2.5 bg-[#181c24] rounded-xl border border-[#3c494c]/40 flex flex-col justify-between">
+        <div className="p-3 bg-[#181c24] rounded-xl border border-[#3c494c]/50 flex flex-col justify-between">
           <div className="flex items-center justify-between text-[#bbc9cd]">
-            <span className="font-mono text-[10px] uppercase">Motor Visión</span>
-            <Gauge className="w-3.5 h-3.5 text-[#4edea3]" />
+            <span className="font-mono text-xs font-bold uppercase">Motor Visión</span>
+            <Gauge className="w-4 h-4 text-[#4edea3]" />
           </div>
           <div className="my-1">
-            <span className="font-mono text-base font-bold text-[#4edea3]">
+            <span className="font-mono text-lg sm:text-xl font-black text-[#4edea3]">
               {shortModelLabel}
             </span>
-            <span className="font-mono text-[10px] text-[#bbc9cd] block">
+            <span className="font-mono text-xs text-slate-300 block">
               {mode === 'simulation'
                 ? 'Escenas POV'
                 : telemetryStats.count > 0
@@ -301,46 +384,46 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
                   : 'WASM / ONNX Local'}
             </span>
           </div>
-          <div className="w-full bg-[#31353e] h-1 rounded-full overflow-hidden">
+          <div className="w-full bg-[#31353e] h-1.5 rounded-full overflow-hidden">
             <div className="bg-[#4edea3] h-full rounded-full w-4/5" />
           </div>
         </div>
 
-        <div className="p-2.5 bg-[#181c24] rounded-xl border border-[#3c494c]/40 flex flex-col justify-between">
+        <div className="p-3 bg-[#181c24] rounded-xl border border-[#3c494c]/50 flex flex-col justify-between">
           <div className="flex items-center justify-between text-[#bbc9cd]">
-            <span className="font-mono text-[10px] uppercase">Entidades</span>
-            <Eye className="w-3.5 h-3.5 text-[#8aebff]" />
+            <span className="font-mono text-xs font-bold uppercase">Entidades</span>
+            <Eye className="w-4 h-4 text-[#8aebff]" />
           </div>
           <div className="my-1">
-            <span className="font-mono text-base font-bold text-[#8aebff]">
+            <span className="font-mono text-lg sm:text-xl font-black text-[#8aebff]">
               {detections.length}
             </span>
-            <span className="font-mono text-[10px] text-[#bbc9cd] block">
-              {evaluation?.selectedDetectionIds.length ?? 0} seleccionadas
+            <span className="font-mono text-xs text-slate-300 block">
+              {evaluation?.selectedDetectionIds.length ?? 0} vocalizadas
             </span>
           </div>
-          <div className="w-full bg-[#31353e] h-1 rounded-full overflow-hidden">
+          <div className="w-full bg-[#31353e] h-1.5 rounded-full overflow-hidden">
             <div
               className="bg-[#8aebff] h-full rounded-full"
-              style={{ width: `${Math.min(100, Math.max(15, detections.length * 22))}%` }}
+              style={{ width: `${Math.min(100, Math.max(18, detections.length * 22))}%` }}
             />
           </div>
         </div>
 
-        <div className="p-2.5 bg-[#181c24] rounded-xl border border-[#3c494c]/40 flex flex-col justify-between">
+        <div className="p-3 bg-[#181c24] rounded-xl border border-[#3c494c]/50 flex flex-col justify-between">
           <div className="flex items-center justify-between text-[#bbc9cd]">
-            <span className="font-mono text-[10px] uppercase">Confianza</span>
-            <Activity className="w-3.5 h-3.5 text-[#2fd9f4]" />
+            <span className="font-mono text-xs font-bold uppercase">Confianza</span>
+            <Activity className="w-4 h-4 text-[#2fd9f4]" />
           </div>
           <div className="my-1">
-            <span className="font-mono text-base font-bold text-[#2fd9f4]">
-              {avgConf !== null ? `${avgConf}%` : 'Demo'}
+            <span className="font-mono text-lg sm:text-xl font-black text-[#2fd9f4]">
+              {avgConf !== null ? `${avgConf}%` : 'Demo POV'}
             </span>
-            <span className="font-mono text-[10px] text-[#bbc9cd] block">
-              {avgConf !== null ? 'Promedio real' : 'Sin puntaje ficticio'}
+            <span className="font-mono text-xs text-slate-300 block">
+              {avgConf !== null ? 'Promedio real' : 'Escenario validado'}
             </span>
           </div>
-          <div className="w-full bg-[#31353e] h-1 rounded-full overflow-hidden">
+          <div className="w-full bg-[#31353e] h-1.5 rounded-full overflow-hidden">
             <div
               className="bg-[#2fd9f4] h-full rounded-full"
               style={{ width: `${avgConf ?? 85}%` }}
@@ -348,27 +431,27 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
           </div>
         </div>
 
-        <div className="p-2.5 bg-[#181c24] rounded-xl border border-[#3c494c]/40 flex flex-col justify-between">
+        <div className="p-3 bg-[#181c24] rounded-xl border border-[#3c494c]/50 flex flex-col justify-between">
           <div className="flex items-center justify-between text-[#bbc9cd]">
-            <span className="font-mono text-[10px] uppercase">Política</span>
-            <ShieldCheck className="w-3.5 h-3.5 text-[#6ffbbe]" />
+            <span className="font-mono text-xs font-bold uppercase">Política</span>
+            <ShieldCheck className="w-4 h-4 text-[#6ffbbe]" />
           </div>
           <div className="my-1">
-            <span className="font-mono text-base font-bold text-[#6ffbbe]">{policy}</span>
-            <span className="font-mono text-[10px] text-[#bbc9cd] block">
+            <span className="font-mono text-lg sm:text-xl font-black text-[#6ffbbe]">{policy}</span>
+            <span className="font-mono text-xs text-slate-300 block">
               {policy === 'C01' ? 'Prioridad activa' : 'Orden llegada'}
             </span>
           </div>
-          <div className="w-full bg-[#31353e] h-1 rounded-full overflow-hidden">
+          <div className="w-full bg-[#31353e] h-1.5 rounded-full overflow-hidden">
             <div className="bg-[#6ffbbe] h-full rounded-full w-full" />
           </div>
         </div>
       </div>
 
-      {/* 4. Stitch Academic UAM Footer Strip */}
-      <div className="px-3 py-2 bg-[#0a0e16] rounded-xl border border-[#3c494c]/35 flex flex-wrap items-center justify-between gap-2 shrink-0 text-[11px] text-[#bbc9cd]">
-        <div className="flex items-center gap-2.5">
-          <div className="bg-white px-2.5 py-1 rounded-lg flex items-center shrink-0">
+      {/* 4. Prominent Academic UAM Footer Strip */}
+      <div className="px-3.5 py-2 bg-[#0a0e16] rounded-xl border border-[#3c494c]/50 flex flex-wrap items-center justify-between gap-2 shrink-0 text-xs text-slate-200">
+        <div className="flex items-center gap-3">
+          <div className="bg-white px-3 py-1 rounded-lg flex items-center shrink-0 shadow-sm">
             <img
               src="/uam-logo.png"
               alt="Universidad Americana UAM"
@@ -376,10 +459,12 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
             />
           </div>
           <div className="leading-tight">
-            <span className="text-[#8aebff] font-bold uppercase tracking-wide text-[11px]">
-              Proyecto AVISIA
+            <span className="text-[#8aebff] font-extrabold uppercase tracking-wide text-xs sm:text-sm">
+              PROYECTO AVISIA v5.4.0
             </span>
-            <span className="text-[#bbc9cd] ml-1.5">· Asistencia Visual Inteligente — UAM</span>
+            <span className="text-slate-300 font-medium ml-1.5">
+              · Asistencia Visual Inteligente — UAM Managua
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -388,25 +473,25 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
               <button
                 type="button"
                 onClick={handleExportCsv}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#181c24] hover:bg-[#262a33] border border-[#3c494c]/50 text-[#8aebff] font-mono text-[10px] font-semibold transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#181c24] hover:bg-[#262a33] border border-[#3c494c]/60 text-[#8aebff] font-mono text-xs font-bold transition-colors"
                 title="Exportar latencias y detecciones de campo en CSV"
               >
-                <Download className="w-3 h-3" />
+                <Download className="w-3.5 h-3.5" />
                 CSV ({telemetryStats.avgLatencyMs}ms · n={telemetryStats.count})
               </button>
               <button
                 type="button"
                 onClick={handleExportJson}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#181c24] hover:bg-[#262a33] border border-[#4edea3]/40 text-[#4edea3] font-mono text-[10px] font-semibold transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#181c24] hover:bg-[#262a33] border border-[#4edea3]/50 text-[#4edea3] font-mono text-xs font-bold transition-colors"
                 title="Exportar paquete anónimo de investigación en JSON"
               >
-                <Download className="w-3 h-3" />
+                <Download className="w-3.5 h-3.5" />
                 JSON
               </button>
             </>
           )}
-          <span className="text-[#4edea3] font-mono text-[10px] flex items-center gap-1 font-medium">
-            <ShieldCheck className="w-3.5 h-3.5" />
+          <span className="text-[#4edea3] font-mono text-xs flex items-center gap-1 font-bold">
+            <ShieldCheck className="w-4 h-4" />
             Políticas de Seguridad Cumplidas
           </span>
         </div>

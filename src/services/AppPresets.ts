@@ -12,24 +12,25 @@ export interface AppPresetDefinition {
 }
 
 /**
- * 5 human-centered general modes (v5.1) that consolidate all 15+ technical vision,
- * depth, segmentation, and audio switches into simple one-tap buttons for both Web and Android.
+ * 6 context-aware human-centered usage modes (v5.4.0):
+ * Each mode automatically configures the neural models, audio cadence, AND filters the allowed
+ * object ontology (e.g. Office mode blocks Stove/Fridge/Bed; Home mode allows them; Street mode blocks all indoor appliances).
  */
 export const APP_PRESETS: AppPresetDefinition[] = [
   {
     id: 'indoor',
-    title: '1. Interiores (Casa y Oficina)',
-    shortTitle: 'Interiores',
-    subtitle: 'Recomendado bajo techo',
+    title: '1. Oficina y Aula (UAM / Trabajo)',
+    shortTitle: 'Oficina',
+    subtitle: 'Aulas y pasillos',
     description:
-      'Detecta puertas abiertas o cerradas, paredes, escritorios, sillas y gradas, y avisa cuando el pasillo está despejado.',
+      'Optimizado para oficinas y aulas: detecta escritorios, sillas, puertas, cortinas, pizarras, paredes y extintores. Bloquea falsas alarmas de cocina (estufas o refrigeradores).',
     includedSummary: [
-      '366 objetos interiores + Puertas y Paredes',
-      'Detector 3D de camino despejado y gradas',
-      'Voz tranquila (solo avisa lo importante)',
+      'Filtro contextual de oficina (sin estufas ni refris)',
+      'Puertas, cortinas, pizarras, escritorios y camino libre',
+      'Orientación directa (al frente / izquierda / derecha)',
     ],
     spokenConfirm:
-      'Modo Interiores activado. Detección de puertas, paredes, muebles y camino despejado.',
+      'Modo Oficina y Aula activado. Filtro de objetos de oficina, puertas, paredes y camino despejado.',
     features: {
       activePreset: 'indoor',
       detectorEngine: 'dfine_s_obj365',
@@ -42,7 +43,39 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       soundOnlyMode: false,
       handsFreeWakeWord: false,
       headsetButton: false,
-      clockFaceDirections: true,
+      clockFaceDirections: false,
+      showStixelOverlay: true,
+      offlineVlmEnabled: false,
+      autoEscalateLowConfVlm: true,
+    },
+  },
+  {
+    id: 'home',
+    title: '2. Casa y Hogar (Vivienda)',
+    shortTitle: 'Casa',
+    subtitle: 'Sala, cocina y cuartos',
+    description:
+      'Para el hogar: habilita electrodomésticos y muebles domésticos (refrigerador, estufa, microondas, cama, sillón, mesa, silla, puertas y cortinas) con alta confianza.',
+    includedSummary: [
+      'Habilita refrigerador, estufa, cama y sillón',
+      'Detecta puertas, cortinas, mesas y escaleras',
+      'Orientación directa (al frente / izquierda / derecha)',
+    ],
+    spokenConfirm:
+      'Modo Casa y Hogar activado. Detección de muebles domésticos, cocina, puertas y camino libre.',
+    features: {
+      activePreset: 'home',
+      detectorEngine: 'dfine_s_obj365',
+      architecturalVisionEnabled: true,
+      archModelVariant: 'segformer_b0',
+      depthAnythingEnabled: true,
+      audioVerbosity: 'essential',
+      streetMode: false,
+      stereoSonar: false,
+      soundOnlyMode: false,
+      handsFreeWakeWord: false,
+      headsetButton: false,
+      clockFaceDirections: false,
       showStixelOverlay: true,
       offlineVlmEnabled: false,
       autoEscalateLowConfVlm: true,
@@ -50,18 +83,18 @@ export const APP_PRESETS: AppPresetDefinition[] = [
   },
   {
     id: 'street',
-    title: '2. Calle y Exterior (Manos Libres)',
+    title: '3. Calle y Exterior (Manos Libres)',
     shortTitle: 'Calle',
     subtitle: 'Caminata en aceras',
     description:
-      'Alertas cortas y rápidas para vehículos, peatones, postes y desniveles, con sonar direccional y voz "Oye Avisia".',
+      'Exclusivo para exteriores: detecta vehículos, autobuses, motos, peatones, postes, bancas y gradas. Bloquea por completo electrodomésticos y objetos de oficina.',
     includedSummary: [
-      'Alertas rápidas (2–3 palabras) + Reloj',
+      'Filtro exterior (solo vehículos, peatones y postes)',
       'Desniveles 3D + Sonar izquierda/derecha',
       'Manos libres "Oye Avisia" y botón Bluetooth',
     ],
     spokenConfirm:
-      'Modo Calle activado. Alertas rápidas, detector de desniveles y manos libres.',
+      'Modo Calle activado. Filtro de objetos exteriores, alertas rápidas y manos libres.',
     features: {
       activePreset: 'street',
       detectorEngine: 'dfine_n',
@@ -74,7 +107,7 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       soundOnlyMode: false,
       handsFreeWakeWord: true,
       headsetButton: true,
-      clockFaceDirections: true,
+      clockFaceDirections: false,
       showStixelOverlay: true,
       offlineVlmEnabled: false,
       autoEscalateLowConfVlm: true,
@@ -82,7 +115,7 @@ export const APP_PRESETS: AppPresetDefinition[] = [
   },
   {
     id: 'currency',
-    title: '3. Lector de Billetes (Automático)',
+    title: '4. Lector de Billetes (Automático)',
     shortTitle: 'Billetes',
     subtitle: 'Córdobas y dólares',
     description:
@@ -106,7 +139,7 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       soundOnlyMode: false,
       handsFreeWakeWord: false,
       headsetButton: false,
-      clockFaceDirections: true,
+      clockFaceDirections: false,
       showStixelOverlay: false,
       offlineVlmEnabled: false,
       autoEscalateLowConfVlm: false,
@@ -114,7 +147,7 @@ export const APP_PRESETS: AppPresetDefinition[] = [
   },
   {
     id: 'precision',
-    title: '4. Exploración Detallada (Todo)',
+    title: '5. Exploración Detallada (Todo)',
     shortTitle: 'Detallado',
     subtitle: 'Máxima descripción',
     description:
@@ -130,7 +163,7 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       activePreset: 'precision',
       detectorEngine: 'dfine_s_obj365',
       architecturalVisionEnabled: true,
-      archModelVariant: 'segformer_b1',
+      archModelVariant: 'segformer_b0',
       depthAnythingEnabled: true,
       audioVerbosity: 'detailed',
       streetMode: false,
@@ -138,7 +171,7 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       soundOnlyMode: false,
       handsFreeWakeWord: false,
       headsetButton: false,
-      clockFaceDirections: true,
+      clockFaceDirections: false,
       showStixelOverlay: true,
       offlineVlmEnabled: true,
       autoEscalateLowConfVlm: true,
@@ -146,7 +179,7 @@ export const APP_PRESETS: AppPresetDefinition[] = [
   },
   {
     id: 'silent',
-    title: '5. Modo Discreto (Tonos y Vibración)',
+    title: '6. Modo Discreto (Tonos y Vibración)',
     shortTitle: 'Discreto',
     subtitle: 'Sin voz en público',
     description:
@@ -169,7 +202,7 @@ export const APP_PRESETS: AppPresetDefinition[] = [
       soundOnlyMode: true,
       handsFreeWakeWord: false,
       headsetButton: false,
-      clockFaceDirections: true,
+      clockFaceDirections: false,
       showStixelOverlay: true,
       offlineVlmEnabled: false,
       autoEscalateLowConfVlm: false,
