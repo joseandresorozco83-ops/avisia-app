@@ -919,5 +919,47 @@ describe('AVISIA v5.1 Field-Test Regressions — Office Screenshots #1 to #10', 
     expect(cloudNio200.currency).toBe('NIO');
     expect(cloudNio200.denomination).toBe(200);
     expect(cloudNio200.detailText).toContain('Teatro Nacional Rubén Darío');
+
+    // 5. v5.6 Distance calibration: close vertically-clipped person/chair reports <= 1.0m (1 step),
+    // while small distant object at bottomY=72% is NOT falsely forced to 1.9m
+    const closePersonMeters = calSvc.estimateCalibratedMeters(
+      { x: 25, y: 24, width: 46, height: 68 },
+      1.68,
+      true
+    );
+    expect(closePersonMeters).toBeLessThanOrEqual(1.0);
+
+    const midChairMeters = calSvc.estimateCalibratedMeters(
+      { x: 35, y: 44, width: 22, height: 28 },
+      0.85,
+      true
+    );
+    expect(midChairMeters).toBeGreaterThanOrEqual(1.3);
+    expect(midChairMeters).toBeLessThanOrEqual(2.1);
+
+    const farSmallChairMeters = calSvc.estimateCalibratedMeters(
+      { x: 42, y: 58, width: 10, height: 14 },
+      0.85,
+      true
+    );
+    expect(farSmallChairMeters).toBeGreaterThanOrEqual(2.8);
+
+    // 6. v5.6 Sensor-driven action decisions regulate voice cooldowns and pause during fast camera pan
+    const navSvc = new PedestrianNavigationService();
+    const stationaryState = navSvc.getState(1000);
+    expect(stationaryState.sensorDecision).toBe('stationary_hold');
+    expect(stationaryState.recommendedVoiceCooldownMs).toBeGreaterThanOrEqual(10000);
+
+    // Fast camera pan (motionScore = 34) puts sensor decision into camera_panning_wait
+    const panningState = navSvc.updateFromVisualMotion(34, 1500);
+    expect(panningState.isPanningFast).toBe(true);
+    expect(panningState.sensorDecision).toBe('camera_panning_wait');
+
+    // After pan settles and a physical compass turn (>= 25 deg) occurs, unlocks turn_new_view
+    navSvc.updateFromVisualMotion(6, 1800);
+    navSvc.updateFromHeading(10, 1800);
+    const turnState = navSvc.updateFromHeading(45, 2200);
+    expect(turnState.sensorDecision).toBe('turn_new_view');
+    expect(turnState.recommendedVoiceCooldownMs).toBeLessThanOrEqual(2500);
   });
 });

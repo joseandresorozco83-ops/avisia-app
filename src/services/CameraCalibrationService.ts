@@ -282,9 +282,9 @@ export class CameraCalibrationService {
 
   /**
    * Computes self-calibrated distance in meters fusing:
-   * 1) Occlusion-resistant pitch-compensated pinhole size
+   * 1) Vertical & horizontal pinhole angular size (compensating for vertical frame clipping at close range <= 1.5m!)
    * 2) Trigonometric ground-plane contact distance from self-calibrated camera height H_cam
-   * 3) Foreground floor-contact anchors so partially occluded chairs/tables right in front never jump to 7–8m
+   * 3) Size-gated foreground floor-contact anchors so close obstacles report 1–2 steps while small distant objects are never forced close
    */
   estimateCalibratedMeters(
     bbox: BoundingBox,
@@ -294,39 +294,70 @@ export class CameraCalibrationService {
     const cal = this.getCalibration();
     const bottomY = bbox.y + bbox.height;
     const pitchRad = (Math.max(-20, Math.min(45, cal.pitchDownDeg)) * Math.PI) / 180;
-    const cosPitch = Math.max(0.75, Math.cos(pitchRad));
+    const cosPitch = Math.max(0.78, Math.cos(pitchRad));
 
-    // 1. Occlusion-resistant effective apparent size (considers width on angled/partially occluded chairs & desks)
-    const effectivePct = Math.max(
-      bbox.height,
-      Math.min(bbox.height * 1.55, bbox.width * 0.85)
-    );
-    const rawFrac = Math.max(0.11, effectivePct / 100);
-    // Sub-linear compression prevents partially visible backrest/tabletop boxes from exploding to 7–9m
-    const dampenedFrac = rawFrac < 0.24 ? Math.pow(rawFrac, 0.78) : rawFrac;
-    let pinholeMeters = (typicalHeightMeters * cal.focalLengthY * cosPitch) / dampenedFrac;
-
-    // 2. Trigonometric ground-contact distance from self-calibrated camera height H_cam
-    if (isFloorContactObstacle && bottomY > cal.horizonRowPct + 6 && typicalHeightMeters <= 2.15) {
-      const vNorm = bottomY / 100;
-      const rayAngleRad = Math.atan((vNorm - 0.5) / cal.focalLengthY);
-      const totalDepressionRad = Math.max(0.18, Math.min(1.15, pitchRad + rayAngleRad));
-      const groundMeters = cal.cameraHeightMeters / Math.tan(totalDepressionRad);
-
-      const groundWeight = bbox.height < 26 ? 0.65 : 0.42;
-      pinholeMeters = (1 - groundWeight) * pinholeMeters + groundWeight * groundMeters;
-
-      // Foreground floor-zone physical caps: if an object touches the bottom of the screen, it is 1–2 steps away!
-      if (bottomY >= 84) {
-        pinholeMeters = Math.min(pinholeMeters, 1.25);
-      } else if (bottomY >= 70) {
-        pinholeMeters = Math.min(pinholeMeters, 1.95);
-      } else if (bottomY >= 56) {
-        pinholeMeters = Math.min(pinholeMeters, 2.75);
-      }
+    // 1. Compensate for vertical frustum clipping when tall objects (Person 1.68m, Door 2.05m, Fridge 1.7m)
+    // are close to the camera and their legs/base or top are clipped by the frame border.
+    const touchesBottom = bottomY >= 89;
+    const touchesTop = bbox.y <= 6;
+    let visibleHeightMeters = typicalHeightMeters;
+    if (typicalHeightMeters >= 1.4 && (touchesBottom || bbox.height >= 48)) {
+      // At close range, the camera sees the upper torso/head (~0.95m-1.15m) of a person or middle section of a door
+      const clipFactor = touchesBottom && touchesTop ? 0.52 : touchesBottom ? 0.62 : 0.74;
+      visibleHeightMeters = typicalHeightMeters * clipFactor;
     }
 
-    const maxCap = typicalHeightMeters >= 2.4 ? 5.5 : 3.8;
+    // 2. Fuse vertical height span and horizontal width span (a person's torso width ~0.52m or chair width ~0.56m
+    // remains unclipped horizontally even when legs are clipped vertically!)
+    const typicalWidthMeters =
+      typicalHeightMeters >= 1.9
+        ? 0.88 // Door / Wardrobe
+        : typicalHeightMeters >= 1.45
+          ? 0.54 // Person
+          : typicalHeightMeters >= 0.72
+            ? 0.62 // Chair / Desk / Table
+            : Math.max(0.28, typicalHeightMeters * 0.85);
+
+    const heightFrac = Math.max(0.09, bbox.height / 100);
+    const widthFrac = Math.max(0.08, bbox.width / 100);
+
+    const zFromHeight = (visibleHeightMeters * cal.focalLengthY * cosPitch) / heightFrac;
+    const zFromWidth = (typicalWidthMeters * cal.focalLengthY) / widthFrac;
+
+    // Weight width stronger when the object is vertically clipped or wide (tables/desks/close people)
+    const widthWeight = touchesBottom || bbox.width > bbox.height * 0.75 ? 0.52 : 0.35;
+    let pinholeMeters = (1 - widthWeight) * zFromHeight + widthWeight * zFromWidth;
+
+    // 3. Trigonometric ground-contact distance from self-calibrated camera height H_cam
+    // ONLY when the object is not clipped at the bottom and truly rests on the visible floor plane
+    if (
+      isFloorContactObstacle &&
+      !touchesBottom &&
+      bottomY > cal.horizonRowPct + 8 &&
+      typicalHeightMeters <= 2.15
+    ) {
+      const vNorm = bottomY / 100;
+      const rayAngleRad = Math.atan((vNorm - 0.5) / cal.focalLengthY);
+      const totalDepressionRad = Math.max(0.2, Math.min(1.15, pitchRad + rayAngleRad));
+      const groundMeters = cal.cameraHeightMeters / Math.tan(totalDepressionRad);
+
+      const groundWeight = 0.32;
+      pinholeMeters = (1 - groundWeight) * pinholeMeters + groundWeight * groundMeters;
+    }
+
+    // 4. Size-gated foreground proximity anchors:
+    // ONLY cap distance when BOTH bottomY is low AND the bounding box is genuinely large in apparent size!
+    // (Prevents small distant objects from ever being falsely reported at 1-2 steps!)
+    const areaPct = (bbox.width * bbox.height) / 100;
+    if (areaPct >= 28 || (bottomY >= 86 && (bbox.height >= 42 || bbox.width >= 38))) {
+      pinholeMeters = Math.min(pinholeMeters, 0.95); // "muy cerca, a un paso"
+    } else if (areaPct >= 14 || (bottomY >= 70 && (bbox.height >= 26 || bbox.width >= 24))) {
+      pinholeMeters = Math.min(pinholeMeters, 1.55); // "a dos pasos"
+    } else if (bottomY >= 58 && (bbox.height >= 20 || bbox.width >= 20)) {
+      pinholeMeters = Math.min(pinholeMeters, 2.35); // "a tres pasos"
+    }
+
+    const maxCap = typicalHeightMeters >= 2.4 ? 5.5 : 4.2;
     return Number(Math.min(maxCap, Math.max(0.45, pinholeMeters)).toFixed(1));
   }
 

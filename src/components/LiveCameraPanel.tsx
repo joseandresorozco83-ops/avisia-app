@@ -331,11 +331,13 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
     const unsub = pedestrianNavigationService.onMovementChange((nextMotion) => {
       setMotionState(nextMotion);
-      detectorService.clearTransientCache();
-      temporalTrackerService.reset();
-      archTemporalTrackerService.reset();
-      archSummaryRef.current = null;
+      // Only reset temporal bounding-box & distance smoothing when the user physically turns >= 20° to a new direction!
+      // Preserving tracks during forward steps keeps distance EMA smooth and prevents re-announcing the same object as "new".
       if (nextMotion.lastTrigger === 'turn') {
+        detectorService.clearTransientCache();
+        temporalTrackerService.reset();
+        archTemporalTrackerService.reset();
+        archSummaryRef.current = null;
         depthSummaryRef.current = null;
       }
     });
@@ -1562,17 +1564,8 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
         </div>
       )}
 
-      {tiltWarning && cameraActive && (
-        <div
-          role="status"
-          className="shrink-0 px-2.5 py-1.5 rounded-xl bg-amber-500/15 border border-amber-400/50 text-[11px] font-semibold text-amber-200 flex items-center gap-1.5"
-        >
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-300" />
-          <span className="truncate">{tiltWarning}</span>
-        </div>
-      )}
-
-      {/* Video + Bounding Box Canvas Overlay (1-tap = describe, 2-tap = silence) */}
+      {/* Video + Bounding Box Canvas Overlay (1-tap = describe, 2-tap = silence)
+          Uses object-contain and fixed flex geometry so the camera NEVER crops edges or shifts zoom dynamically! */}
       <div
         role="button"
         tabIndex={0}
@@ -1592,20 +1585,30 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           ref={videoRef}
           playsInline
           muted
-          className={`w-full h-full object-cover ${cameraActive ? 'block' : 'hidden'}`}
+          className={`w-full h-full object-contain ${cameraActive ? 'block' : 'hidden'}`}
         />
         <canvas
           ref={canvasRef}
-          className={`absolute inset-0 w-full h-full object-cover pointer-events-none ${
+          className={`absolute inset-0 w-full h-full object-contain pointer-events-none ${
             cameraActive ? 'block' : 'hidden'
           }`}
         />
+
+        {tiltWarning && cameraActive && (
+          <div
+            role="status"
+            className="absolute top-9 left-2 right-2 z-20 px-2.5 py-1 rounded-xl bg-amber-950/90 border border-amber-400/60 text-[11px] font-semibold text-amber-200 flex items-center gap-1.5 pointer-events-none shadow-md"
+          >
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-300" />
+            <span className="truncate">{tiltWarning}</span>
+          </div>
+        )}
 
         {!cameraActive && (
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v5.5.0 · Cámara Asistiva
+              AVISIA v5.6.0 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.

@@ -199,10 +199,17 @@ export class TemporalTrackerService {
 
         const cx = smoothedBbox.x + smoothedBbox.width / 2;
         const stableClock = stabilizeClockPosition(prev.clockPosition, cx);
-        const fusedMeters = fuseDepthAndPinholeMeters(
+        const rawFusedMeters = fuseDepthAndPinholeMeters(
           { ...det, bbox: smoothedBbox },
           depthGrid
         );
+        // Temporal distance smoothing + 0.15m deadband hysteresis prevents step-count oscillation
+        let fusedMeters = rawFusedMeters;
+        if (typeof rawFusedMeters === 'number' && typeof prev.estimatedMeters === 'number') {
+          const blended = Number((0.52 * rawFusedMeters + 0.48 * prev.estimatedMeters).toFixed(1));
+          fusedMeters =
+            Math.abs(blended - prev.estimatedMeters) < 0.15 ? prev.estimatedMeters : blended;
+        }
 
         const updatedDet: Detection = {
           ...det,

@@ -1,10 +1,22 @@
 export type MovementTriggerReason = 'none' | 'step' | 'gps' | 'turn' | 'visual';
 
+export type SensorActionDecision =
+  | 'stationary_hold'
+  | 'step_advance'
+  | 'turn_new_view'
+  | 'camera_panning_wait';
+
 export interface PedestrianMotionState {
   /** Monotonically increasing epoch incremented whenever the user steps, turns, or moves via GPS */
   movementEpoch: number;
   /** True when the user has stepped, turned, or translated within the last 1.8 seconds */
   isMoving: boolean;
+  /** True when the camera is currently panning/sweeping rapidly (hold voice until camera settles) */
+  isPanningFast?: boolean;
+  /** Current sensor-driven action decision governing message frequency */
+  sensorDecision?: SensorActionDecision;
+  /** Recommended minimum cooldown (ms) between automatic voice messages based on current sensor activity */
+  recommendedVoiceCooldownMs?: number;
   /** Physical steps detected via accelerometer pedometer + visual gait cadence */
   totalSteps: number;
   /** Estimated cumulative walking distance in meters (fusing GPS Haversine + 0.70m/step odometry) */
@@ -83,6 +95,8 @@ export class PedestrianNavigationService {
   private lastHeadingDeg: number | null = null;
   private lastTrigger: MovementTriggerReason = 'none';
   private mobileBridgeActive = false;
+  private currentMotionScore = 0;
+  private highMotionStreak = 0;
 
   private trackingActive = false;
   private listeners = new Set<MovementListener>();
@@ -107,6 +121,8 @@ export class PedestrianNavigationService {
     this.lastHeadingDeg = null;
     this.lastTrigger = 'none';
     this.mobileBridgeActive = false;
+    this.currentMotionScore = 0;
+    this.highMotionStreak = 0;
   }
 
   /**
@@ -123,7 +139,7 @@ export class PedestrianNavigationService {
 
   isActivelyMoving(now = Date.now()): boolean {
     return (
-      now - this.lastMovedAt <= 1850 ||
+      (this.lastMovedAt > 0 && now - this.lastMovedAt <= 1850) ||
       (this.gpsSpeedMps !== null && this.gpsSpeedMps >= 0.5)
     );
   }
@@ -321,18 +337,30 @@ export class PedestrianNavigationService {
 
   /**
    * Integrates camera visual motion score (frame-to-frame luminance flux in [0..100]).
-   * When the user takes a step or pans on devices without IMU events (e.g., Iriun Webcam from phone to laptop),
-   * visual motion >= 10.5 (Iriun mobile bridge) or >= 14.5 (fixed webcam) advances the movement epoch
-   * so stale detections and queued speech are flushed immediately.
+   * - Filters out hand tremor and minor scene motion (< 18) so stationary users are not spammed.
+   * - Requires sustained gait/translation motion (>= 18 for 2+ frames, cooldown >= 1.8s) to register a visual step
+   *   when physical IMU events are unavailable (e.g. Iriun Webcam on PC).
+   * - Flags rapid camera sweeps (`motionScore >= 28`) so voice announcements wait ~300ms for the view to settle.
    */
   updateFromVisualMotion(motionScore: number, now = Date.now()): PedestrianMotionState {
     if (!Number.isFinite(motionScore)) return this.getState(now);
-    const moveThreshold = this.mobileBridgeActive ? 10.5 : 14.5;
-    const stepThreshold = this.mobileBridgeActive ? 12.5 : 17.0;
-    if (motionScore >= moveThreshold && now - this.lastMovedAt >= 360) {
-      if (motionScore >= stepThreshold && now - this.lastStepAt >= 440) {
+    this.currentMotionScore = motionScore;
+
+    const moveThreshold = this.mobileBridgeActive ? 17.5 : 19.5;
+    const stepThreshold = this.mobileBridgeActive ? 19.0 : 21.5;
+
+    if (motionScore >= moveThreshold) {
+      this.highMotionStreak++;
+    } else {
+      this.highMotionStreak = 0;
+    }
+
+    // Require 2 consecutive moving frames and at least 1800ms since last visual trigger
+    // so hand tremor or a person walking past never cuts off sentences or resets cooldowns every 400ms!
+    if (this.highMotionStreak >= 2 && now - this.lastMovedAt >= 1800) {
+      if (motionScore >= stepThreshold && now - this.lastStepAt >= 1650) {
         this.totalSteps += 1;
-        this.estimatedMetersMoved = Number((this.estimatedMetersMoved + 0.68).toFixed(2));
+        this.estimatedMetersMoved = Number((this.estimatedMetersMoved + 0.7).toFixed(2));
         this.lastStepAt = now;
       }
       this.advanceEpoch('visual', now);
@@ -391,21 +419,49 @@ export class PedestrianNavigationService {
 
   getState(now = Date.now()): PedestrianMotionState {
     const isMoving = this.isActivelyMoving(now);
+    const isPanningFast = this.currentMotionScore >= 29;
     const metersSinceLastNotification = Number(
       Math.max(0, this.estimatedMetersMoved - this.lastNotificationMeters).toFixed(2)
     );
     const stepsSinceLastNotification = Math.max(0, this.totalSteps - this.lastNotificationSteps);
 
-    const sensorTag = this.gpsActive ? 'GPS+IMU' : 'Paso IMU';
-    const stateTag = isMoving
-      ? `En marcha · ${this.totalSteps}p`
-      : this.totalSteps > 0
-        ? `Posición al día · ${this.totalSteps}p`
-        : 'Cola en vivo';
+    const recentTurn = this.lastTrigger === 'turn' && now - this.lastTurnAt <= 2200;
+    const sensorDecision: SensorActionDecision = isPanningFast
+      ? 'camera_panning_wait'
+      : recentTurn
+        ? 'turn_new_view'
+        : isMoving || stepsSinceLastNotification >= 1 || metersSinceLastNotification >= 0.65
+          ? 'step_advance'
+          : 'stationary_hold';
+
+    // Sensor-regulated voice cadence:
+    // - When turning to a new view: speak promptly (2.2s gap)
+    // - When walking step-by-step: speak every 2.8s as distances change
+    // - When standing still (stationary_hold): wait 10.5s before repeating the same scene
+    const recommendedVoiceCooldownMs =
+      sensorDecision === 'turn_new_view'
+        ? 2200
+        : sensorDecision === 'step_advance'
+          ? 2800
+          : 10500;
+
+    const sensorTag = this.gpsActive ? 'GPS+IMU' : this.mobileBridgeActive ? 'Iriun+IMU' : 'Paso IMU';
+    const stateTag = isPanningFast
+      ? 'Enfocando giro...'
+      : recentTurn
+        ? 'Nueva vista'
+        : isMoving
+          ? `En marcha · ${this.totalSteps}p`
+          : this.totalSteps > 0
+            ? `Estático · ${this.totalSteps}p`
+            : 'Estático';
 
     return {
       movementEpoch: this.movementEpoch,
       isMoving,
+      isPanningFast,
+      sensorDecision,
+      recommendedVoiceCooldownMs,
       totalSteps: this.totalSteps,
       estimatedMetersMoved: this.estimatedMetersMoved,
       metersSinceLastNotification,

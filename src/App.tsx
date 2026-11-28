@@ -435,29 +435,22 @@ export function App() {
   const wasPathClearRef = useRef<boolean>(false);
   const lastClearSpokenAtRef = useRef<number>(0);
 
-  // Real-time Movement-Aware Audio Queue Invalidation (GPS + Inertial Step Pedometer + Turn):
-  // When the user steps forward, moves via GPS, or turns >= 20°, discard queued notifications from the
-  // previous position, preempt stale in-progress speech, and unlock cooldowns for the new position!
+  // Real-time Sensor-Gated Audio Queue Regulation (GPS + Inertial Step Pedometer + Compass Turn):
+  // - NEVER cuts off an in-progress spoken sentence mid-phrase on steps or visual motion!
+  // - Only cancels a pending unstarted timer when the user physically turns >= 20° or steps to a new position.
   useEffect(() => {
     if (mode !== 'live_camera' || !cameraActive) return;
 
     const unsub = pedestrianNavigationService.onMovementChange((motion) => {
-      if (obstacleSpeakTimerRef.current !== null) {
-        window.clearTimeout(obstacleSpeakTimerRef.current);
-        obstacleSpeakTimerRef.current = null;
+      if (motion.lastTrigger === 'turn') {
+        if (obstacleSpeakTimerRef.current !== null) {
+          window.clearTimeout(obstacleSpeakTimerRef.current);
+          obstacleSpeakTimerRef.current = null;
+        }
+        // Only on a confirmed physical compass/gyro turn, allow the next direction's objects to speak promptly
+        // once any currently playing sentence finishes naturally!
+        lastChimedObstacleRef.current = null;
       }
-      if (
-        isSpeakingRef.current &&
-        spokenEpochRef.current < motion.movementEpoch &&
-        Date.now() - speechStartedAtRef.current >= 360
-      ) {
-        speechService.cancel();
-        setIsSpeaking(false);
-      }
-      lastAutoSpokenAtRef.current = 0;
-      lastChimedObstacleRef.current = null;
-      lastSpokenLabelMapRef.current.clear();
-      deltaNarrationMapRef.current.clear();
     });
 
     return unsub;
@@ -505,11 +498,9 @@ export function App() {
       normLabel.includes('escalera');
 
     const now = Date.now();
+    const navState = pedestrianNavigationService.getState(now);
     const prevBaseLabel = lastChimedObstacleRef.current?.split('-')[0] ?? '';
     const isNewObjectClass = normLabel !== prevBaseLabel;
-    const perLabelCooldownMs = streetFeatures.audioVerbosity === 'essential' ? 5200 : 4500;
-    // Speak brand-new objects within 0.9s (no 3-second pause needed between steps!)
-    const globalMinGapMs = isNewObjectClass ? 900 : isCriticalHazard ? 1250 : 1800;
 
     // Resolve live distance & clock for Parsimonious Delta Narration
     const matchedDet = realDetections.find(
@@ -524,10 +515,33 @@ export function App() {
     };
 
     if (isLiveCamera) {
+      // 1. NEVER cut off an in-progress spoken sentence mid-phrase!
+      // Wait for the current sentence to finish completely before speaking the next automatic message.
+      if (isSpeakingRef.current || speechService.isCurrentlySpeaking()) {
+        return;
+      }
+      // 2. If the user is rapidly panning/rotating the camera, wait ~300ms for the camera to settle
+      if (navState.isPanningFast) {
+        return;
+      }
+      // 3. Sensor-regulated cooldown:
+      // - When stationary (no new physical steps or turns): wait 10.5s before repeating the same obstacle
+      // - When walking or turning: allow updates every 5.2s per label (or immediately if closer by >= 0.55m)
+      const isStationaryHold = navState.sensorDecision === 'stationary_hold';
+      const perLabelCooldownMs = isStationaryHold
+        ? 10500
+        : streetFeatures.audioVerbosity === 'essential'
+          ? 6200
+          : 5200;
+      const globalMinGapMs = isNewObjectClass
+        ? 2300
+        : isStationaryHold
+          ? 4200
+          : navState.recommendedVoiceCooldownMs ?? 2800;
+
       const prevDelta = deltaNarrationMapRef.current.get(normLabel);
       if (!shouldSpeakDeltaHazard(prevDelta, nextDelta, now, perLabelCooldownMs)) return;
       if (now - lastAutoSpokenAtRef.current < globalMinGapMs) return;
-      if (isSpeakingRef.current && !isCriticalHazard) return;
     }
 
     const alertKey = `${normLabel}-${alert.zone}`;
@@ -557,23 +571,14 @@ export function App() {
         detourHint && isLiveCamera && (!activelyWalking || isCriticalHazard)
           ? `${alert.message} ${detourHint}.`
           : alert.message;
-      const scheduledEpoch = pedestrianNavigationService.getMovementEpoch();
-      const scheduledAt = Date.now();
       obstacleSpeakTimerRef.current = window.setTimeout(() => {
-        if (
-          isLiveCamera &&
-          !pedestrianNavigationService.isNotificationStillUseful(
-            scheduledEpoch,
-            scheduledAt,
-            Date.now(),
-            700
-          )
-        ) {
+        if (isLiveCamera && (isSpeakingRef.current || speechService.isCurrentlySpeaking())) {
           return;
         }
         const spokenAt = Date.now();
         lastAutoSpokenAtRef.current = spokenAt;
         lastSpokenLiveMsgRef.current = { text: msgToSpeak, at: spokenAt };
+        pedestrianNavigationService.recordNotificationSpoken(spokenAt);
         appendHistory({
           sender: 'avicia',
           text: msgToSpeak,
@@ -618,39 +623,53 @@ export function App() {
     ) {
       return;
     }
-    if (realDetections.length === 0 || evaluation.obstacleAlert || isSpeakingRef.current) return;
-
-    const topDet = realDetections[0];
     if (
-      streetFeatures.audioVerbosity === 'essential' &&
-      (topDet?.estimatedMeters ?? 3.5) > 4.2
+      realDetections.length === 0 ||
+      evaluation.obstacleAlert ||
+      isSpeakingRef.current ||
+      speechService.isCurrentlySpeaking()
     ) {
       return;
     }
 
     const now = Date.now();
+    const navState = pedestrianNavigationService.getState(now);
+    if (navState.isPanningFast) return;
+
+    const topDet = realDetections[0];
+    if (
+      streetFeatures.audioVerbosity === 'essential' &&
+      (topDet?.estimatedMeters ?? 3.5) > 3.6
+    ) {
+      return;
+    }
+
+    const isStationaryHold = navState.sensorDecision === 'stationary_hold';
     const topLabel = realDetections[0]?.labelEs.toLowerCase().trim() ?? '';
     const lastForLabel = topLabel ? (lastSpokenLabelMapRef.current.get(topLabel) ?? 0) : 0;
-    const isBrandNewLabel = Boolean(topLabel) && now - lastForLabel >= 7500;
+    const isBrandNewLabel = Boolean(topLabel) && now - lastForLabel >= 9500;
     const cooldownMs = isBrandNewLabel
-      ? 1100
-      : streetFeatures.audioVerbosity === 'essential'
-        ? 4200
-        : streetFeatures.streetMode
-          ? 2600
-          : 3500;
+      ? 2400
+      : isStationaryHold
+        ? 11000
+        : streetFeatures.audioVerbosity === 'essential'
+          ? 5200
+          : streetFeatures.streetMode
+            ? 3400
+            : 4200;
     if (now - lastAutoSpokenAtRef.current < cooldownMs) return;
 
-    if (topLabel && now - lastForLabel < 6500) return;
+    if (topLabel && now - lastForLabel < (isStationaryHold ? 11000 : 7500)) return;
 
     const lastMsg = lastSpokenLiveMsgRef.current;
-    if (lastMsg && lastMsg.text === evaluation.generatedMessage && now - lastMsg.at < 12000) {
+    if (lastMsg && lastMsg.text === evaluation.generatedMessage && now - lastMsg.at < 14000) {
       return;
     }
 
     lastAutoSpokenAtRef.current = now;
     if (topLabel) lastSpokenLabelMapRef.current.set(topLabel, now);
     lastSpokenLiveMsgRef.current = { text: evaluation.generatedMessage, at: now };
+    pedestrianNavigationService.recordNotificationSpoken(now);
     appendHistory({
       sender: 'avicia',
       text: evaluation.generatedMessage,
@@ -1260,7 +1279,7 @@ export function App() {
                       AVISIA
                     </h1>
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[#8aebff]/15 text-[#8aebff] border border-[#8aebff]/35 font-mono text-xs font-extrabold">
-                      v5.5.0 Neuronal
+                      v5.6.0 Neuronal
                     </span>
                   </div>
                   <p className="text-xs font-medium text-[#dfe2ee] leading-tight">
@@ -1438,7 +1457,7 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-extrabold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[10px] font-bold text-[#8aebff]">
-                          v5.5.0
+                          v5.6.0
                         </span>
                         {!isOnline && (
                           <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 font-mono text-[10px] font-bold text-amber-300">
@@ -1927,23 +1946,41 @@ export function App() {
                       </div>
                     )}
 
-                    {evaluation.obstacleAlert && (
-                      <div
-                        role="alert"
-                        className={`shrink-0 px-2.5 py-1.5 rounded-xl border text-xs flex items-center gap-2 ${evaluation.obstacleAlert.zone === 'front_close'
-                            ? 'bg-[#93000a]/85 border-[#ffb4ab]/40 text-[#ffdad6]'
-                            : 'bg-amber-500/20 border-amber-400/50 text-amber-100'
+                    {/* Fixed-height slot for Obstacle Alert Banner so mounting/unmounting NEVER resizes the camera viewport or shifts zoom! */}
+                    <div className="shrink-0 h-8 flex items-center">
+                      {evaluation.obstacleAlert ? (
+                        <div
+                          role="alert"
+                          className={`w-full h-8 px-2.5 rounded-xl border text-xs flex items-center gap-2 ${
+                            evaluation.obstacleAlert.zone === 'front_close'
+                              ? 'bg-[#93000a]/85 border-[#ffb4ab]/40 text-[#ffdad6]'
+                              : 'bg-amber-500/20 border-amber-400/50 text-amber-100'
                           }`}
-                      >
-                        <ShieldAlert
-                          className={`w-4 h-4 shrink-0 ${evaluation.obstacleAlert.zone === 'front_close'
-                              ? 'text-[#ffb4ab]'
-                              : 'text-amber-300'
+                        >
+                          <ShieldAlert
+                            className={`w-4 h-4 shrink-0 ${
+                              evaluation.obstacleAlert.zone === 'front_close'
+                                ? 'text-[#ffb4ab]'
+                                : 'text-amber-300'
                             }`}
-                        />
-                        <span className="font-semibold truncate">{evaluation.obstacleAlert.message}</span>
-                      </div>
-                    )}
+                          />
+                          <span className="font-semibold truncate">
+                            {evaluation.obstacleAlert.message}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="w-full h-8 px-2.5 rounded-xl bg-[#141821] border border-[#3c494c]/30 text-[11px] text-[#8aebff] flex items-center justify-between gap-2">
+                          <span className="font-semibold truncate">
+                            {mode === 'live_camera' && cameraActive
+                              ? 'Corredor frontal monitoreado · Sin alerta crítica inmediata'
+                              : 'Asistencia visual lista'}
+                          </span>
+                          <span className="font-mono text-[10px] text-[#4edea3] shrink-0">
+                            {pedestrianNavigationService.getState().statusBadge}
+                          </span>
+                        </div>
+                      )}
+                    </div>
 
                     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                       {renderEnvironmentContent()}

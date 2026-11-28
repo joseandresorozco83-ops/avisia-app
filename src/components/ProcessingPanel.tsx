@@ -352,13 +352,19 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
             <Footprints className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
             <div className="min-w-0">
               <div className="text-xs font-extrabold text-amber-300 uppercase">
-                Odometría GPS + Podómetro
+                Decisión por Sensores (GPS + IMU)
               </div>
               <p className="text-xs text-slate-200 font-semibold mt-0.5">
-                {nav.totalSteps} pasos ({nav.estimatedMetersMoved} m) · Época #{nav.movementEpoch}
+                {nav.statusBadge} · {nav.totalSteps} pasos ({nav.estimatedMetersMoved} m)
               </p>
               <p className="text-[11px] text-slate-400">
-                Descarta audios e inferencias de la posición previa en &lt;60 ms
+                {nav.sensorDecision === 'camera_panning_wait'
+                  ? 'Giro rápido detectado: esperando enfoque para hablar'
+                  : nav.sensorDecision === 'turn_new_view'
+                    ? 'Nuevo rumbo detectado: narración inmediata habilitada'
+                    : nav.sensorDecision === 'step_advance'
+                      ? 'Paso confirmado: actualiza distancias sin cortar frases'
+                      : 'Usuario estático: pausa de 11s para no repetir objetos'}
               </p>
             </div>
           </div>

@@ -31,9 +31,19 @@ type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 export class SpeechService {
   private lastSpokenText = '';
   private activeUtterance: SpeechSynthesisUtterance | null = null;
+  /** Strong reference pool prevents Chrome V8 GC from collecting active utterances mid-sentence */
+  private utterancePool: SpeechSynthesisUtterance[] = [];
   private fallbackTimer: number | null = null;
   private sharedAudioCtx: AudioContext | null = null;
   private speechEpoch = 0;
+
+  isCurrentlySpeaking(): boolean {
+    if (this.activeUtterance !== null) return true;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      return Boolean(window.speechSynthesis.speaking);
+    }
+    return false;
+  }
 
   private getAudioContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -371,9 +381,17 @@ export class SpeechService {
       this.fallbackTimer = null;
     }
 
-    window.speechSynthesis.cancel();
+    // Only call speechSynthesis.cancel() when the browser engine is actually speaking/pending;
+    // calling cancel() when idle on Windows Chrome can clip the start/end of the new utterance.
+    if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+      window.speechSynthesis.cancel();
+    }
     const utterance = new SpeechSynthesisUtterance(naturalText);
     this.activeUtterance = utterance;
+    this.utterancePool.push(utterance);
+    if (this.utterancePool.length > 6) {
+      this.utterancePool.shift();
+    }
     utterance.lang = 'es-419';
     // Slightly warmer pitch & smooth cadence to reduce robotic feel
     utterance.pitch = 1.03;
@@ -398,6 +416,10 @@ export class SpeechService {
       }
       if (this.activeUtterance === utterance) {
         this.activeUtterance = null;
+      }
+      const poolIdx = this.utterancePool.indexOf(utterance);
+      if (poolIdx >= 0) {
+        this.utterancePool.splice(poolIdx, 1);
       }
       if (isError) {
         callbacks?.onError?.();
@@ -434,6 +456,8 @@ export class SpeechService {
 
   cancel(): void {
     this.speechEpoch++;
+    this.activeUtterance = null;
+    this.utterancePool = [];
     if (this.fallbackTimer !== null) {
       window.clearTimeout(this.fallbackTimer);
       this.fallbackTimer = null;

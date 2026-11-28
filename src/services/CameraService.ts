@@ -76,11 +76,12 @@ export function computeActiveViewportFromRgba(
       const r = rgba[idx];
       const g = rgba[idx + 1];
       const b = rgba[idx + 2];
-      if (r <= 18 && g <= 18 && b <= 18) {
+      // Strict pillarbox black threshold (R,G,B <= 14) so dim room walls never trigger dynamic cropping
+      if (r <= 14 && g <= 14 && b <= 14) {
         darkRows++;
       }
     }
-    return totalRows > 0 && darkRows / totalRows >= 0.92;
+    return totalRows > 0 && darkRows / totalRows >= 0.95;
   };
 
   const maxSideScan = Math.floor(probeW * 0.37);
@@ -94,11 +95,14 @@ export function computeActiveViewportFromRgba(
     rightBarCols++;
   }
 
-  // Confirm symmetric or prominent side pillarbox bars (at least 11% width on each side)
-  const minBarCols = Math.max(4, Math.floor(probeW * 0.11));
-  if (leftBarCols >= minBarCols && rightBarCols >= minBarCols) {
-    const activeProbeCols = Math.max(8, probeW - leftBarCols - rightBarCols);
-    const x = Math.round((leftBarCols / probeW) * fullWidth);
+  // Confirm strictly symmetric side pillarbox bars (at least 18% width on each side and symmetric within 4 probe columns)
+  // This prevents dark objects or shadows on one side of the room from ever shifting or "zooming" the active viewport!
+  const minBarCols = Math.max(8, Math.floor(probeW * 0.18));
+  const isSymmetricPillarbox = Math.abs(leftBarCols - rightBarCols) <= 4;
+  if (leftBarCols >= minBarCols && rightBarCols >= minBarCols && isSymmetricPillarbox) {
+    const avgBarCols = Math.round((leftBarCols + rightBarCols) / 2);
+    const activeProbeCols = Math.max(8, probeW - avgBarCols * 2);
+    const x = Math.round((avgBarCols / probeW) * fullWidth);
     const width = Math.max(64, Math.min(fullWidth - x, Math.round((activeProbeCols / probeW) * fullWidth)));
     const isPillarboxedPortrait = width < fullHeight * 0.98;
     return {
@@ -149,6 +153,8 @@ export class CameraService {
   private activeDeviceLabel = '';
   private activeIsMobileBridge = false;
   private probeCanvas: HTMLCanvasElement | null = null;
+  private lockedViewport: ActiveViewportRect | null = null;
+  private pillarboxStreak = 0;
 
   isSupported(): boolean {
     return (
@@ -338,13 +344,53 @@ export class CameraService {
 
     ctx.drawImage(source, 0, 0, probeW, probeH);
     const rgba = ctx.getImageData(0, 0, probeW, probeH).data;
-    return computeActiveViewportFromRgba(
+    const rawVp = computeActiveViewportFromRgba(
       rgba,
       probeW,
       probeH,
       fullWidth,
       fullHeight,
       this.activeIsMobileBridge
+    );
+
+    // For static images, return immediately
+    if (!(source instanceof HTMLVideoElement)) {
+      return rawVp;
+    }
+
+    // For live video streams, apply temporal hysteresis lock so the active viewport
+    // NEVER jitters or changes zoom from frame to frame!
+    if (rawVp.isPillarboxedPortrait) {
+      this.pillarboxStreak = Math.min(6, this.pillarboxStreak + 1);
+      if (this.pillarboxStreak >= 2) {
+        if (
+          !this.lockedViewport ||
+          !this.lockedViewport.isPillarboxedPortrait ||
+          this.lockedViewport.fullWidth !== fullWidth ||
+          this.lockedViewport.fullHeight !== fullHeight
+        ) {
+          this.lockedViewport = rawVp;
+        }
+        return this.lockedViewport;
+      }
+    } else {
+      this.pillarboxStreak = Math.max(0, this.pillarboxStreak - 1);
+      if (this.pillarboxStreak === 0) {
+        this.lockedViewport = rawVp;
+      }
+    }
+
+    return (
+      this.lockedViewport ?? {
+        x: 0,
+        y: 0,
+        width: fullWidth,
+        height: fullHeight,
+        fullWidth,
+        fullHeight,
+        isPillarboxedPortrait: false,
+        isMobileFeed: this.activeIsMobileBridge,
+      }
     );
   }
 
@@ -357,6 +403,8 @@ export class CameraService {
     }
     this.activeDeviceLabel = '';
     this.activeIsMobileBridge = false;
+    this.lockedViewport = null;
+    this.pillarboxStreak = 0;
     if (videoElement) {
       videoElement.srcObject = null;
     }
