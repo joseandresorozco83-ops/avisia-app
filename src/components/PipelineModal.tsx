@@ -18,48 +18,48 @@ interface PipelineNode {
 const PIPELINE_NODES: PipelineNode[] = [
   {
     id: 'camera',
-    title: 'Cámara',
+    title: 'Cámara + Calibración 3D',
     icon: <Camera className="w-4 h-4" />,
     plainDescription:
-      'Captura la escena visual frente a la persona usuaria mediante escenas preparadas, imágenes, video local o cámara en vivo.',
+      'Captura la escena y autocalibra en tiempo real la altura del celular sobre el piso (0.85–1.75 m), su postura (vertical/horizontal), el ángulo de inclinación y la dirección de avance.',
     simStatus: 'Escena urbana preparada en el escenario.',
-    realStatus: 'Imagen local, video local o flujo getUserMedia.',
+    realStatus: 'Imagen local, video local o cámara en vivo + IMU/GPS.',
   },
   {
     id: 'vision',
-    title: 'Reconocimiento',
+    title: 'Fusión Neuronal (366 cl + ADE20K)',
     icon: <Eye className="w-4 h-4" />,
     plainDescription:
-      'El modelo EfficientDet-Lite0 en el navegador identifica categorías clave: persona, automóvil, motocicleta y autobús.',
+      'D-FINE-Obj365 (366 clases interiores/urbanas: escritorio, pizarra, extintor, silla, persona) + SegFormer ADE20K (puerta, cortina, pared, piso libre) + Depth Anything V2 en Web Worker con planificador de prioridad.',
     simStatus: 'Cajas y categorías predefinidas del escenario.',
-    realStatus: 'Inferencia WASM/WebGL con puntuaciones reales.',
+    realStatus: 'Fusión híbrida GPU/WASM con desambiguación Pizarra/Cortina/Escritorio.',
   },
   {
     id: 'confirmation',
-    title: 'Confirmación',
+    title: 'Odometría GPS + Pasos (v5.3)',
     icon: <ShieldCheck className="w-4 h-4" />,
     plainDescription:
-      'Verifica estabilidad temporal y umbral de confianza antes de emitir un aviso. Si falta evidencia, evita adivinar.',
+      'Fusiona GPS en tiempo real (Haversine) + podómetro inercial 3D (cada paso ~0.70 m en <60 ms) + giroscopio. Si das un paso o giras, invalida al instante los frames e inferencias de la posición anterior.',
     simStatus: 'Estados confirmado, pendiente o insuficiente.',
-    realStatus: 'Filtrado por umbral de confianza configurable.',
+    realStatus: 'Invalidación por movementEpoch + confirmación en ~400 ms.',
   },
   {
     id: 'selection',
-    title: 'Selección',
+    title: 'Política C01 + Stixels 5 Sectores',
     icon: <MessageSquareCode className="w-4 h-4" />,
     plainDescription:
-      'La política de mensajes (C00 o C01) prioriza la información útil y suprime repeticiones continuas.',
+      'Calcula el corredor libre en 5 sectores horarios (10h..2h), confirma "Camino despejado" o sugiere desvío, y aplica narración por delta sin bloqueo de 3 segundos entre pasos.',
     simStatus: 'Motor independiente C00 / C01 activo.',
-    realStatus: 'Motor independiente C00 / C01 activo.',
+    realStatus: 'Motor C00 / C01 + Stixels 10h..2h activo.',
   },
   {
     id: 'speech',
-    title: 'Síntesis de voz',
+    title: 'Voz sin Cola Atrasada',
     icon: <Volume2 className="w-4 h-4" />,
     plainDescription:
-      'Convierte el mensaje seleccionado en audio en español mediante la Web Speech API del navegador.',
+      'Al detectar un nuevo paso o desplazamiento GPS, cancela avisos encolados de la posición previa, interrumpe locuciones obsoletas y anuncia la nueva posición al instante.',
     simStatus: 'Síntesis en español mediante Web Speech API.',
-    realStatus: 'Síntesis en español mediante Web Speech API.',
+    realStatus: 'Preempción por paso/GPS y cadencia dinámica 1.18x en marcha.',
   },
 ];
 

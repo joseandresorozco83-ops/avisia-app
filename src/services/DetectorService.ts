@@ -379,6 +379,7 @@ export class DetectorService {
   private lastScoreThreshold = 0.36;
   private initPromise: Promise<DetectorStatus> | null = null;
   private bgOnnxUpgradeEngine: DetectorEngineId | null = null;
+  private bgOnnxUpgradePromise: Promise<boolean> | null = null;
   private onnxBusy = false;
   private latestOnnxDetections: Detection[] = [];
   private latestOnnxAt = 0;
@@ -547,20 +548,26 @@ export class DetectorService {
     }
     this.bgOnnxUpgradeEngine = targetEngine;
 
-    void (async () => {
+    this.bgOnnxUpgradePromise = (async () => {
       try {
         const ok = await this.initOnnxEngine(targetEngine);
         if (ok) {
           this.emitStatus();
+          return true;
         } else if (targetEngine === 'dfine_s_obj365') {
           // Try lighter dfine_n if dfine_s_obj365 couldn't download
           const okNano = await this.initOnnxEngine('dfine_n');
-          if (okNano) this.emitStatus();
+          if (okNano) {
+            this.emitStatus();
+            return true;
+          }
         }
+        return false;
       } finally {
         if (this.bgOnnxUpgradeEngine === targetEngine) {
           this.bgOnnxUpgradeEngine = null;
         }
+        this.bgOnnxUpgradePromise = null;
       }
     })();
   }
@@ -792,9 +799,26 @@ export class DetectorService {
       }
     }
 
+    // For static image evaluation on Web ("Imagen IA"), if D-FINE-Obj365 is finishing its background load,
+    // wait for it so the image gets the full 366-class indoor/urban model + MediaPipe hybrid fusion!
+    if (this.bgOnnxUpgradePromise) {
+      try {
+        await this.bgOnnxUpgradePromise;
+      } catch {
+        // Proceed with available detector
+      }
+    }
+
+    const width = imageElement.naturalWidth || imageElement.width || 640;
+    const height = imageElement.naturalHeight || imageElement.height || 480;
+
+    let onnxDetections: Detection[] = [];
+    let onnxElapsed = 0;
     if (this.onnxEngineLoaded && (this.usingWorker || this.onnxPipeline)) {
       try {
-        return await this.runOnnxOnSource(imageElement, scoreThreshold, 'real_image');
+        const onnxRes = await this.runOnnxOnSource(imageElement, scoreThreshold, 'real_image');
+        onnxDetections = onnxRes.detections;
+        onnxElapsed = onnxRes.inferenceTimeMs;
       } catch {
         // Fallback transparently to warm MediaPipe detector if ONNX frame fails
         this.usingWorker = false;
@@ -802,25 +826,87 @@ export class DetectorService {
       }
     }
 
-    if (!this.detector) {
+    let mpDetections: Detection[] = [];
+    let mpElapsed = 0;
+    if (this.detector) {
+      try {
+        if (this.currentRunningMode !== 'IMAGE' || this.lastScoreThreshold !== scoreThreshold) {
+          await this.detector.setOptions({ runningMode: 'IMAGE', scoreThreshold });
+          this.currentRunningMode = 'IMAGE';
+          this.lastScoreThreshold = scoreThreshold;
+        }
+        const start = performance.now();
+        const result = this.detector.detect(imageElement);
+        mpElapsed = Math.round(performance.now() - start);
+        mpDetections = this.mapDetections(result.detections, width, height, 'real_image');
+      } catch {
+        // Ignore if MediaPipe not active
+      }
+    }
+
+    if (onnxDetections.length === 0 && mpDetections.length === 0 && !this.detector && !this.onnxEngineLoaded) {
       throw new Error('Detector no disponible.');
     }
 
-    if (this.currentRunningMode !== 'IMAGE' || this.lastScoreThreshold !== scoreThreshold) {
-      await this.detector.setOptions({ runningMode: 'IMAGE', scoreThreshold });
-      this.currentRunningMode = 'IMAGE';
-      this.lastScoreThreshold = scoreThreshold;
+    const merged = [...onnxDetections];
+    for (const mpDet of mpDetections) {
+      const overlaps = merged.some((ox) => {
+        const x1 = Math.max(ox.bbox.x, mpDet.bbox.x);
+        const y1 = Math.max(ox.bbox.y, mpDet.bbox.y);
+        const x2 = Math.min(ox.bbox.x + ox.bbox.width, mpDet.bbox.x + mpDet.bbox.width);
+        const y2 = Math.min(ox.bbox.y + ox.bbox.height, mpDet.bbox.y + mpDet.bbox.height);
+        const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+        if (inter <= 0) return false;
+        const areaA = Math.max(1, ox.bbox.width * ox.bbox.height);
+        const areaB = Math.max(1, mpDet.bbox.width * mpDet.bbox.height);
+        return inter / (areaA + areaB - inter) >= 0.3;
+      });
+      if (!overlaps) {
+        merged.push(mpDet);
+      }
     }
 
-    const start = performance.now();
-    const result = this.detector.detect(imageElement);
-    const elapsed = Math.round(performance.now() - start);
+    // Apply cross-class semantic disambiguation (Mesa/Escritorio vs Mueble, Pizarra vs Refrigerador)
+    const tables = merged.filter(
+      (d) => d.labelEs === 'Mesa' || d.labelEs === 'Escritorio' || d.labelEs === 'Mesa baja'
+    );
+    const whiteboards = merged.filter((d) => d.labelEs === 'Pizarra');
+    const detections = merged
+      .filter((d) => {
+        if (d.labelEs.startsWith('Mueble') && tables.length > 0) {
+          const cx = d.bbox.x + d.bbox.width / 2;
+          if (tables.some((t) => Math.abs(t.bbox.x + t.bbox.width / 2 - cx) <= 28)) {
+            return false;
+          }
+        }
+        if (d.labelEs === 'Refrigerador' && whiteboards.length > 0) {
+          return false;
+        }
+        return true;
+      })
+      .slice(0, 12);
+
+    // Self-calibrate 3D camera height & orientation from floor-contact objects in the image
+    cameraCalibrationService.updateFromVisualScene({
+      videoWidth: width,
+      videoHeight: height,
+      referenceObjects: detections.map((d) => {
+        const meta = Object.values(CATEGORY_MAP).find((m) => m.labelEs === d.labelEs);
+        return {
+          bbox: d.bbox,
+          typicalHeightMeters: meta?.typicalHeightMeters ?? 0.85,
+          confidence: d.confidence,
+          isFloorContact:
+            d.category === 'person' ||
+            d.category === 'chair' ||
+            d.labelEs === 'Escritorio' ||
+            d.labelEs === 'Mesa',
+        };
+      }),
+    });
+
+    const elapsed = onnxElapsed || mpElapsed;
     this.status.inferenceTimeMs = elapsed;
-
-    const width = imageElement.naturalWidth || imageElement.width || 1;
-    const height = imageElement.naturalHeight || imageElement.height || 1;
-
-    const detections = this.mapDetections(result.detections, width, height, 'real_image');
     return { detections, inferenceTimeMs: elapsed };
   }
 

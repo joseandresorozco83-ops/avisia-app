@@ -4,6 +4,11 @@ import type { Detection, DetectorStatus } from '../types/avicia';
 import { detectorService } from '../services/DetectorService';
 import { architecturalSegmenterService } from '../services/ArchitecturalSegmenterService';
 import { depthModelService } from '../services/DepthModelService';
+import { depthProximityService } from '../services/DepthProximityService';
+import {
+  cameraCalibrationService,
+  type CameraPoseCalibration,
+} from '../services/CameraCalibrationService';
 import {
   computeStixelCorridor,
   enrichDoorsWithDepth,
@@ -38,9 +43,17 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
   const [assistText, setAssistText] = useState<string | null>(null);
   const [assistBadge, setAssistBadge] = useState<string | null>(null);
   const [stixelPlan, setStixelPlan] = useState<StixelNavigationPlan | null>(null);
+  const [poseCal, setPoseCal] = useState<CameraPoseCalibration>(() =>
+    cameraCalibrationService.getCalibration()
+  );
 
   const imgRef = useRef<HTMLImageElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const unsub = detectorService.onStatusChange((st) => setStatus(st));
+    return unsub;
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -82,8 +95,14 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
             : sec.status === 'caution'
               ? 'rgba(251, 191, 36, 0.85)'
               : 'rgba(244, 63, 94, 0.9)';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = sec.index === 2 ? 2.5 : 1.5;
         ctx.strokeRect(sx, baseY - barH, sw, barH);
+        const fontSize = Math.max(11, Math.round(canvas.width * 0.018));
+        ctx.font = `bold ${fontSize}px monospace`;
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        const stepTxt = sec.freeSteps >= 4 ? '3+p' : `${sec.freeSteps}p`;
+        ctx.fillText(`${sec.shortLabel}·${stepTxt}`, sx + sw / 2, baseY - 6);
       }
       ctx.restore();
     }
@@ -103,13 +122,17 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
               ? '#f59e0b'
               : det.id.startsWith('arch-')
                 ? '#c084fc'
-                : '#22d3ee';
+                : det.isInanimateObstacle
+                  ? '#f59e0b'
+                  : '#22d3ee';
 
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(2, canvas.width * 0.004);
+      ctx.lineWidth = Math.max(2.5, canvas.width * 0.0045);
       ctx.strokeRect(x, y, w, h);
 
-      const label = `${det.labelEs} ${Math.round((det.confidence ?? 0) * 100)}%`;
+      const distPart =
+        typeof det.estimatedMeters === 'number' ? ` · ${det.estimatedMeters}m` : '';
+      const label = `${det.labelEs}${distPart} ${Math.round((det.confidence ?? 0) * 100)}%`;
       ctx.font = `bold ${Math.max(13, Math.round(canvas.width * 0.02))}px sans-serif`;
       const textWidth = ctx.measureText(label).width;
       const boxHeight = Math.max(22, Math.round(canvas.width * 0.032));
@@ -126,20 +149,11 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
     setRunning(true);
     try {
       const result = await detectorService.detectOnImage(imgRef.current, threshold);
-      let merged = [...result.detections];
+      let rawMerged = [...result.detections];
       let archResult = null;
       let depthResult = null;
       try {
         archResult = await architecturalSegmenterService.analyzeSource(imgRef.current);
-        if (archResult) {
-          const existing = new Set(merged.map((d) => d.labelEs.toLowerCase()));
-          for (const ad of archResult.detections) {
-            if (!existing.has(ad.labelEs.toLowerCase())) {
-              merged.push({ ...ad, source: 'real_image' });
-              existing.add(ad.labelEs.toLowerCase());
-            }
-          }
-        }
       } catch {
         // Architectural segmentation is best-effort enrichment
       }
@@ -150,11 +164,101 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
           // Optional depth enrichment
         }
       }
+
+      if (archResult) {
+        const depthConfirmsFlatFloor =
+          depthResult !== null &&
+          !depthResult.stepDetectedInDepth &&
+          (depthResult.groundPlanarityR2 ?? 1) >= 0.82;
+        const depthConfirmsRealStep = Boolean(depthResult?.stepDetectedInDepth);
+
+        const existing = new Set(rawMerged.map((d) => d.labelEs.toLowerCase()));
+        for (const ad of archResult.detections) {
+          const lower = ad.labelEs.toLowerCase();
+          if (lower.includes('escalera eléctrica') && !depthConfirmsRealStep) continue;
+          if ((lower.includes('escalera') || lower.includes('grada')) && depthConfirmsFlatFloor) {
+            continue;
+          }
+          if (!existing.has(lower)) {
+            rawMerged.push({ ...ad, source: 'real_image' });
+            existing.add(lower);
+          }
+        }
+      }
+
+      // Cross-modal semantic disambiguation (Cortina vs Puerta, Mesa/Escritorio vs Mueble, Pizarra vs Refrigerador)
+      const hasCurtain = rawMerged.some((d) => d.labelEs === 'Cortina');
+      const hasTableOrDesk = rawMerged.some(
+        (d) => d.labelEs === 'Mesa' || d.labelEs === 'Escritorio' || d.labelEs === 'Mesa baja'
+      );
+      const hasWhiteboard = rawMerged.some((d) => d.labelEs === 'Pizarra');
+      let merged = rawMerged.filter((d) => {
+        if (hasCurtain && d.labelEs.startsWith('Puerta')) return false;
+        if (
+          hasTableOrDesk &&
+          (d.labelEs === 'Mueble' ||
+            d.labelEs === 'Mueble o estante' ||
+            d.labelEs === 'Armario o mueble')
+        ) {
+          return false;
+        }
+        if (hasWhiteboard && d.labelEs === 'Refrigerador') return false;
+        return true;
+      });
+
       merged = enrichDoorsWithDepth(merged, archResult, depthResult).map((d) => ({
         ...d,
         source: 'real_image',
       }));
-      const plan = computeStixelCorridor(merged, archResult, depthResult, null);
+
+      // 3D Camera Calibration + Corridor Wall / Extinguisher / Counter analysis on the uploaded image
+      const prox = depthProximityService.analyzeVideoCorridor(imgRef.current, merged);
+      const hasFrontObstacle = merged.some(
+        (d) => d.isInanimateObstacle && d.proximityZone === 'front_close'
+      );
+      if (
+        prox.flatWallAhead ||
+        prox.redExtinguisherOnWall ||
+        prox.centralCounterOrWallAhead ||
+        (!hasFrontObstacle && prox.verticalObstacleDetected)
+      ) {
+        const isExtinguisher = Boolean(prox.redExtinguisherOnWall);
+        const isCounter = Boolean(prox.centralCounterOrWallAhead) && !prox.flatWallAhead;
+        const isWall = prox.flatWallAhead || isExtinguisher;
+        merged.push({
+          id: `img-corridor-${Date.now()}`,
+          category: 'obstacle',
+          labelEs: isExtinguisher
+            ? 'Pared y extintor'
+            : isWall
+              ? 'Pared muy cerca'
+              : isCounter
+                ? 'Mostrador o pared'
+                : 'Obstáculo frontal',
+          source: 'real_image',
+          confidence: Math.min(0.95, Math.max(0.75, prox.corridorScore / 100)),
+          bbox: { x: 28, y: 26, width: 44, height: 56 },
+          confirmationStatus: 'confirmed',
+          priority: 97,
+          firstSeenAt: Date.now(),
+          lastSeenAt: Date.now(),
+          isNew: true,
+          isInanimateObstacle: true,
+          estimatedMeters: isWall ? 0.8 : 1.2,
+          clockPosition: 'a las 12',
+          proximityZone: 'front_close',
+        });
+      }
+
+      const cal = cameraCalibrationService.updateFromVisualScene({
+        videoWidth: imgRef.current.naturalWidth || 640,
+        videoHeight: imgRef.current.naturalHeight || 480,
+        walkableCorridorPct: archResult?.walkableCorridorPct ?? null,
+        sectorFloorReachPct: archResult?.sectorFloorReachPct ?? null,
+      });
+      setPoseCal(cal);
+
+      const plan = computeStixelCorridor(merged, archResult, depthResult, prox);
       setStixelPlan(plan);
       setStatus(detectorService.getStatus());
       setDetections(merged);
@@ -353,8 +457,13 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
           </div>
         )}
 
-        <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-slate-950/85 border border-emerald-500/40 text-[11px] text-emerald-200">
-          Modo B · Inferencia real en navegador
+        <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 pointer-events-none">
+          <span className="px-2.5 py-0.5 rounded-full bg-slate-950/85 border border-emerald-500/40 text-[10px] font-semibold text-emerald-200 truncate">
+            {status.modelName.split(' ')[0]} · v5.3.0
+          </span>
+          <span className="px-2.5 py-0.5 rounded-full bg-slate-950/85 border border-cyan-400/40 text-[10px] font-mono text-cyan-200 truncate">
+            {poseCal.statusBadge}
+          </span>
         </div>
       </div>
 

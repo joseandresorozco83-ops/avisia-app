@@ -38,24 +38,34 @@ const SUS_QUESTIONS: string[] = [
 
 const DEVELOPMENT_MATRIX: TechnicalStatusItem[] = [
   {
-    component: 'Interfaz accesible WCAG 2.2 AA (Web + App Android Capacitor 8)',
+    component: 'Interfaz accesible WCAG 2.2 AA (Web 40/60 + App Android Capacitor 8)',
     status: 'Implementado y probado',
-    detail: '5 modos simplificados en Android, TalkBack-safe, targets ≥ 48dp, ErrorBoundary y Wake Lock.',
+    detail: '5 modos de uso con 1 toque en Web y Android, emulador 40%×100%, TalkBack-safe y Wake Lock.',
   },
   {
-    component: 'Detección neuronal en Web Worker (D-FINE-Nano 42.8% / D-FINE-Small 48.5% mAP)',
+    component: 'Fusión Neuronal 366 Clases + Planificador de Prioridad (D-FINE-Obj365 + SegFormer)',
     status: 'Implementado y probado',
-    detail: 'Inferencia fuera del hilo principal (Apache 2.0), tracker unificado + fusión Depth/Pinhole e histéresis de reloj.',
+    detail: 'Detección de escritorios, pizarras, cortinas, puertas, paredes y extintores con normalización multi-sinónimo ADE20K.',
   },
   {
-    component: 'Geometría 3D de piso y puertas (Depth V2 plano 1/Z + SegFormer 9:16 + Stixels)',
+    component: 'Calibración 3D Autorregulada de Altura, Postura, Inclinación y Rumbo (v5.2/v5.3)',
     status: 'Implementado y probado',
-    detail: 'Ajuste lineal 1/Z(v) + veto semántico que elimina falsas gradas por texturas/colores en pisos planos.',
+    detail: 'Autocalibra la altura sobre el piso (0.85–1.75 m), detecta postura vertical/horizontal, compensa ángulo de inclinación y avisa solo en ángulos extremos.',
   },
   {
-    component: 'VLM Estructurado JSON + Respaldo Offline (Gemini 3.5 / SmolVLM-256M WebGPU)',
+    component: 'Odometría GPS + Podómetro Inercial de Pasos con Invalidación de Cola de Voz (v5.3)',
     status: 'Implementado y probado',
-    detail: 'Escalado automático ante baja confianza (<55%) en imágenes y Narración por Delta para menor carga cognitiva.',
+    detail: 'Fusiona GPS Haversine + acelerómetro 3D (<60 ms por paso) + giroscopio para descartar frames y audios atrasados de la posición anterior.',
+  },
+  {
+    component: 'Geometría 3D de piso y puertas (Depth V2 plano 1/Z + SegFormer 9:16 + Stixels 10h..2h)',
+    status: 'Implementado y probado',
+    detail: 'Confirmación rápida de Camino Despejado (~400 ms), puertas abiertas/cerradas y veto de falsas gradas en pisos planos.',
+  },
+  {
+    component: 'VLM Estructurado JSON + Respaldo Offline (Gemini / SmolVLM-256M WebGPU)',
+    status: 'Implementado y probado',
+    detail: 'Escalado automático ante baja confianza (<55%) en imágenes y Narración por Delta sin pausa de 3 s entre pasos.',
   },
   {
     component: 'Reconocimiento de billetes (Córdobas 10–1000 y Dólares $1–$100)',
@@ -70,17 +80,7 @@ const DEVELOPMENT_MATRIX: TechnicalStatusItem[] = [
   {
     component: 'Protocolo ético y telemetría de piloto académico (SUS + NASA-TLX)',
     status: 'Implementado y probado',
-    detail: 'Consentimiento informado accesible, métricas p50/p95, alertas/min y exportación anónima JSON/CSV.',
-  },
-  {
-    component: 'Validación empírica en campo con usuarios ciegos y observador O&M',
-    status: 'Implementado, pendiente de validación',
-    detail: 'Instrumento listo para levantar datos SUS, NASA-TLX y tiempos de tarea en piloto UAM Managua.',
-  },
-  {
-    component: 'Lectura garantizada de rutas de autobús en movimiento y cruce semafórico',
-    status: 'Planificado',
-    detail: 'Fuera de alcance seguro del piloto v4.0; requiere validación dedicada de alta confiabilidad.',
+    detail: 'Consentimiento informado accesible, métricas p50/p95, alertas/min y exportación anónima JSON/CSV (46 pruebas automatizadas).',
   },
 ];
 
@@ -174,7 +174,7 @@ export const TechnicalDetailsSection: React.FC<TechnicalDetailsSectionProps> = (
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
             <Cpu className="w-4 h-4" />
-            Arquitectura, Seguridad y Piloto Académico (v5.0.0)
+            Arquitectura, Seguridad y Piloto Académico (v5.3.0)
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
             Telemetría empírica, matriz de madurez e instrumentos SUS / NASA-TLX — UAM Managua

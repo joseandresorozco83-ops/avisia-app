@@ -48,6 +48,7 @@ import type {
 } from './types/avicia';
 import type { StixelNavigationPlan } from './services/DoorAndStixelService';
 import { pedestrianNavigationService } from './services/PedestrianNavigationService';
+import { cameraCalibrationService } from './services/CameraCalibrationService';
 import { scenarioManager } from './services/ScenarioManager';
 import { simulationEngine } from './services/SimulationEngine';
 import {
@@ -93,7 +94,7 @@ const TechnicalDetailsSection = lazy(() =>
 );
 
 const SETTINGS_STORAGE_KEY = 'avicia_simulator_settings_v1';
-const STREET_FEATURES_STORAGE_KEY = 'avicia_street_features_v5_1';
+const STREET_FEATURES_STORAGE_KEY = 'avicia_street_features_v5_3';
 const CONSENT_STORAGE_KEY = 'avisia_safety_consent_v1';
 
 const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
@@ -104,7 +105,7 @@ const DEFAULT_STREET_FEATURES: StreetAssistFeatures = {
   headsetButton: false,
   depthAnythingEnabled: true,
   architecturalVisionEnabled: true,
-  archModelVariant: 'segformer_b1',
+  archModelVariant: 'segformer_b0',
   showStixelOverlay: true,
   audioVerbosity: 'essential',
   activePreset: 'indoor',
@@ -135,7 +136,7 @@ export function App() {
   const [simPlaying, setSimPlaying] = useState<boolean>(false);
 
   const [policy, setPolicy] = useState<PolicyType>('C01');
-  const [threshold, setThreshold] = useState<number>(isMobileExperience ? 0.36 : 0.45);
+  const [threshold, setThreshold] = useState<number>(0.36);
   const [highlightedDetectionId, setHighlightedDetectionId] = useState<string | null>(null);
 
   const [realDetections, setRealDetections] = useState<Detection[]>([]);
@@ -1416,15 +1417,15 @@ export function App() {
         </header>
       )}
 
-      {/* SPLIT-SCREEN ON DESKTOP, FULL-SCREEN NATIVE APP ON ANDROID/MOBILE */}
+      {/* SPLIT-SCREEN ON DESKTOP (40% PHONE EMULATOR x 100% HEIGHT + 60% TELEMETRY CONSOLE), FULL-SCREEN NATIVE APP ON ANDROID/MOBILE */}
       <div
-        className={`flex-1 min-h-0 w-full mx-auto flex flex-col lg:flex-row items-stretch ${isNativeApp ? 'p-0' : 'max-w-[1680px] lg:px-5 lg:py-3 lg:gap-4'
+        className={`flex-1 min-h-0 h-full w-full mx-auto flex flex-col lg:flex-row items-stretch ${isNativeApp ? 'p-0' : 'max-w-[1780px] lg:px-3 lg:py-1.5 lg:gap-3.5'
           }`}
       >
-        {/* LEFT 30% ON DESKTOP / FULL-SCREEN ON ANDROID APP */}
+        {/* LEFT 40% WIDTH x 100% HEIGHT ON DESKTOP / FULL-SCREEN ON ANDROID APP */}
         <aside
           aria-label="Vista móvil AVISIA"
-          className={`w-full h-full flex flex-col items-center justify-center relative ${isNativeApp ? '' : 'lg:w-[32%] xl:w-[30%]'
+          className={`w-full h-full flex flex-col items-center justify-center relative ${isNativeApp ? '' : 'lg:w-[40%] xl:w-[40%] shrink-0'
             }`}
         >
           <div
@@ -2220,9 +2221,9 @@ export function App() {
           </div>
         </aside>
 
-        {/* RIGHT 70%: DESKTOP TELEMETRY ECOSYSTEM (hidden on native Android app and mobile screens) */}
+        {/* RIGHT 60%: DESKTOP TELEMETRY ECOSYSTEM (hidden on native Android app and mobile screens) */}
         {!isNativeApp && (
-          <main className="hidden lg:flex w-full lg:w-[68%] xl:w-[70%] lg:h-full flex-col gap-3 min-h-0">
+          <main className="hidden lg:flex w-full lg:w-[60%] xl:w-[60%] lg:h-full flex-col gap-2.5 min-h-0">
             <div className="shrink-0">
               <GuidedDemoBanner
                 active={demoActive}
@@ -2238,100 +2239,149 @@ export function App() {
               />
             </div>
 
-            {/* Stitch Telemetry Console Mode & Ecosystem View Switcher */}
-            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-[#181c24] border border-[#3c494c]/40 shadow-sm">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => handleModeChange('simulation')}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${mode === 'simulation'
-                      ? 'bg-cyan-500/15 border-cyan-400/60 text-cyan-200'
-                      : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
-                    }`}
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  Escenas
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleModeChange('vision_lab')}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${mode === 'vision_lab'
-                      ? 'bg-emerald-500/15 border-emerald-400/60 text-emerald-200'
-                      : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
-                    }`}
-                >
-                  <FlaskConical className="w-3.5 h-3.5" />
-                  Imagen IA
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleModeChange('video_lab')}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${mode === 'video_lab'
-                      ? 'bg-cyan-500/15 border-cyan-400/60 text-cyan-200'
-                      : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
-                    }`}
-                >
-                  <Film className="w-3.5 h-3.5" />
-                  Video IA
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleModeChange('live_camera')}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${mode === 'live_camera'
-                      ? 'bg-amber-500/15 border-amber-400/60 text-amber-200'
-                      : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
-                    }`}
-                >
-                  <Video className="w-3.5 h-3.5" />
-                  Cámara
-                </button>
+            {/* Stitch Telemetry Console Mode, 1-Tap Presets & Ecosystem View Switcher */}
+            <div className="shrink-0 flex flex-col gap-2 p-2.5 rounded-xl bg-[#181c24] border border-[#3c494c]/40 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange('simulation')}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${mode === 'simulation'
+                        ? 'bg-cyan-500/15 border-cyan-400/60 text-cyan-200'
+                        : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                      }`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    Escenas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange('vision_lab')}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${mode === 'vision_lab'
+                        ? 'bg-emerald-500/15 border-emerald-400/60 text-emerald-200'
+                        : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                      }`}
+                  >
+                    <FlaskConical className="w-3.5 h-3.5" />
+                    Imagen IA
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange('video_lab')}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${mode === 'video_lab'
+                        ? 'bg-cyan-500/15 border-cyan-400/60 text-cyan-200'
+                        : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                      }`}
+                  >
+                    <Film className="w-3.5 h-3.5" />
+                    Video IA
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange('live_camera')}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${mode === 'live_camera'
+                        ? 'bg-amber-500/15 border-amber-400/60 text-amber-200'
+                        : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                      }`}
+                  >
+                    <Video className="w-3.5 h-3.5" />
+                    Cámara
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1 bg-[#0a0e16] p-1 rounded-lg border border-[#3c494c]/40">
+                  <button
+                    type="button"
+                    onClick={() => setEcosystemTab('core')}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${ecosystemTab === 'core'
+                        ? 'bg-cyan-500 text-slate-950 font-semibold'
+                        : 'text-slate-400 hover:text-white'
+                      }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Núcleo en Vivo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEcosystemTab('pipeline')}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${ecosystemTab === 'pipeline'
+                        ? 'bg-cyan-500 text-slate-950 font-semibold'
+                        : 'text-slate-400 hover:text-white'
+                      }`}
+                  >
+                    <GitBranch className="w-3.5 h-3.5" />
+                    Cómo Piensa
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEcosystemTab('map')}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${ecosystemTab === 'map'
+                        ? 'bg-cyan-500 text-slate-950 font-semibold'
+                        : 'text-slate-400 hover:text-white'
+                      }`}
+                  >
+                    <MapPin className="w-3.5 h-3.5" />
+                    Mapa Managua
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEcosystemTab('tech')}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${ecosystemTab === 'tech'
+                        ? 'bg-cyan-500 text-slate-950 font-semibold'
+                        : 'text-slate-400 hover:text-white'
+                      }`}
+                  >
+                    <Cpu className="w-3.5 h-3.5" />
+                    Técnico
+                  </button>
+                </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-1 bg-[#0a0e16] p-1 rounded-lg border border-[#3c494c]/40">
-                <button
-                  type="button"
-                  onClick={() => setEcosystemTab('core')}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${ecosystemTab === 'core'
-                      ? 'bg-cyan-500 text-slate-950 font-semibold'
-                      : 'text-slate-400 hover:text-white'
-                    }`}
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  Núcleo en Vivo
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEcosystemTab('pipeline')}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${ecosystemTab === 'pipeline'
-                      ? 'bg-cyan-500 text-slate-950 font-semibold'
-                      : 'text-slate-400 hover:text-white'
-                    }`}
-                >
-                  <GitBranch className="w-3.5 h-3.5" />
-                  Cómo Piensa
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEcosystemTab('map')}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${ecosystemTab === 'map'
-                      ? 'bg-cyan-500 text-slate-950 font-semibold'
-                      : 'text-slate-400 hover:text-white'
-                    }`}
-                >
-                  <MapPin className="w-3.5 h-3.5" />
-                  Mapa Managua
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEcosystemTab('tech')}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${ecosystemTab === 'tech'
-                      ? 'bg-cyan-500 text-slate-950 font-semibold'
-                      : 'text-slate-400 hover:text-white'
-                    }`}
-                >
-                  <Cpu className="w-3.5 h-3.5" />
-                  Técnico
-                </button>
+              {/* Desktop 1-Tap Mode Selector + Live 3D Calibration & GPS/Step Odometry Strip */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-[#3c494c]/30">
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="text-[10px] font-mono text-[#8aebff] uppercase mr-1">
+                    Modos 1-Toque:
+                  </span>
+                  {APP_PRESETS.map((preset) => {
+                    const isSelected =
+                      mode === 'live_camera' &&
+                      (streetFeatures.activePreset ?? 'indoor') === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => {
+                          speechService.unlockAudio();
+                          setStreetFeatures((prev) =>
+                            applyAppPreset(prev, preset.id as AppPresetId)
+                          );
+                          setPresetSyncKey((k) => k + 1);
+                          setDemoActive(false);
+                          setMode('live_camera');
+                          setMobileTab('vision');
+                          setAutoStartCamera(true);
+                          speakText(preset.spokenConfirm);
+                        }}
+                        className={`px-2 py-1 rounded-lg text-[11px] font-bold border transition-colors ${
+                          isSelected
+                            ? 'bg-[#22d3ee] text-[#00363e] border-[#22d3ee]'
+                            : 'bg-[#0f131c] text-[#dfe2ee] border-[#3c494c]/50 hover:border-[#8aebff]/60'
+                        }`}
+                      >
+                        {preset.shortTitle}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                  <span className="px-2 py-0.5 rounded-md bg-[#0a0e16] border border-cyan-500/30 text-cyan-200">
+                    3D: {cameraCalibrationService.getCalibration().statusBadge}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-[#0a0e16] border border-emerald-500/30 text-emerald-300">
+                    {pedestrianNavigationService.getState().statusBadge}
+                  </span>
+                </div>
               </div>
             </div>
 

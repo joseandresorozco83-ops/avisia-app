@@ -163,13 +163,16 @@ export class DepthProximityService {
   }
 
   analyzeVideoCorridor(
-    video: HTMLVideoElement,
+    video: HTMLVideoElement | HTMLImageElement,
     detections: Detection[]
   ): ProximityAssessment {
     const detEstimate = this.estimateFromDetections(detections);
     const ttcInfo = this.computeApproachTTC(detections, Date.now());
+    const notReady =
+      typeof document === 'undefined' ||
+      (video instanceof HTMLVideoElement ? video.readyState < 2 : !video.complete);
 
-    if (typeof document === 'undefined' || video.readyState < 2) {
+    if (notReady) {
       return {
         level: ttcInfo.approachingFast ? 'danger' : detEstimate.level,
         estimatedMeters: detEstimate.estimatedMeters,
