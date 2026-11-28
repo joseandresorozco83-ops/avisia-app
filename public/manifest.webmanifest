@@ -1,18 +1,40 @@
 {
   "name": "AVISIA — Asistencia Visual Inteligente",
   "short_name": "AVISIA",
-  "description": "Simulador y asistente visual inteligente con IA, detección de proximidad y guía auditiva — UAM Managua.",
+  "description": "Asistente visual inteligente con IA 3D, sensores IMU/GPS, lectura OCR y reconocimiento de billetes — UAM Managua.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f131c",
-  "theme_color": "#0f131c",
+  "orientation": "portrait",
+  "background_color": "#0a0e16",
+  "theme_color": "#0a0e16",
   "lang": "es",
   "icons": [
     {
       "src": "/avisia-logo.png",
-      "sizes": "620x620",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/avisia-logo.png",
+      "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
+    },
+    {
+      "src": "/avisia-logo.png",
+      "sizes": "620x620",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/avisia-splash.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "AVISIA — Asistencia Visual Inteligente UAM Managua"
     }
   ]
 }

@@ -212,6 +212,15 @@ export function App() {
   const [gpsLoading, setGpsLoading] = useState<boolean>(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const stopGpsWatchRef = useRef<(() => void) | null>(null);
+  const [showSplashScreen, setShowSplashScreen] = useState<boolean>(true);
+
+  useEffect(() => {
+    if (!showSplashScreen) return;
+    const timer = window.setTimeout(() => {
+      setShowSplashScreen(false);
+    }, 2200);
+    return () => window.clearTimeout(timer);
+  }, [showSplashScreen]);
 
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const isSpeakingRef = useRef<boolean>(false);
@@ -1256,6 +1265,57 @@ export function App() {
 
   return (
     <div className="h-[100dvh] lg:h-screen overflow-hidden bg-[#0f131c] text-[#dfe2ee] flex flex-col">
+      {showSplashScreen && (
+        <div
+          role="dialog"
+          aria-label="Pantalla de carga de AVISIA"
+          onClick={() => setShowSplashScreen(false)}
+          className="fixed inset-0 z-[100] flex flex-col items-center justify-between px-6 py-10 bg-gradient-to-b from-[#0a0e16] via-[#101a29] to-[#0a0e16] text-[#dfe2ee] cursor-pointer select-none animate-fade-in"
+        >
+          <div className="px-3.5 py-1 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-xs font-extrabold text-[#8aebff] tracking-wider uppercase">
+            Sistema Asistivo Neuronal · v5.6.0
+          </div>
+
+          <div className="flex flex-col items-center text-center max-w-md">
+            <div className="relative flex items-center justify-center mb-6">
+              <div className="absolute w-48 h-48 rounded-full border-2 border-[#22d3ee]/30 animate-ping" />
+              <div className="absolute w-44 h-44 rounded-full border-2 border-[#4edea3]/45 animate-pulse" />
+              <div className="relative w-36 h-36 sm:w-40 sm:h-40 rounded-full bg-white p-2.5 shadow-[0_0_50px_rgba(34,211,238,0.45)] ring-4 ring-[#8aebff]/50 flex items-center justify-center overflow-hidden">
+                <img
+                  src="/avisia-logo.png"
+                  alt="Logo oficial AVISIA"
+                  className="w-full h-full object-contain rounded-full"
+                />
+              </div>
+            </div>
+
+            <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-[#8aebff] uppercase">
+              AVISIA
+            </h1>
+            <p className="text-base sm:text-lg font-bold text-white mt-1.5">
+              Asistencia Visual Inteligente para Movilidad
+            </p>
+            <p className="text-xs sm:text-sm font-semibold text-[#4edea3] mt-2">
+              IA Asistiva · Visión 3D · Sensores IMU/GPS · Lector de Billetes
+            </p>
+
+            <div className="w-60 sm:w-72 h-2 rounded-full bg-[#1c2028] border border-[#3c494c]/50 overflow-hidden mt-6">
+              <div className="h-full w-4/5 bg-gradient-to-r from-[#22d3ee] via-[#4edea3] to-[#8aebff] rounded-full animate-pulse" />
+            </div>
+            <span className="font-mono text-[11px] text-[#bbc9cd] mt-2">
+              Inicializando motores de visión y voz... (toca para entrar)
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-white/95 shadow-lg">
+            <img src="/uam-logo.png" alt="UAM Managua" className="h-7 w-auto object-contain" />
+            <span className="font-mono text-xs sm:text-sm font-extrabold text-[#00363e] tracking-wide">
+              UNIVERSIDAD AMERICANA · UAM MANAGUA
+            </span>
+          </div>
+        </div>
+      )}
+
       <SafetyConsentModal
         open={consentModalOpen}
         canDismiss={consentAccepted}
@@ -1271,9 +1331,14 @@ export function App() {
           <div className="max-w-[1840px] mx-auto px-4 py-2 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3.5">
               <div className="flex items-center gap-2.5">
-                <div className="flex items-center justify-center p-1 rounded-full bg-white border border-[#8aebff]/60 shadow-[0_0_12px_rgba(138,235,255,0.25)] shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowSplashScreen(true)}
+                  title="Ver pantalla de presentación AVISIA"
+                  className="flex items-center justify-center p-1 rounded-full bg-white border border-[#8aebff]/60 shadow-[0_0_12px_rgba(138,235,255,0.25)] shrink-0 hover:scale-105 transition-transform"
+                >
                   <AvisiaLogo className="w-9 h-9" variant="dark" />
-                </div>
+                </button>
                 <div>
                   <div className="flex items-center gap-2">
                     <h1 className="text-base sm:text-lg font-black tracking-tight text-[#8aebff] uppercase">

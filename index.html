@@ -3,13 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0f131c" />
+    <meta name="theme-color" content="#0a0e16" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="AVISIA" />
     <meta
       name="description"
       content="AVISIA — Asistente visual inteligente accesible con detección de obstáculos, puertas, lectura OCR y reconocimiento de billetes (UAM Managua)."
     />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/png" href="/avisia-logo.png" />
+    <link rel="apple-touch-icon" href="/avisia-logo.png" />
     <title>AVISIA — Asistencia Visual Inteligente</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -18,8 +22,77 @@
       rel="stylesheet"
     />
   </head>
-  <body class="bg-[#060d18] text-slate-100 antialiased selection:bg-cyan-500/30 selection:text-cyan-100">
-    <div id="root"></div>
+  <body class="bg-[#0a0e16] text-slate-100 antialiased selection:bg-cyan-500/30 selection:text-cyan-100">
+    <div id="root">
+      <!-- Initial Full-Screen Splash Screen shown immediately while JS & Vision Engines load -->
+      <div
+        style="
+          position: fixed;
+          inset: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: space-between;
+          padding: 3rem 1.5rem;
+          background: radial-gradient(circle at 50% 38%, #132235 0%, #0a0e16 70%);
+          color: #dfe2ee;
+          font-family: 'Inter', system-ui, -apple-system, sans-serif;
+          z-index: 9999;
+        "
+      >
+        <div style="font-family: monospace; font-size: 0.75rem; color: #8aebff; letter-spacing: 0.08em">
+          SISTEMA ASISTIVO NEURONAL · v5.6.1
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 1.25rem">
+          <div
+            style="
+              width: 148px;
+              height: 148px;
+              border-radius: 9999px;
+              background: #ffffff;
+              padding: 10px;
+              box-shadow: 0 0 42px rgba(34, 211, 238, 0.35), 0 0 0 6px rgba(78, 222, 163, 0.22);
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              overflow: hidden;
+            "
+          >
+            <img
+              src="/avisia-logo.png"
+              alt="Logo AVISIA"
+              style="width: 100%; height: 100%; object-fit: contain; border-radius: 9999px"
+            />
+          </div>
+          <div>
+            <div style="font-size: 2.25rem; font-weight: 900; color: #8aebff; letter-spacing: -0.02em">
+              AVISIA
+            </div>
+            <div style="font-size: 1rem; font-weight: 700; color: #ffffff; margin-top: 0.25rem">
+              Asistencia Visual Inteligente para Movilidad
+            </div>
+            <div style="font-size: 0.8rem; color: #4edea3; margin-top: 0.5rem; font-weight: 600">
+              Cargando motores de visión 3D, sensores IMU/GPS y lector de billetes...
+            </div>
+          </div>
+        </div>
+        <div
+          style="
+            display: inline-flex;
+            align-items: center;
+            gap: 0.75rem;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 0.5rem 1.25rem;
+            border-radius: 0.75rem;
+          "
+        >
+          <img src="/uam-logo.png" alt="UAM Managua" style="height: 28px; width: auto" />
+          <span style="color: #00363e; font-weight: 800; font-size: 0.8rem; letter-spacing: 0.04em">
+            UAM MANAGUA
+          </span>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
