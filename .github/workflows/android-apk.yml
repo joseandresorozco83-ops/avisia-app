@@ -50,6 +50,7 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug || ./gradlew assembleDebug
           cp app/build/outputs/apk/debug/app-debug.apk ../AVISIA-v5.6.0.apk
+          cp app/build/outputs/apk/debug/app-debug.apk ../AVISIA-v5.6.2.apk
 
       - name: Upload AVISIA-debug.apk Artifact
         uses: actions/upload-artifact@v4
@@ -62,12 +63,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v5.6.0
-          name: AVISIA v5.6.0 Android APK (UAM Managua)
+          name: AVISIA v5.6.2 Android APK (UAM Managua)
           body: |
-            Descarga directa del instalador Android (`AVISIA-v5.6.0.apk`) sincronizado 1:1 con la versión Web v5.6.0:
+            Descarga directa del instalador Android (`AVISIA-v5.6.0.apk` / `AVISIA-v5.6.2.apk`) sincronizado 1:1 con la versión Web:
+            - Corregido error `Cannot read properties of undefined (reading 'getVoices')` en Android WebView
+            - Ícono oficial de AVISIA en el lanzador y pantalla completa de carga (Splash Screen)
             - 6 modos contextuales (1. Oficina, 2. Casa, 3. Calle, 4. Lector de Billetes, 5. Detallado, 6. Discreto)
-            - Recalibración 3D de distancias en pasos + suavizado temporal con histéresis
-            - Regulación inteligente de voz por sensores (Acelerómetro + Giroscopio/Brújula + GPS) sin cortar frases
+            - Recalibración 3D de distancias en pasos + regulación de voz por sensores
             - Lector de billetes en Córdobas (C$10 a C$1000) y Dólares ($1 a $100)
-          files: AVISIA-v5.6.0.apk
+          files: |
+            AVISIA-v5.6.0.apk
+            AVISIA-v5.6.2.apk
           prerelease: false

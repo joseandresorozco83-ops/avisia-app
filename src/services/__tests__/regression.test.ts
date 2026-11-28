@@ -49,6 +49,7 @@ import {
   PedestrianNavigationService,
 } from '../PedestrianNavigationService';
 import { computeStixelCorridor } from '../DoorAndStixelService';
+import { speechService } from '../SpeechService';
 import { conversationService } from '../ConversationService';
 import { scenarioManager } from '../ScenarioManager';
 import type { Detection } from '../../types/avicia';
@@ -961,5 +962,10 @@ describe('AVISIA v5.1 Field-Test Regressions — Office Screenshots #1 to #10', 
     const turnState = navSvc.updateFromHeading(45, 2200);
     expect(turnState.sensorDecision).toBe('turn_new_view');
     expect(turnState.recommendedVoiceCooldownMs).toBeLessThanOrEqual(2500);
+
+    // 7. Android WebView safety: getSpanishVoices() and cancel() never throw when window.speechSynthesis is undefined
+    expect(() => speechService.getSpanishVoices()).not.toThrow();
+    expect(speechService.getSpanishVoices()).toEqual([]);
+    expect(() => speechService.cancel()).not.toThrow();
   });
 });

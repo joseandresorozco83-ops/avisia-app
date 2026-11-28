@@ -271,12 +271,13 @@ export function App() {
       setAvailableVoices(speechService.getSpanishVoices());
     };
     loadVoices();
-    if (speechService.isSynthesisSupported()) {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+    if (synth && 'onvoiceschanged' in synth) {
+      synth.onvoiceschanged = loadVoices;
     }
     return () => {
-      if (speechService.isSynthesisSupported()) {
-        window.speechSynthesis.onvoiceschanged = null;
+      if (synth && 'onvoiceschanged' in synth) {
+        synth.onvoiceschanged = null;
       }
     };
   }, []);

@@ -31,15 +31,24 @@ type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 export class SpeechService {
   private lastSpokenText = '';
   private activeUtterance: SpeechSynthesisUtterance | null = null;
+  private nativeSpeaking = false;
   /** Strong reference pool prevents Chrome V8 GC from collecting active utterances mid-sentence */
   private utterancePool: SpeechSynthesisUtterance[] = [];
   private fallbackTimer: number | null = null;
   private sharedAudioCtx: AudioContext | null = null;
   private speechEpoch = 0;
 
+  private hasWebSpeechSynthesis(): boolean {
+    return (
+      typeof window !== 'undefined' &&
+      Boolean(window.speechSynthesis) &&
+      typeof window.speechSynthesis.getVoices === 'function'
+    );
+  }
+
   isCurrentlySpeaking(): boolean {
-    if (this.activeUtterance !== null) return true;
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    if (this.nativeSpeaking || this.activeUtterance !== null) return true;
+    if (this.hasWebSpeechSynthesis()) {
       return Boolean(window.speechSynthesis.speaking);
     }
     return false;
@@ -69,7 +78,7 @@ export class SpeechService {
 
   isSynthesisSupported(): boolean {
     if (Capacitor.isNativePlatform()) return true;
-    return typeof window !== 'undefined' && 'speechSynthesis' in window;
+    return this.hasWebSpeechSynthesis();
   }
 
   isRecognitionSupported(): boolean {
@@ -81,10 +90,16 @@ export class SpeechService {
   /**
    * Returns Spanish voices sorted by naturalness:
    * Neural/Natural/Online & Google voices first, legacy offline voices last.
+   * Safely returns [] on Android WebView where window.speechSynthesis is undefined (uses Capacitor native TTS instead).
    */
   getSpanishVoices(): SpeechSynthesisVoice[] {
-    if (!this.isSynthesisSupported()) return [];
-    const voices = window.speechSynthesis.getVoices();
+    if (!this.hasWebSpeechSynthesis()) return [];
+    let voices: SpeechSynthesisVoice[] = [];
+    try {
+      voices = window.speechSynthesis.getVoices() ?? [];
+    } catch {
+      return [];
+    }
     const spanish = voices.filter((v) => v.lang.toLowerCase().startsWith('es'));
     const pool = spanish.length > 0 ? spanish : voices;
 
@@ -344,6 +359,7 @@ export class SpeechService {
 
     // Native Android / Capacitor TextToSpeech with strict epoch guard so audios never mix
     if (Capacitor.isNativePlatform()) {
+      this.nativeSpeaking = true;
       callbacks?.onStart?.();
       void TextToSpeech.stop()
         .catch(() => {})
@@ -360,18 +376,20 @@ export class SpeechService {
         })
         .then(() => {
           if (this.speechEpoch === myEpoch) {
+            this.nativeSpeaking = false;
             callbacks?.onEnd?.();
           }
         })
         .catch(() => {
           if (this.speechEpoch === myEpoch) {
+            this.nativeSpeaking = false;
             callbacks?.onError?.();
           }
         });
       return;
     }
 
-    if (!this.isSynthesisSupported()) {
+    if (!this.hasWebSpeechSynthesis()) {
       callbacks?.onEnd?.();
       return;
     }
@@ -456,6 +474,7 @@ export class SpeechService {
 
   cancel(): void {
     this.speechEpoch++;
+    this.nativeSpeaking = false;
     this.activeUtterance = null;
     this.utterancePool = [];
     if (this.fallbackTimer !== null) {
@@ -465,8 +484,12 @@ export class SpeechService {
     if (Capacitor.isNativePlatform()) {
       void TextToSpeech.stop().catch(() => {});
     }
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+    if (this.hasWebSpeechSynthesis()) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        // Ignore cancel errors
+      }
     }
   }
 
