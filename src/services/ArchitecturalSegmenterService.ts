@@ -1,4 +1,5 @@
 import type { ArchModelVariant, Detection, ObjectCategory } from '../types/avicia';
+import { cameraService, remapViewportBboxToFullFrame } from './CameraService';
 import { computeClockPosition, estimatePinholeMeters } from './DetectorService';
 import { pedestrianNavigationService } from './PedestrianNavigationService';
 import { visionWorkerClient } from './VisionWorkerClient';
@@ -1030,15 +1031,10 @@ export class ArchitecturalSegmenterService {
       if (!st.ready) return null;
     }
 
-    // Preserve exact portrait (9:16) or landscape (16:9) aspect ratio (fixes vertical squashing on Android!)
-    const srcW =
-      source instanceof HTMLVideoElement
-        ? source.videoWidth || 640
-        : source.naturalWidth || source.width || 640;
-    const srcH =
-      source instanceof HTMLVideoElement
-        ? source.videoHeight || 480
-        : source.naturalHeight || source.height || 480;
+    // Preserve exact portrait (9:16) or landscape (16:9) aspect ratio (and crop out Iriun Webcam pillarbox bars!)
+    const viewport = cameraService.detectActiveViewport(source);
+    const srcW = viewport.width;
+    const srcH = viewport.height;
     if (!srcW || !srcH) return null;
 
     const maxDim = 256;
@@ -1054,7 +1050,17 @@ export class ArchitecturalSegmenterService {
     const ctx = this.captureCanvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return null;
 
-    ctx.drawImage(source, 0, 0, w, h);
+    ctx.drawImage(
+      source,
+      viewport.x,
+      viewport.y,
+      viewport.width,
+      viewport.height,
+      0,
+      0,
+      w,
+      h
+    );
 
     const capturedEpoch = pedestrianNavigationService.getMovementEpoch();
     const capturedAt = Date.now();
@@ -1086,7 +1092,13 @@ export class ArchitecturalSegmenterService {
     }
 
     this.status.inferenceMs = elapsed;
-    return parseArchitecturalSegments(segments, elapsed, Date.now());
+    const analysis = parseArchitecturalSegments(segments, elapsed, Date.now());
+    if (viewport.isPillarboxedPortrait) {
+      for (const det of analysis.detections) {
+        det.bbox = remapViewportBboxToFullFrame(det.bbox, viewport);
+      }
+    }
+    return analysis;
   }
 }
 

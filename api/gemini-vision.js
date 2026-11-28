@@ -2,7 +2,8 @@ import { metric } from '@vercel/functions';
 
 const MODEL_CANDIDATES = [
   'gemini-3.5-flash-lite',
-  'gemini-3.8-flash',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
   'gemini-flash-latest',
 ];
 

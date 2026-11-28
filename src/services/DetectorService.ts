@@ -1,6 +1,11 @@
 import { FilesetResolver, ObjectDetector, type Detection as MpDetection } from '@mediapipe/tasks-vision';
 import type { AppPresetId, Detection, DetectorEngineId, DetectorStatus, ObjectCategory } from '../types/avicia';
 import { cameraCalibrationService } from './CameraCalibrationService';
+import {
+  cameraService,
+  remapViewportBboxToFullFrame,
+  type ActiveViewportRect,
+} from './CameraService';
 import { pedestrianNavigationService } from './PedestrianNavigationService';
 import { visionWorkerClient, type WorkerDetectionItem } from './VisionWorkerClient';
 
@@ -830,23 +835,31 @@ export class DetectorService {
     if (!this.onnxCanvas) {
       this.onnxCanvas = document.createElement('canvas');
     }
-    const srcW =
-      sourceEl instanceof HTMLVideoElement
-        ? sourceEl.videoWidth || 640
-        : sourceEl.naturalWidth || sourceEl.width || 640;
-    const srcH =
-      sourceEl instanceof HTMLVideoElement
-        ? sourceEl.videoHeight || 480
-        : sourceEl.naturalHeight || sourceEl.height || 480;
+    const viewport = cameraService.detectActiveViewport(sourceEl);
+    if (viewport.isMobileFeed) {
+      cameraCalibrationService.setMobileBridgeProfile(true);
+    }
+    const srcW = Math.max(64, viewport.width);
+    const srcH = Math.max(64, viewport.height);
 
-    // Aspect-ratio-preserving downscale (never squashes portrait 9:16 mobile frames!)
+    // Aspect-ratio-preserving downscale of the active non-pillarboxed phone viewport (never squashes portrait 9:16 mobile frames!)
     const maxDim = loadedOnnx === 'dfine_s' || loadedOnnx === 'dfine_s_obj365' ? 576 : 512;
     const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
     this.onnxCanvas.width = Math.max(64, Math.round(srcW * scale));
     this.onnxCanvas.height = Math.max(64, Math.round(srcH * scale));
     const ctx = this.onnxCanvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return { detections: [], inferenceTimeMs: 0 };
-    ctx.drawImage(sourceEl, 0, 0, this.onnxCanvas.width, this.onnxCanvas.height);
+    ctx.drawImage(
+      sourceEl,
+      viewport.x,
+      viewport.y,
+      viewport.width,
+      viewport.height,
+      0,
+      0,
+      this.onnxCanvas.width,
+      this.onnxCanvas.height
+    );
 
     let results: WorkerDetectionItem[] = [];
     let elapsed = 0;
@@ -889,7 +902,9 @@ export class DetectorService {
       const height = Math.max(1, Math.min(100 - y, (item.box.ymax - item.box.ymin) * hScale));
       const bbox = { x, y, width, height };
       if (!isPlausibleDetection(item.label, item.score, bbox, this.activePreset)) continue;
-      mapped.push(this.buildDetection(item.label, item.score, bbox, idx, now, sourceType));
+      const det = this.buildDetection(item.label, item.score, bbox, idx, now, sourceType);
+      det.bbox = remapViewportBboxToFullFrame(det.bbox, viewport);
+      mapped.push(det);
     }
 
     return { detections: mapped, inferenceTimeMs: elapsed };
@@ -1041,9 +1056,17 @@ export class DetectorService {
       const elapsed = Math.round(performance.now() - start);
       this.status.inferenceTimeMs = elapsed;
 
-      const width = videoElement.videoWidth || 1;
-      const height = videoElement.videoHeight || 1;
-      const fastDetections = this.mapDetections(result.detections, width, height, 'real_video');
+      const viewport = cameraService.detectActiveViewport(videoElement);
+      if (viewport.isMobileFeed) {
+        cameraCalibrationService.setMobileBridgeProfile(true);
+      }
+      const fastDetections = this.mapDetections(
+        result.detections,
+        viewport.fullWidth,
+        viewport.fullHeight,
+        'real_video',
+        viewport
+      );
 
       // Kick off non-blocking background ONNX worker pass if an ONNX engine is loaded and idle
       if (this.onnxEngineLoaded && (this.usingWorker || this.onnxPipeline) && !this.onnxBusy) {
@@ -1129,8 +1152,8 @@ export class DetectorService {
 
       // Self-calibrate camera height above floor (H_cam) & vertical/horizontal orientation from confirmed floor objects
       cameraCalibrationService.updateFromVisualScene({
-        videoWidth: width,
-        videoHeight: height,
+        videoWidth: viewport.width,
+        videoHeight: viewport.height,
         referenceObjects: combinedList.map((d) => {
           const meta = Object.values(CATEGORY_MAP).find((m) => m.labelEs === d.labelEs);
           return {
@@ -1224,34 +1247,43 @@ export class DetectorService {
     mpDetections: MpDetection[],
     imgWidth: number,
     imgHeight: number,
-    source: 'real_image' | 'real_video'
+    source: 'real_image' | 'real_video',
+    viewport?: ActiveViewportRect
   ): Detection[] {
     const now = Date.now();
     const mapped: Detection[] = [];
+    const vpX = viewport ? viewport.x : 0;
+    const vpY = viewport ? viewport.y : 0;
+    const vpW = viewport ? Math.max(1, viewport.width) : Math.max(1, imgWidth);
+    const vpH = viewport ? Math.max(1, viewport.height) : Math.max(1, imgHeight);
 
     mpDetections.forEach((det, idx) => {
       const topCat = det.categories[0];
       if (!topCat || !det.boundingBox) return;
 
-      const x = Math.max(0, (det.boundingBox.originX / imgWidth) * 100);
-      const y = Math.max(0, (det.boundingBox.originY / imgHeight) * 100);
-      const width = Math.min(100 - x, (det.boundingBox.width / imgWidth) * 100);
-      const height = Math.min(100 - y, (det.boundingBox.height / imgHeight) * 100);
+      // Normalize inside active phone viewport first so 9:16 aspect ratios & distances match mobile 1:1
+      const x = Math.max(0, Math.min(100, ((det.boundingBox.originX - vpX) / vpW) * 100));
+      const y = Math.max(0, Math.min(100, ((det.boundingBox.originY - vpY) / vpH) * 100));
+      const width = Math.min(100 - x, (det.boundingBox.width / vpW) * 100);
+      const height = Math.min(100 - y, (det.boundingBox.height / vpH) * 100);
+      if (width < 2 || height < 2) return;
       const bbox = { x, y, width, height };
       if (!isPlausibleDetection(topCat.categoryName || '', topCat.score, bbox, this.activePreset)) {
         return;
       }
 
-      mapped.push(
-        this.buildDetection(
-          topCat.categoryName || '',
-          topCat.score,
-          bbox,
-          idx,
-          now,
-          source
-        )
+      const built = this.buildDetection(
+        topCat.categoryName || '',
+        topCat.score,
+        bbox,
+        idx,
+        now,
+        source
       );
+      if (viewport) {
+        built.bbox = remapViewportBboxToFullFrame(built.bbox, viewport);
+      }
+      mapped.push(built);
     });
 
     return mapped;

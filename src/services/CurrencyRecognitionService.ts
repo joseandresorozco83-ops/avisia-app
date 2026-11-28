@@ -1,4 +1,5 @@
 import { Capacitor } from '@capacitor/core';
+import { cameraService } from './CameraService';
 
 const PRODUCTION_PROXY_URL = 'https://avisia-app.vercel.app/api/gemini-vision';
 
@@ -10,6 +11,7 @@ export interface BanknoteInfo {
   denomination: number | null;
   spokenText: string;
   badgeText: string;
+  detailText?: string;
   engine: 'gemini' | 'offline_ocr';
   elapsedMs: number;
 }
@@ -82,6 +84,7 @@ export function parseBanknoteFromOcrText(
   denomination: number | null;
   spokenText: string;
   badgeText: string;
+  detailText?: string;
 } {
   const norm = rawText
     .toLowerCase()
@@ -94,10 +97,16 @@ export function parseBanknoteFromOcrText(
     norm.includes('nicaragua') ||
     norm.includes('cordoba') ||
     norm.includes('banco central') ||
+    norm.includes('banco') ||
     norm.includes('dario') ||
+    norm.includes('ruben') ||
     norm.includes('masaya') ||
     norm.includes('granada') ||
     norm.includes('leon') ||
+    norm.includes('catedral') ||
+    norm.includes('teatro') ||
+    norm.includes('allende') ||
+    norm.includes('perlas') ||
     norm.includes('momotombo') ||
     norm.includes('gueguense') ||
     norm.includes('c$');
@@ -105,8 +114,12 @@ export function parseBanknoteFromOcrText(
   const hasUsdCue =
     norm.includes('united states') ||
     norm.includes('federal reserve') ||
+    norm.includes('federal') ||
+    norm.includes('reserve') ||
     norm.includes('dollar') ||
     norm.includes('in god we trust') ||
+    norm.includes('god we trust') ||
+    norm.includes('legal tender') ||
     norm.includes('washington') ||
     norm.includes('jefferson') ||
     norm.includes('lincoln') ||
@@ -116,7 +129,7 @@ export function parseBanknoteFromOcrText(
     norm.includes('franklin') ||
     norm.includes('usa');
 
-  // Repair common OCR digit confusions inside numeric tokens (e.g., "10O" -> "100", "5O0" -> "500", "2O" -> "20", "l00" -> "100")
+  // Repair common OCR digit confusions inside numeric tokens (e.g., "10O" -> "100", "5O0" -> "500", "2O" -> "20", "l00" -> "100", "IOO" -> "100")
   const digitRepaired = norm.replace(/\b[0-9oilqs|]{2,4}\b/g, (tok) =>
     tok
       .replace(/[oq]/g, '0')
@@ -161,8 +174,9 @@ export function parseBanknoteFromOcrText(
           detected: true,
           currency: 'NIO',
           denomination: d,
-          spokenText: `Billete de ${d} córdobas (${info.color}).`,
+          spokenText: `Billete de ${d} córdobas (${info.color}, ${info.landmark}).`,
           badgeText: `C$ ${d} córdobas`,
+          detailText: `${info.landmark} · Color ${info.color}`,
         };
       }
     }
@@ -182,8 +196,9 @@ export function parseBanknoteFromOcrText(
         detected: true,
         currency: 'NIO',
         denomination: hueDenom,
-        spokenText: `Posible billete de ${hueDenom} córdobas (${info.color}).`,
+        spokenText: `Posible billete de ${hueDenom} córdobas (${info.color}, ${info.landmark}).`,
         badgeText: `~ C$ ${hueDenom} córdobas`,
+        detailText: `${info.landmark} · Color ${info.color}`,
       };
     }
   }
@@ -199,6 +214,7 @@ export function parseBanknoteFromOcrText(
           denomination: d,
           spokenText: `Billete de ${d} ${unit} estadounidenses (${info.portrait}).`,
           badgeText: `$ ${d} USD`,
+          detailText: `${info.portrait} · Dólar estadounidense`,
         };
       }
     }
@@ -210,17 +226,20 @@ export function parseBanknoteFromOcrText(
       dominantHue === 'purple' ||
       dominantHue === 'blue' ||
       dominantHue === 'red' ||
-      dominantHue === 'brown')
+      dominantHue === 'brown' ||
+      dominantHue === 'green_light' ||
+      dominantHue === 'green_dark')
   ) {
-    for (const d of [500, 200, 100, 50, 20, 10]) {
+    for (const d of [1000, 500, 200, 100, 50, 20, 10]) {
       if (nums.has(d)) {
         const info = NIO_DETAILS[d];
         return {
           detected: true,
           currency: 'NIO',
           denomination: d,
-          spokenText: `Billete de ${d} córdobas (${info.color}).`,
+          spokenText: `Billete de ${d} córdobas (${info.color}, ${info.landmark}).`,
           badgeText: `C$ ${d} córdobas`,
+          detailText: `${info.landmark} · Color ${info.color}`,
         };
       }
     }
@@ -245,6 +264,7 @@ export function parseCloudBanknoteReply(text: string): {
   currency: BanknoteCurrency;
   denomination: number | null;
   badgeText: string;
+  detailText?: string;
 } {
   const cleaned = text.trim();
   const norm = cleaned
@@ -265,13 +285,39 @@ export function parseCloudBanknoteReply(text: string): {
   }
 
   const m = norm.match(/\b(1000|500|200|100|50|20|10|5|2|1)\b/);
-  const denom = m ? parseInt(m[1], 10) : null;
-
-  if (norm.includes('cordoba') && denom !== null) {
-    return { detected: true, currency: 'NIO', denomination: denom, badgeText: `C$ ${denom} córdobas` };
+  let denom = m ? parseInt(m[1], 10) : null;
+  if (denom === null) {
+    if (/\bmil\b/.test(norm)) denom = 1000;
+    else if (/\bquinientos\b/.test(norm)) denom = 500;
+    else if (/\bdoscientos\b/.test(norm)) denom = 200;
+    else if (/\bcien\b/.test(norm)) denom = 100;
+    else if (/\bcincuenta\b/.test(norm)) denom = 50;
+    else if (/\bveinte\b/.test(norm)) denom = 20;
+    else if (/\bdiez\b/.test(norm)) denom = 10;
+    else if (/\bcinco\b/.test(norm)) denom = 5;
+    else if (/\bdos\b/.test(norm)) denom = 2;
+    else if (/\bun dolar\b/.test(norm)) denom = 1;
   }
-  if (norm.includes('dolar') && denom !== null) {
-    return { detected: true, currency: 'USD', denomination: denom, badgeText: `$ ${denom} USD` };
+
+  if ((norm.includes('cordoba') || norm.includes('c$') || norm.includes('nio')) && denom !== null) {
+    const info = NIO_DETAILS[denom];
+    return {
+      detected: true,
+      currency: 'NIO',
+      denomination: denom,
+      badgeText: `C$ ${denom} córdobas`,
+      detailText: info ? `${info.landmark} · Color ${info.color}` : 'Córdoba nicaragüense',
+    };
+  }
+  if ((norm.includes('dolar') || norm.includes('usd') || norm.includes('$')) && denom !== null) {
+    const info = USD_DETAILS[denom];
+    return {
+      detected: true,
+      currency: 'USD',
+      denomination: denom,
+      badgeText: `$ ${denom} USD`,
+      detailText: info ? `${info.portrait} · Dólar estadounidense` : 'Dólar estadounidense',
+    };
   }
   return { detected: false, currency: 'unknown', denomination: null, badgeText: '' };
 }
@@ -332,17 +378,13 @@ export class CurrencyRecognitionService {
     source: HTMLVideoElement | HTMLImageElement,
     maxWidth = 840
   ): HTMLCanvasElement | null {
-    const srcW =
-      source instanceof HTMLVideoElement
-        ? source.videoWidth
-        : source.naturalWidth || source.width;
-    const srcH =
-      source instanceof HTMLVideoElement
-        ? source.videoHeight
-        : source.naturalHeight || source.height;
+    // Crop out Iriun Webcam black pillarbox bars first so OCR & polymer hue histograms analyze 100% pure banknote frame!
+    const viewport = cameraService.detectActiveViewport(source);
+    const srcW = viewport.width;
+    const srcH = viewport.height;
     if (!srcW || !srcH) return null;
 
-    const scale = Math.min(1, maxWidth / srcW);
+    const scale = Math.min(1, maxWidth / Math.max(srcW, srcH));
     const outW = Math.max(64, Math.round(srcW * scale));
     const outH = Math.max(64, Math.round(srcH * scale));
 
@@ -353,7 +395,17 @@ export class CurrencyRecognitionService {
     this.captureCanvas.height = outH;
     const ctx = this.captureCanvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return null;
-    ctx.drawImage(source, 0, 0, outW, outH);
+    ctx.drawImage(
+      source,
+      viewport.x,
+      viewport.y,
+      viewport.width,
+      viewport.height,
+      0,
+      0,
+      outW,
+      outH
+    );
     return this.captureCanvas;
   }
 
@@ -547,6 +599,7 @@ export class CurrencyRecognitionService {
                     ? ''
                     : text,
                 badgeText: parsed.badgeText,
+                detailText: parsed.detailText,
                 engine: 'gemini',
                 elapsedMs: Math.round(performance.now() - start),
               };
@@ -593,6 +646,7 @@ export class CurrencyRecognitionService {
               ? 'El servicio en la nube no está disponible en este momento y el lector local no distinguió el valor. Acércalo con buena luz.'
               : parsed.spokenText,
         badgeText: parsed.detected ? parsed.badgeText : '',
+        detailText: parsed.detailText,
         engine: 'offline_ocr',
         elapsedMs: Math.round(performance.now() - start),
       };

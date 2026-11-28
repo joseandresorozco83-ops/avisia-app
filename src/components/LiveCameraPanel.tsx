@@ -467,7 +467,10 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       const list = await cameraService.listCameras();
       setDevices(list);
       if (list.length > 0 && !selectedDeviceId) {
-        setSelectedDeviceId(list[0].deviceId);
+        const preferred = cameraService.findPreferredCamera(list);
+        if (preferred) {
+          setSelectedDeviceId(preferred.deviceId);
+        }
       }
     } catch {
       // Ignore device enumeration errors prior to permission
@@ -501,16 +504,17 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
     ctx.clearRect(0, 0, width, height);
 
-    // Banknote framing guide rectangle in Billetes channel
+    // Banknote framing guide rectangle in Billetes channel (adapts automatically to Iriun Webcam active phone viewport!)
     if (channelRef.current === 'currency') {
-      const bx = width * 0.12;
-      const by = height * 0.18;
-      const bw = width * 0.76;
-      const bh = height * 0.64;
+      const vp = cameraService.detectActiveViewport(video);
+      const bx = vp.x + vp.width * 0.1;
+      const by = vp.y + vp.height * 0.18;
+      const bw = vp.width * 0.8;
+      const bh = vp.height * 0.64;
       ctx.save();
       ctx.setLineDash([10, 6]);
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = 'rgba(251, 191, 36, 0.9)';
+      ctx.lineWidth = 3.5;
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.95)';
       ctx.strokeRect(bx, by, bw, bh);
       ctx.restore();
       return;
@@ -664,6 +668,10 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
     setError(null);
     try {
       await cameraService.startCamera(videoRef.current, nextDeviceId || undefined);
+      const isIriun = cameraService.isIriunOrMobileCameraActive();
+      cameraCalibrationService.setMobileBridgeProfile(isIriun);
+      pedestrianNavigationService.setMobileBridgeActive(isIriun);
+      setPoseCalibration(cameraCalibrationService.getCalibration());
       await refreshDevices();
     } catch (err) {
       const msg =
@@ -759,6 +767,27 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           ? `Reconocimiento IA · ${info.elapsedMs}ms`
           : `OCR Offline · ${info.elapsedMs}ms`
       );
+      if (info.detected && info.denomination !== null) {
+        onDetectionsReady([
+          {
+            id: `banknote-${info.currency}-${info.denomination}-${Date.now()}`,
+            category: 'unknown',
+            labelEs: `Billete ${info.badgeText}${info.detailText ? ` (${info.detailText})` : ''}`,
+            source: 'real_video',
+            confidence: info.engine === 'gemini' ? 0.99 : 0.94,
+            bbox: { x: 18, y: 22, width: 64, height: 56 },
+            confirmationStatus: 'confirmed',
+            priority: 99,
+            firstSeenAt: Date.now(),
+            lastSeenAt: Date.now(),
+            isNew: true,
+            isInanimateObstacle: false,
+            proximityZone: 'front_close',
+            estimatedMeters: 0.25,
+            clockPosition: 'a las 12',
+          },
+        ]);
+      }
       telemetryService.recordEvent({
         type: 'banknote_scan',
         engine: info.engine,
@@ -824,6 +853,25 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               ? `Auto IA · ${info.elapsedMs}ms`
               : `Auto OCR Offline · ${info.elapsedMs}ms`
           );
+          onDetectionsReady([
+            {
+              id: `banknote-${info.currency}-${info.denomination}-${now}`,
+              category: 'unknown',
+              labelEs: `Billete ${info.badgeText}${info.detailText ? ` (${info.detailText})` : ''}`,
+              source: 'real_video',
+              confidence: info.engine === 'gemini' ? 0.99 : 0.94,
+              bbox: { x: 18, y: 22, width: 64, height: 56 },
+              confirmationStatus: 'confirmed',
+              priority: 99,
+              firstSeenAt: now,
+              lastSeenAt: now,
+              isNew: true,
+              isInanimateObstacle: false,
+              proximityZone: 'front_close',
+              estimatedMeters: 0.25,
+              clockPosition: 'a las 12',
+            },
+          ]);
           // Speak immediately when a new denomination is shown (or after 6.5s cooldown)
           if (!prev || prev.key !== billKey || now - prev.at > 6500) {
             lastAnnouncedBillRef.current = { key: billKey, at: now };
@@ -852,7 +900,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
 
     const interval = window.setInterval(() => {
       void scanOnce();
-    }, 2200);
+    }, 1500);
 
     return () => {
       cancelled = true;
@@ -962,10 +1010,20 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       runningRef.current = true;
       await cameraService.startCamera(videoRef.current, selectedDeviceId || undefined);
       if (!runningRef.current) return;
+      const isIriun = cameraService.isIriunOrMobileCameraActive();
+      cameraCalibrationService.setMobileBridgeProfile(isIriun);
+      pedestrianNavigationService.setMobileBridgeActive(isIriun);
+      setPoseCalibration(cameraCalibrationService.getCalibration());
       setCameraActive(true);
       onVideoElementChange?.(videoRef.current);
       onCameraStateChange(true);
-      await refreshDevices();
+      const camList = await cameraService.listCameras().catch(() => []);
+      setDevices(camList);
+      const activeLabel = cameraService.getActiveCameraLabel();
+      const matchedCam = camList.find((c) => c.label === activeLabel) ?? cameraService.findPreferredCamera(camList);
+      if (matchedCam && matchedCam.deviceId) {
+        setSelectedDeviceId(matchedCam.deviceId);
+      }
 
       const detStatus = await detectorService.setEngine(detectorEngine, threshold);
       setModelBadge(detStatus.modelName);
@@ -1547,7 +1605,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
           <div className="text-center p-4 max-w-xs">
             <Video className="w-8 h-8 text-cyan-400/70 mx-auto mb-1.5" />
             <p className="text-sm font-semibold text-slate-200">
-              AVISIA v5.4.0 · Cámara Asistiva
+              AVISIA v5.5.0 · Cámara Asistiva
             </p>
             <p className="text-[11px] text-slate-400 mt-1 leading-snug">
               Activa la cámara para explorar obstáculos estabilizados, leer texto, buscar objetos o describir escenas.
@@ -1570,6 +1628,21 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             <span className="px-2 py-0.5 rounded-full bg-slate-950/80 border border-white/15 text-[10px] font-medium text-slate-200 shrink-0">
               {liveCount} {liveCount === 1 ? 'obj' : 'objs'}
             </span>
+          </div>
+        )}
+
+        {cameraActive && channel === 'currency' && banknoteResult?.detected && (
+          <div className="absolute bottom-2 left-2 right-2 flex flex-col items-center pointer-events-none">
+            <div className="px-4 py-2 rounded-2xl bg-slate-950/92 border-2 border-amber-400 shadow-xl text-center max-w-[92%]">
+              <div className="text-lg sm:text-xl font-black text-amber-300 tracking-wide">
+                {banknoteResult.badgeText.toUpperCase()}
+              </div>
+              {banknoteResult.detailText && (
+                <div className="text-xs font-bold text-emerald-300 mt-0.5">
+                  {banknoteResult.detailText}
+                </div>
+              )}
+            </div>
           </div>
         )}
 

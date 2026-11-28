@@ -368,6 +368,33 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
     try {
       const res = await currencyRecognitionService.identifyBanknote(imgRef.current);
       setAssistText(res.spokenText);
+      setAssistBadge(
+        res.engine === 'gemini'
+          ? `Lector IA de Billetes · ${res.elapsedMs}ms`
+          : `Lector Local OCR · ${res.elapsedMs}ms`
+      );
+      if (res.detected && res.denomination !== null) {
+        const billDet: Detection = {
+          id: `img-banknote-${res.currency}-${res.denomination}-${Date.now()}`,
+          category: 'unknown',
+          labelEs: `Billete ${res.badgeText}${res.detailText ? ` (${res.detailText})` : ''}`,
+          source: 'real_image',
+          confidence: res.engine === 'gemini' ? 0.99 : 0.94,
+          bbox: { x: 14, y: 18, width: 72, height: 64 },
+          confirmationStatus: 'confirmed',
+          priority: 99,
+          firstSeenAt: Date.now(),
+          lastSeenAt: Date.now(),
+          isNew: true,
+          isInanimateObstacle: false,
+          proximityZone: 'front_close',
+          estimatedMeters: 0.25,
+          clockPosition: 'a las 12',
+        };
+        setDetections([billDet]);
+        drawBoxes([billDet], null);
+        onDetectionsReady([billDet], res.elapsedMs);
+      }
       onSpeakDescription(res.spokenText);
     } finally {
       setAssistBusy(false);
@@ -453,7 +480,7 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
 
         <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 pointer-events-none">
           <span className="px-2.5 py-0.5 rounded-full bg-slate-950/85 border border-emerald-500/40 text-[10px] font-semibold text-emerald-200 truncate">
-            {status.modelName.split(' ')[0]} · v5.3.0
+            {status.modelName.split(' ')[0]} · v5.5.0
           </span>
           <span className="px-2.5 py-0.5 rounded-full bg-slate-950/85 border border-cyan-400/40 text-[10px] font-mono text-cyan-200 truncate">
             {poseCal.statusBadge}

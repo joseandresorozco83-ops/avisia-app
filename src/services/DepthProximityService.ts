@@ -1,5 +1,6 @@
 import type { Detection } from '../types/avicia';
 import { cameraCalibrationService } from './CameraCalibrationService';
+import { cameraService } from './CameraService';
 
 export type ProximityLevel = 'clear' | 'caution' | 'danger';
 
@@ -218,7 +219,18 @@ export class DepthProximityService {
       };
     }
 
-    ctx.drawImage(video, 0, 0, w, h);
+    const viewport = cameraService.detectActiveViewport(video);
+    ctx.drawImage(
+      video,
+      viewport.x,
+      viewport.y,
+      viewport.width,
+      viewport.height,
+      0,
+      0,
+      w,
+      h
+    );
     const frame = ctx.getImageData(0, 0, w, h).data;
     const pixelCount = w * h;
     const currLuma = new Float32Array(pixelCount);

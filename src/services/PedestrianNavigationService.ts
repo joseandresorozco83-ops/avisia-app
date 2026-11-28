@@ -82,6 +82,7 @@ export class PedestrianNavigationService {
   private lastMovedAt = 0;
   private lastHeadingDeg: number | null = null;
   private lastTrigger: MovementTriggerReason = 'none';
+  private mobileBridgeActive = false;
 
   private trackingActive = false;
   private listeners = new Set<MovementListener>();
@@ -105,6 +106,15 @@ export class PedestrianNavigationService {
     this.lastMovedAt = 0;
     this.lastHeadingDeg = null;
     this.lastTrigger = 'none';
+    this.mobileBridgeActive = false;
+  }
+
+  /**
+   * Enables higher sensitivity visual gait & turn detection when the phone camera is streamed
+   * to the laptop via Iriun Webcam (where the phone's physical IMU is not wired to the desktop browser).
+   */
+  setMobileBridgeActive(active: boolean): void {
+    this.mobileBridgeActive = active;
   }
 
   getMovementEpoch(): number {
@@ -311,13 +321,16 @@ export class PedestrianNavigationService {
 
   /**
    * Integrates camera visual motion score (frame-to-frame luminance flux in [0..100]).
-   * When the user takes a step or pans on devices without IMU events, visual motion >= 14.5
-   * advances the movement epoch so stale detections and queued speech are flushed immediately.
+   * When the user takes a step or pans on devices without IMU events (e.g., Iriun Webcam from phone to laptop),
+   * visual motion >= 10.5 (Iriun mobile bridge) or >= 14.5 (fixed webcam) advances the movement epoch
+   * so stale detections and queued speech are flushed immediately.
    */
   updateFromVisualMotion(motionScore: number, now = Date.now()): PedestrianMotionState {
     if (!Number.isFinite(motionScore)) return this.getState(now);
-    if (motionScore >= 14.5 && now - this.lastMovedAt >= 380) {
-      if (motionScore >= 17 && now - this.lastStepAt >= 480) {
+    const moveThreshold = this.mobileBridgeActive ? 10.5 : 14.5;
+    const stepThreshold = this.mobileBridgeActive ? 12.5 : 17.0;
+    if (motionScore >= moveThreshold && now - this.lastMovedAt >= 360) {
+      if (motionScore >= stepThreshold && now - this.lastStepAt >= 440) {
         this.totalSteps += 1;
         this.estimatedMetersMoved = Number((this.estimatedMetersMoved + 0.68).toFixed(2));
         this.lastStepAt = now;

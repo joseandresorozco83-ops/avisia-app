@@ -27,20 +27,22 @@ export interface CameraPoseCalibration {
   statusBadge: string;
   /** Polite corrective prompt ONLY when the camera pose exceeds automatic compensation limits */
   correctionPrompt: string | null;
+  /** True when calibrated for a smartphone camera via Iriun Webcam or native mobile sensor */
+  mobileBridgeActive?: boolean;
 }
 
 /**
- * Self-regulating 3D Projective & Inertial Camera Calibration Service (v5.2):
+ * Self-regulating 3D Projective & Inertial Camera Calibration Service (v5.5):
  * 1) Determines whether the smartphone is Vertical (portrait), Horizontal (landscape), or crooked (diagonal)
- *    from both video aspect geometry and IMU gravity vector (beta/gamma).
+ *    from both video aspect geometry (including Iriun Webcam pillarboxed 9:16 streams) and IMU gravity vector (beta/gamma).
  * 2) Tracks camera pitch angle (theta_down) and computes the exact projective horizon row v_h(theta)
  *    and dynamic floor walking zone.
  * 3) Self-calibrates the phone's physical height above the floor (H_cam in meters, 0.85m..1.75m)
  *    using the projective cross-ratio of reference objects resting on the floor (people, doors, chairs, desks).
  * 4) Tracks compass/gyro yaw heading (alpha) during walking to determine whether the camera is aimed
  *    straight ahead along the walking path or turned sideways.
- * 5) Automatically compensates object distance and height classification within [-8°, +36°] pitch,
- *    and emits a calm correction prompt only when aimed at the ceiling, shoes, or held diagonally.
+ * 5) Automatically compensates object distance and height classification within [-32°, +50°] pitch,
+ *    and emits a calm correction prompt only when aimed at the ceiling, shoes, or held >45° diagonally.
  */
 export class CameraCalibrationService {
   private posture: DevicePosture = 'vertical';
@@ -50,6 +52,7 @@ export class CameraCalibrationService {
   private baselineHeadingDeg: number | null = null;
   private headingDeviationDeg = 0;
   private hasImuSample = false;
+  private mobileBridgeActive = false;
 
   reset(): void {
     this.posture = 'vertical';
@@ -59,6 +62,24 @@ export class CameraCalibrationService {
     this.baselineHeadingDeg = null;
     this.headingDeviationDeg = 0;
     this.hasImuSample = false;
+    this.mobileBridgeActive = false;
+  }
+
+  /**
+   * Configures the calibration engine when Iriun Webcam (or a smartphone camera bridge) is detected on Web.
+   * Aligns focal length (0.72), handheld height (1.28m), and portrait orientation with the native smartphone app.
+   */
+  setMobileBridgeProfile(active: boolean): void {
+    this.mobileBridgeActive = active;
+    if (active) {
+      this.posture = 'vertical';
+      this.pitchDownDeg = 12;
+      this.cameraHeightMeters = 1.28;
+    }
+  }
+
+  isMobileBridgeProfileActive(): boolean {
+    return this.mobileBridgeActive;
   }
 
   /**
@@ -129,9 +150,13 @@ export class CameraCalibrationService {
   }): CameraPoseCalibration {
     const { videoWidth, videoHeight, sectorFloorReachPct, referenceObjects } = params;
 
-    // 1. Detect vertical vs horizontal frame geometry when IMU hasn't reported diagonal roll
+    // 1. Detect vertical vs horizontal frame geometry when IMU hasn't reported diagonal roll.
+    // When Iriun Webcam is active, videoWidth/videoHeight already reflect the cropped active phone viewport,
+    // and we preserve the smartphone handheld vertical profile unless the active crop is strongly wide without bridge.
     if (videoWidth && videoHeight && this.posture !== 'diagonal') {
-      if (videoWidth > videoHeight * 1.15) {
+      if (this.mobileBridgeActive && videoHeight >= videoWidth * 0.85) {
+        this.posture = 'vertical';
+      } else if (videoWidth > videoHeight * 1.15 && !this.mobileBridgeActive) {
         this.posture = 'horizontal';
       } else if (videoHeight >= videoWidth) {
         this.posture = 'vertical';
@@ -181,9 +206,14 @@ export class CameraCalibrationService {
   }
 
   getCalibration(): CameraPoseCalibration {
-    // Unify Web webcam (horizontal without IMU) and mobile portrait focal length so distances match 1:1
+    // When Iriun Webcam mobile bridge is active, use the exact mobile smartphone portrait focal length (0.72)
+    // so distances and step counts on Web + Iriun match the native Android App 1:1!
     const focalLengthY =
-      this.posture === 'horizontal' ? (this.hasImuSample ? 0.92 : 0.76) : 0.72;
+      this.mobileBridgeActive || this.posture !== 'horizontal'
+        ? 0.72
+        : this.hasImuSample
+          ? 0.92
+          : 0.76;
     const pitchRad = (this.pitchDownDeg * Math.PI) / 180;
 
     // Projective horizon row v_h = 50% - 100% * f_y * tan(pitchDown)
@@ -230,7 +260,8 @@ export class CameraCalibrationService {
           ? 'Al frente'
           : 'Girando';
 
-    const statusBadge = `Alt ${this.cameraHeightMeters.toFixed(1)}m · ${postureLabel} · ${aimLabel}`;
+    const prefix = this.mobileBridgeActive ? 'Iriun Móvil · ' : '';
+    const statusBadge = `${prefix}Alt ${this.cameraHeightMeters.toFixed(1)}m · ${postureLabel} · ${aimLabel}`;
 
     return {
       posture: this.posture,
@@ -245,6 +276,7 @@ export class CameraCalibrationService {
       autoRegulated,
       statusBadge,
       correctionPrompt,
+      mobileBridgeActive: this.mobileBridgeActive,
     };
   }
 

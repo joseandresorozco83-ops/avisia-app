@@ -1260,7 +1260,7 @@ export function App() {
                       AVISIA
                     </h1>
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[#8aebff]/15 text-[#8aebff] border border-[#8aebff]/35 font-mono text-xs font-extrabold">
-                      v5.4.0 Neuronal
+                      v5.5.0 Neuronal
                     </span>
                   </div>
                   <p className="text-xs font-medium text-[#dfe2ee] leading-tight">
@@ -1438,7 +1438,7 @@ export function App() {
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-extrabold text-[#8aebff] tracking-tight">AVISIA</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-[#22d3ee]/15 border border-[#8aebff]/35 font-mono text-[10px] font-bold text-[#8aebff]">
-                          v5.4.0
+                          v5.5.0
                         </span>
                         {!isOnline && (
                           <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 font-mono text-[10px] font-bold text-amber-300">

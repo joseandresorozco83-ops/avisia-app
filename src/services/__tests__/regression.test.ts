@@ -31,6 +31,16 @@ import {
 } from '../DetectorService';
 import { CameraCalibrationService } from '../CameraCalibrationService';
 import {
+  CameraService,
+  computeActiveViewportFromRgba,
+  isMobileBridgeCameraLabel,
+  remapViewportBboxToFullFrame,
+} from '../CameraService';
+import {
+  parseBanknoteFromOcrText,
+  parseCloudBanknoteReply,
+} from '../CurrencyRecognitionService';
+import {
   normalizeAde20kLabel,
   parseArchitecturalSegments,
 } from '../ArchitecturalSegmenterService';
@@ -833,5 +843,81 @@ describe('AVISIA v5.1 Field-Test Regressions — Office Screenshots #1 to #10', 
     expect(afterGps.movementEpoch).toBeGreaterThan(epoch1);
     expect(afterGps.lastTrigger).toBe('gps');
     expect(nav.isNotificationStillUseful(epoch1, 2000, 3050, 1500)).toBe(false);
+  });
+
+  it('auto-detects Iriun Webcam, crops 9:16 portrait pillarbox bars, applies mobile calibration profile, and recognizes Nicaraguan Córdobas & USD banknotes (v5.5)', () => {
+    // 1. Auto-detects Iriun Webcam / DroidCam labels and prioritizes them over built-in laptop webcam
+    expect(isMobileBridgeCameraLabel('Iriun Webcam')).toBe(true);
+    expect(isMobileBridgeCameraLabel('DroidCam Source 3')).toBe(true);
+    expect(isMobileBridgeCameraLabel('Integrated Camera')).toBe(false);
+
+    const camSvc = new CameraService();
+    const preferred = camSvc.findPreferredCamera([
+      { deviceId: 'cam-1', label: 'Integrated Webcam' },
+      { deviceId: 'cam-2', label: 'Iriun Webcam' },
+    ]);
+    expect(preferred?.deviceId).toBe('cam-2');
+
+    // 2. Detects & crops 9:16 portrait pillarbox black bars inside a 1280x720 Iriun desktop frame
+    const probeW = 96;
+    const probeH = 54;
+    const rgba = new Uint8ClampedArray(probeW * probeH * 4);
+    // Columns 0..27 and 68..95 are black pillarbox bars (R=0,G=0,B=0); columns 28..67 are active phone feed (R=140,G=150,B=160)
+    for (let r = 0; r < probeH; r++) {
+      for (let c = 0; c < probeW; c++) {
+        const idx = (r * probeW + c) * 4;
+        const isCenterPhone = c >= 28 && c <= 67;
+        rgba[idx] = isCenterPhone ? 140 : 4;
+        rgba[idx + 1] = isCenterPhone ? 150 : 4;
+        rgba[idx + 2] = isCenterPhone ? 160 : 4;
+        rgba[idx + 3] = 255;
+      }
+    }
+    const vp = computeActiveViewportFromRgba(rgba, probeW, probeH, 1280, 720, true);
+    expect(vp.isPillarboxedPortrait).toBe(true);
+    expect(vp.isMobileFeed).toBe(true);
+    expect(vp.x).toBeGreaterThan(340);
+    expect(vp.width).toBeLessThan(600);
+    expect(vp.height).toBe(720);
+
+    // Remap a centered box [25..75%] inside the cropped phone viewport back to the full 1280x720 container
+    const remapped = remapViewportBboxToFullFrame({ x: 25, y: 20, width: 50, height: 60 }, vp);
+    expect(remapped.x).toBeGreaterThan(35);
+    expect(remapped.width).toBeLessThan(30);
+    expect(remapped.y).toBe(20);
+    expect(remapped.height).toBe(60);
+
+    // 3. Mobile bridge calibration profile aligns focal length (0.72) and posture ('vertical') with smartphone
+    const calSvc = new CameraCalibrationService();
+    calSvc.setMobileBridgeProfile(true);
+    const cal = calSvc.updateFromVisualScene({ videoWidth: vp.width, videoHeight: vp.height });
+    expect(cal.posture).toBe('vertical');
+    expect(cal.focalLengthY).toBe(0.72);
+    expect(cal.statusBadge).toContain('Iriun Móvil');
+
+    // 4. Recognizes Nicaraguan Córdobas (C$10..C$1000) and US Dollars ($1..$100) from OCR + polymer hue and cloud replies
+    const nio100 = parseBanknoteFromOcrText('BANCO CENTRAL DE NICARAGUA 10O CORDOBAS', 'blue');
+    expect(nio100.detected).toBe(true);
+    expect(nio100.currency).toBe('NIO');
+    expect(nio100.denomination).toBe(100);
+    expect(nio100.detailText).toContain('Catedral de Granada');
+
+    const nio500 = parseBanknoteFromOcrText('500', 'red');
+    expect(nio500.detected).toBe(true);
+    expect(nio500.currency).toBe('NIO');
+    expect(nio500.denomination).toBe(500);
+    expect(nio500.detailText).toContain('Catedral de León');
+
+    const usd20 = parseBanknoteFromOcrText('THE UNITED STATES OF AMERICA FEDERAL RESERVE 20 TWENTY DOLLARS');
+    expect(usd20.detected).toBe(true);
+    expect(usd20.currency).toBe('USD');
+    expect(usd20.denomination).toBe(20);
+    expect(usd20.detailText).toContain('Andrew Jackson');
+
+    const cloudNio200 = parseCloudBanknoteReply('Billete de 200 córdobas (marrón).');
+    expect(cloudNio200.detected).toBe(true);
+    expect(cloudNio200.currency).toBe('NIO');
+    expect(cloudNio200.denomination).toBe(200);
+    expect(cloudNio200.detailText).toContain('Teatro Nacional Rubén Darío');
   });
 });
