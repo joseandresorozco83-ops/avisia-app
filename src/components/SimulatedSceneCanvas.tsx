@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { ChevronLeft, ChevronRight, PauseCircle, PlayCircle, RotateCcw, List } from 'lucide-react';
 import type { Detection, Scenario } from '../types/avicia';
 
 interface SimulatedSceneCanvasProps {
@@ -6,7 +7,13 @@ interface SimulatedSceneCanvasProps {
   detections: Detection[];
   selectedDetectionIds: string[];
   highlightedDetectionId: string | null;
+  simPlaying?: boolean;
   onSelectDetection: (id: string) => void;
+  onPrevScenario?: () => void;
+  onNextScenario?: () => void;
+  onOpenMenu?: () => void;
+  onTogglePlay?: () => void;
+  onResetScenario?: () => void;
 }
 
 const SCENE_IMAGE_MAP: Record<Scenario['sceneType'], string> = {
@@ -22,7 +29,13 @@ export const SimulatedSceneCanvas: React.FC<SimulatedSceneCanvasProps> = ({
   detections,
   selectedDetectionIds,
   highlightedDetectionId,
+  simPlaying = false,
   onSelectDetection,
+  onPrevScenario,
+  onNextScenario,
+  onOpenMenu,
+  onTogglePlay,
+  onResetScenario,
 }) => {
   const [imgFailed, setImgFailed] = useState(false);
   const imageSrc = SCENE_IMAGE_MAP[scenario.sceneType];
@@ -32,7 +45,7 @@ export const SimulatedSceneCanvas: React.FC<SimulatedSceneCanvasProps> = ({
   }, [scenario.sceneType]);
 
   return (
-    <div className="relative w-full aspect-[16/10] rounded-2xl overflow-hidden border border-white/10 bg-[#050b14] shadow-2xl group">
+    <div className="relative flex-1 min-h-0 w-full h-full rounded-2xl overflow-hidden border border-white/10 bg-[#050b14] shadow-2xl group">
       {/* Realistic Scene Image */}
       {!imgFailed ? (
         <img
@@ -154,17 +167,79 @@ export const SimulatedSceneCanvas: React.FC<SimulatedSceneCanvasProps> = ({
         })}
       </div>
 
-      {/* Top-Left HUD Telemetry */}
-      <div className="absolute top-3 left-3 flex items-center gap-2 px-3 py-1 rounded-full bg-slate-950/75 border border-white/15 backdrop-blur-md">
-        <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
-        <span className="text-[11px] font-medium tracking-wide text-slate-200">
-          Escena ilustrativa · Vista POV
-        </span>
+      {/* Top HUD Bar: Floating Scenario Switcher + Step Controls (saves vertical space so image fills >70% height) */}
+      <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-1.5 z-10">
+        <div className="flex items-center gap-1 px-1.5 py-1 rounded-full bg-slate-950/85 border border-white/15 backdrop-blur-md shadow-lg min-w-0">
+          {onPrevScenario && (
+            <button
+              type="button"
+              onClick={onPrevScenario}
+              aria-label="Escenario anterior"
+              className="p-1 rounded-full hover:bg-white/10 text-cyan-300 transition-colors"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onOpenMenu}
+            className="flex items-center gap-1.5 px-1.5 text-[11px] font-bold text-slate-100 hover:text-cyan-300 truncate transition-colors"
+            title="Cambiar escena o modo"
+          >
+            <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+            <span className="truncate">
+              Escena {scenario.number}: {scenario.title}
+            </span>
+            <List className="w-3 h-3 text-cyan-300 shrink-0" />
+          </button>
+          {onNextScenario && (
+            <button
+              type="button"
+              onClick={onNextScenario}
+              aria-label="Siguiente escenario"
+              className="p-1 rounded-full hover:bg-white/10 text-cyan-300 transition-colors"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          {scenario.steps.length > 1 && onTogglePlay && (
+            <button
+              type="button"
+              onClick={onTogglePlay}
+              aria-label={simPlaying ? 'Pausar secuencia' : 'Reproducir secuencia'}
+              className="p-1.5 rounded-full bg-slate-950/85 hover:bg-slate-900 border border-white/15 text-cyan-300 backdrop-blur-md shadow-lg"
+            >
+              {simPlaying ? (
+                <PauseCircle className="w-4 h-4 text-amber-400" />
+              ) : (
+                <PlayCircle className="w-4 h-4 text-cyan-300" />
+              )}
+            </button>
+          )}
+          {onResetScenario && (
+            <button
+              type="button"
+              onClick={onResetScenario}
+              aria-label="Reiniciar escenario"
+              className="p-1.5 rounded-full bg-slate-950/85 hover:bg-slate-900 border border-white/15 text-slate-200 backdrop-blur-md shadow-lg"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Bottom-Right Location Tag */}
-      <div className="absolute bottom-3 right-3 px-3 py-1 rounded-lg bg-slate-950/75 border border-white/10 backdrop-blur-md text-[11px] text-slate-200 font-medium">
-        {scenario.location.name.replace(/\s*—\s*Simulado/gi, '')}
+      {/* Bottom Location & Context Tag */}
+      <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 pointer-events-none">
+        <span className="px-2.5 py-1 rounded-lg bg-slate-950/80 border border-white/10 backdrop-blur-md text-[10px] text-slate-300 truncate max-w-[62%]">
+          {scenario.subtitle}
+        </span>
+        <span className="px-2.5 py-1 rounded-lg bg-slate-950/80 border border-cyan-400/30 backdrop-blur-md text-[10px] text-cyan-200 font-medium truncate">
+          {scenario.location.name.replace(/\s*—\s*Simulado/gi, '')}
+        </span>
       </div>
     </div>
   );

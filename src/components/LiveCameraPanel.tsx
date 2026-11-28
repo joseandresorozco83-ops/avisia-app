@@ -1407,7 +1407,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               aria-selected={active}
               aria-label={tab.spoken}
               onClick={() => selectChannel(tab.id, tab.spoken)}
-              className={`min-h-[48px] px-1 py-1 rounded-lg flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold transition-colors ${
+              className={`min-h-[38px] px-1 py-1 rounded-lg flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold transition-colors ${
                 active
                   ? 'bg-[#22d3ee] text-[#00363e] shadow-sm'
                   : 'text-[#bbc9cd] hover:bg-[#262a33]'
@@ -1421,14 +1421,14 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
       </div>
 
       {/* Camera Power & Device Controls */}
-      <div className="shrink-0 flex flex-wrap items-center justify-between gap-1.5 p-1.5 rounded-xl bg-[#181c24] border border-[#3c494c]/40">
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-1.5 p-1 rounded-xl bg-[#181c24] border border-[#3c494c]/40">
         <div className="flex items-center gap-1.5">
           {!cameraActive ? (
             <button
               type="button"
               onClick={handleStart}
               aria-label="Activar cámara en vivo"
-              className="inline-flex items-center gap-1.5 h-11 px-3.5 rounded-xl bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] font-bold text-xs transition-colors"
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl bg-[#22d3ee] hover:bg-[#8aebff] text-[#00363e] font-bold text-xs transition-colors"
             >
               <Video className="w-4 h-4" />
               Activar cámara
@@ -1438,7 +1438,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               type="button"
               onClick={handleStop}
               aria-label="Detener cámara y silenciar avisos"
-              className="inline-flex items-center gap-1.5 h-11 px-3.5 rounded-xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-xs transition-colors"
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl bg-[#93000a] hover:bg-[#b91c1c] text-[#ffdad6] font-bold text-xs transition-colors"
             >
               <VideoOff className="w-4 h-4" />
               Detener
@@ -1451,7 +1451,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
               onClick={handleCycleCamera}
               disabled={switchingCamera}
               aria-label="Cambiar entre cámara frontal y trasera"
-              className="inline-flex items-center gap-1.5 h-11 px-3 rounded-xl bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/50 text-[#8aebff] font-semibold text-xs transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 h-9 px-2.5 rounded-xl bg-[#262a33] hover:bg-[#31353e] border border-[#3c494c]/50 text-[#8aebff] font-semibold text-xs transition-colors disabled:opacity-50"
             >
               <SwitchCamera className={`w-4 h-4 ${switchingCamera ? 'animate-spin' : ''}`} />
               <span>{simplifiedControls ? 'Cambiar cámara' : devices.length}</span>
@@ -1465,7 +1465,7 @@ export const LiveCameraPanel: React.FC<LiveCameraPanelProps> = ({
             value={selectedDeviceId}
             onChange={(e) => void handleSwitchToDevice(e.target.value)}
             disabled={switchingCamera}
-            className="h-11 bg-[#0a0e16] border border-[#3c494c]/50 rounded-xl px-2 text-xs text-[#dfe2ee] max-w-[130px]"
+            className="h-9 bg-[#0a0e16] border border-[#3c494c]/50 rounded-xl px-2 text-xs text-[#dfe2ee] max-w-[130px]"
           >
             {devices.length === 0 ? (
               <option value="">Cámara trasera</option>

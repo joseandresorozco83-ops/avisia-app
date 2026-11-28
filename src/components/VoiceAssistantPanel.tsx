@@ -74,10 +74,10 @@ export const VoiceAssistantPanel: React.FC<VoiceAssistantPanelProps> = ({
   return (
     <section
       aria-label="Asistente de voz Hablar con AVISIA"
-      className="flex flex-col h-full rounded-xl bg-[#181c24] border border-[#3c494c]/40 p-4 shadow-md"
+      className="flex flex-col h-full min-h-0 rounded-xl bg-[#181c24] border border-[#3c494c]/40 p-3 shadow-md overflow-hidden"
     >
       {/* Header */}
-      <div className="flex items-center justify-between gap-2 pb-3 border-b border-[#3c494c]/30">
+      <div className="shrink-0 flex items-center justify-between gap-2 pb-2 border-b border-[#3c494c]/30">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wider text-[#8aebff] flex items-center gap-1.5">
             <MessageSquare className="w-4 h-4" />
@@ -118,65 +118,68 @@ export const VoiceAssistantPanel: React.FC<VoiceAssistantPanelProps> = ({
       </div>
 
       {/* Current spoken message + Audio controls */}
-      <div className="mt-3 p-3 rounded-xl bg-slate-900/90 border border-cyan-500/25">
-        <div className="text-[11px] uppercase tracking-wider text-cyan-300/80 mb-1">
-          Mensaje comunicado
-        </div>
-        <p className="text-sm text-slate-100 font-medium leading-relaxed min-h-[2.75rem]">
-          {lastMessage || 'Presiona «Escuchar» para reproducir el mensaje del escenario actual.'}
-        </p>
-
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={onSpeakCurrent}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs transition-colors"
-          >
-            <Volume2 className="w-4 h-4" />
-            Escuchar
-          </button>
-          <button
-            type="button"
-            onClick={onRepeatLast}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 font-medium text-xs border border-slate-700 transition-colors"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            Repetir
-          </button>
-          {isSpeaking && (
+      <div className="shrink-0 mt-2 p-2.5 rounded-xl bg-slate-900/90 border border-cyan-500/25">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] uppercase tracking-wider text-cyan-300/80">
+              Mensaje comunicado
+            </div>
+            <p className="text-xs sm:text-sm text-slate-100 font-medium leading-snug truncate">
+              {lastMessage || 'Presiona «Escuchar» para reproducir el mensaje del escenario actual.'}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
             <button
               type="button"
-              onClick={onCancelSpeech}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 font-medium text-xs border border-rose-500/40 transition-colors"
+              onClick={onSpeakCurrent}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs transition-colors"
             >
-              <Square className="w-3.5 h-3.5" />
-              Detener
+              <Volume2 className="w-3.5 h-3.5" />
+              Escuchar
             </button>
-          )}
-          <button
-            type="button"
-            onClick={onToggleMute}
-            aria-pressed={!speechSettings.enabled}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs border border-slate-700 transition-colors ml-auto"
-          >
-            {speechSettings.enabled ? (
-              <>
-                <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
-                Voz activa
-              </>
-            ) : (
-              <>
-                <VolumeX className="w-3.5 h-3.5 text-amber-400" />
-                Silenciado
-              </>
+            <button
+              type="button"
+              onClick={onRepeatLast}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 font-medium text-xs border border-slate-700 transition-colors"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Repetir
+            </button>
+            {isSpeaking && (
+              <button
+                type="button"
+                onClick={onCancelSpeech}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 font-medium text-xs border border-rose-500/40 transition-colors"
+              >
+                <Square className="w-3 h-3" />
+                Detener
+              </button>
             )}
-          </button>
+            <button
+              type="button"
+              onClick={onToggleMute}
+              aria-pressed={!speechSettings.enabled}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs border border-slate-700 transition-colors"
+            >
+              {speechSettings.enabled ? (
+                <>
+                  <Volume2 className="w-3 h-3 text-cyan-400" />
+                  Voz activa
+                </>
+              ) : (
+                <>
+                  <VolumeX className="w-3 h-3 text-amber-400" />
+                  Silenciado
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Voice speed and Spanish voice selector */}
-        <div className="mt-3 pt-2.5 border-t border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <label className="flex flex-col gap-1 text-[11px] text-slate-400">
-            <span>Velocidad ({speechSettings.rate.toFixed(1)}x)</span>
+        <div className="mt-2 pt-2 border-t border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <label className="flex items-center gap-2 text-[11px] text-slate-400">
+            <span className="shrink-0">Velocidad ({speechSettings.rate.toFixed(1)}x)</span>
             <input
               type="range"
               min="0.7"
@@ -184,15 +187,15 @@ export const VoiceAssistantPanel: React.FC<VoiceAssistantPanelProps> = ({
               step="0.1"
               value={speechSettings.rate}
               onChange={(e) => onChangeRate(parseFloat(e.target.value))}
-              className="accent-cyan-400"
+              className="accent-cyan-400 flex-1"
             />
           </label>
-          <label className="flex flex-col gap-1 text-[11px] text-slate-400">
-            <span>Voz en español</span>
+          <label className="flex items-center gap-2 text-[11px] text-slate-400">
+            <span className="shrink-0">Voz:</span>
             <select
               value={speechSettings.voiceURI ?? ''}
               onChange={(e) => onChangeVoice(e.target.value)}
-              className="bg-slate-950 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200"
+              className="bg-slate-950 border border-slate-700 rounded-md px-2 py-0.5 text-xs text-slate-200 flex-1 min-w-0 truncate"
             >
               {availableVoices.length === 0 ? (
                 <option value="">Voz predeterminada</option>
@@ -210,7 +213,7 @@ export const VoiceAssistantPanel: React.FC<VoiceAssistantPanelProps> = ({
 
       {/* Interaction History */}
       <div
-        className="mt-3 flex-1 overflow-y-auto space-y-2 pr-1 min-h-[150px]"
+        className="mt-2 flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1"
         aria-live="polite"
         aria-label="Historial de conversación"
       >

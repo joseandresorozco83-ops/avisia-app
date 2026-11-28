@@ -401,9 +401,9 @@ export const VideoLabPanel: React.FC<VideoLabPanelProps> = ({
   };
 
   return (
-    <div className="space-y-2.5">
+    <div className="flex-1 min-h-0 h-full flex flex-col gap-1.5 overflow-hidden">
       {/* Controls bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900/80 border border-white/10">
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-slate-900/80 border border-white/10">
         <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs cursor-pointer transition-colors">
           <Film className="w-4 h-4" />
           Cargar video
@@ -461,8 +461,8 @@ export const VideoLabPanel: React.FC<VideoLabPanelProps> = ({
         </div>
       )}
 
-      {/* Video + Canvas Overlay */}
-      <div className="relative w-full aspect-[16/10] rounded-2xl overflow-hidden border border-white/10 bg-[#050b14] flex items-center justify-center">
+      {/* Video + Canvas Overlay (takes ~70% dominant height) */}
+      <div className="relative flex-1 min-h-0 w-full rounded-2xl overflow-hidden border border-white/10 bg-[#050b14] flex items-center justify-center">
         {!videoUrl ? (
           <div className="text-center p-5 max-w-xs">
             <Film className="w-8 h-8 text-cyan-400/70 mx-auto mb-2" />
@@ -514,7 +514,7 @@ export const VideoLabPanel: React.FC<VideoLabPanelProps> = ({
 
       {/* Real-time Video Summary */}
       {videoUrl && !status.error && (
-        <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900/75 border border-white/10 text-xs">
+        <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-slate-900/75 border border-white/10 text-xs">
           <div className="text-slate-300">
             <span className="font-semibold text-cyan-300">
               {detections.length} objetos en cuadro

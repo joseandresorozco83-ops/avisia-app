@@ -375,12 +375,12 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
   };
 
   return (
-    <div className="space-y-3">
+    <div className="flex-1 min-h-0 h-full flex flex-col gap-1.5 overflow-hidden">
       {/* Controls bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-slate-900/80 border border-slate-800">
-        <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs cursor-pointer transition-colors">
-          <Upload className="w-4 h-4" />
-          Cargar imagen local
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-slate-900/80 border border-slate-800">
+        <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs cursor-pointer transition-colors">
+          <Upload className="w-3.5 h-3.5" />
+          Subir foto
           <input
             type="file"
             accept="image/*"
@@ -389,9 +389,9 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
           />
         </label>
 
-        <label className="flex items-center gap-2 text-xs text-slate-300">
+        <label className="flex items-center gap-1.5 text-xs text-slate-300">
           <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Umbral: {Math.round(threshold * 100)}%</span>
+          <span>{Math.round(threshold * 100)}%</span>
           <input
             type="range"
             min="0.2"
@@ -399,7 +399,7 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
             step="0.05"
             value={threshold}
             onChange={(e) => onThresholdChange(parseFloat(e.target.value))}
-            className="accent-cyan-400 w-24"
+            className="accent-cyan-400 w-20"
           />
         </label>
 
@@ -407,29 +407,23 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
           type="button"
           disabled={!imageUrl || running}
           onClick={runDetection}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 font-semibold text-xs transition-colors"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 font-semibold text-xs transition-colors"
         >
-          <Cpu className="w-4 h-4" />
-          {running ? 'Analizando...' : 'Ejecutar detector'}
+          <Cpu className="w-3.5 h-3.5" />
+          {running ? 'Analizando...' : 'Analizar'}
         </button>
       </div>
 
       {/* Status / Error banner */}
       {status.error && (
-        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-xs text-amber-200 flex items-start gap-2">
+        <div className="shrink-0 p-2 rounded-xl bg-amber-500/10 border border-amber-500/40 text-xs text-amber-200 flex items-start gap-2">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
-          <div>
-            <div className="font-semibold">Integración pendiente / Modelo no disponible</div>
-            <p className="mt-0.5 opacity-90">{status.error}</p>
-            <p className="mt-1 text-[11px] text-amber-300/80">
-              AVISIA nunca muestra cajas simuladas como si fueran inferencias reales.
-            </p>
-          </div>
+          <div className="truncate">{status.error}</div>
         </div>
       )}
 
-      {/* Image + Canvas container */}
-      <div className="relative w-full aspect-[16/10] rounded-xl overflow-hidden border border-slate-800 bg-[#071120] flex items-center justify-center">
+      {/* Image + Canvas container (takes ~70% dominant height) */}
+      <div className="relative flex-1 min-h-0 w-full rounded-xl overflow-hidden border border-slate-800 bg-[#071120] flex items-center justify-center">
         {!imageUrl ? (
           <div className="text-center p-6 max-w-sm">
             <Upload className="w-8 h-8 text-cyan-400/70 mx-auto mb-2" />
@@ -469,7 +463,7 @@ export const VisionLabPanel: React.FC<VisionLabPanelProps> = ({
 
       {/* Real inference summary + speak / Scene AI / OCR buttons */}
       {imageUrl && !status.error && (
-        <div className="space-y-2 p-3 rounded-xl bg-slate-900/70 border border-slate-800 text-xs">
+        <div className="shrink-0 space-y-1.5 p-2 rounded-xl bg-slate-900/70 border border-slate-800 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-slate-300">
               <span className="font-semibold text-emerald-300">

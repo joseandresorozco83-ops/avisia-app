@@ -85,11 +85,11 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
   return (
     <section
       aria-label="Procesamiento inteligente"
-      className="flex flex-col h-full gap-3"
+      className="flex flex-col h-full min-h-0 gap-2 overflow-hidden"
     >
       {/* 1. Stitch Safety Protocol & Policy Banner (C00 / C01) */}
       <div
-        className={`p-3 rounded-xl border flex flex-wrap items-start justify-between gap-3 shrink-0 shadow-sm ${
+        className={`p-2.5 rounded-xl border flex flex-wrap items-center justify-between gap-2 shrink-0 shadow-sm ${
           isAlert
             ? 'bg-gradient-to-r from-[#ffb147]/15 via-[#1c2028] to-[#1c2028] border-[#ffb147]/45'
             : 'bg-gradient-to-r from-[#22d3ee]/12 via-[#1c2028] to-[#1c2028] border-[#3c494c]/50'
@@ -173,8 +173,8 @@ export const ProcessingPanel: React.FC<ProcessingPanelProps> = ({
       </div>
 
       {/* 2. Stitch Real-Time Spatial Detections Table */}
-      <div className="flex-1 bg-[#181c24] rounded-xl border border-[#3c494c]/40 flex flex-col overflow-hidden min-h-[210px] shadow-md">
-        <div className="px-4 py-2.5 bg-[#1c2028] border-b border-[#3c494c]/30 flex items-center justify-between shrink-0">
+      <div className="flex-1 min-h-0 bg-[#181c24] rounded-xl border border-[#3c494c]/40 flex flex-col overflow-hidden shadow-md">
+        <div className="px-3 py-2 bg-[#1c2028] border-b border-[#3c494c]/30 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-[#8aebff]" />
             <span className="text-xs sm:text-sm font-semibold text-[#dfe2ee]">
