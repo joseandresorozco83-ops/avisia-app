@@ -28,6 +28,7 @@ import {
   BellOff,
   Check,
   Banknote,
+  Smartphone,
 } from 'lucide-react';
 import type {
   AppPresetId,
@@ -1534,6 +1535,52 @@ export function App() {
                 </div>
               </div>
 
+              {/* Compact 1-Tap Mode Selector Strip on Mobile & Emulator (Matches Desktop Console 1:1!) */}
+              <div
+                role="group"
+                aria-label="Modos de uso rápido"
+                className="shrink-0 px-2 py-1 bg-[#141821] border-b border-[#3c494c]/35 flex items-center gap-1 overflow-x-auto no-scrollbar"
+              >
+                {APP_PRESETS.map((preset) => {
+                  const selected =
+                    mode === 'live_camera' &&
+                    (streetFeatures.activePreset ?? 'indoor') === preset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => {
+                        speechService.unlockAudio();
+                        speechService.vibratePattern('confirm');
+                        setStreetFeatures((prev) =>
+                          applyAppPreset(prev, preset.id as AppPresetId)
+                        );
+                        setPresetSyncKey((k) => k + 1);
+                        setDemoActive(false);
+                        setMode('live_camera');
+                        setMobileTab('vision');
+                        setAutoStartCamera(true);
+                        setAndroidMenuOpen(false);
+                        telemetryService.recordEvent({
+                          type: 'preset_change',
+                          detail: preset.id,
+                          success: true,
+                        });
+                        speakText(preset.spokenConfirm);
+                      }}
+                      className={`shrink-0 px-2.5 py-1 rounded-lg font-mono text-[11px] font-extrabold border transition-colors ${
+                        selected
+                          ? 'bg-[#22d3ee] text-[#00363e] border-[#22d3ee] shadow-sm'
+                          : 'bg-[#1c2028] text-[#bbc9cd] border-[#3c494c]/50 hover:text-white'
+                      }`}
+                    >
+                      {preset.shortTitle}
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* Unified Human-Centered Hamburger Menu (Simple 1-Tap Modes & Scenes on both Web and Android) */}
               {androidMenuOpen && (
                 <div className="absolute inset-x-0 top-[56px] bottom-[62px] z-40 bg-[#181c24]/98 backdrop-blur-md p-3.5 overflow-y-auto space-y-4 border-b border-[#3c494c]/40">
@@ -1754,6 +1801,16 @@ export function App() {
                         Subir Video
                       </button>
                     </div>
+
+                    <a
+                      href="https://github.com/joseandresorozco83-ops/avisia-app/releases/download/v5.6.0/AVISIA-v5.6.0.apk"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full min-h-[44px] py-2.5 px-3 rounded-xl bg-[#4edea3] hover:bg-[#6ffbbe] text-[#003824] font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition-colors"
+                    >
+                      <Smartphone className="w-4 h-4 shrink-0" />
+                      Descargar App Android (AVISIA-v5.6.0.apk)
+                    </a>
 
                     <button
                       type="button"
